@@ -38,8 +38,10 @@ async function startServer(): Promise<void> {
       logger.info(`🏥 Health Check: http://localhost:${config.app.port}/health`);
     });
 
-    // Start cron jobs (disabled for now)
-    // await cronService.start();
+    // Start cron jobs
+    logger.info('🔄 Starting background services...');
+    await cronService.start();
+    logger.info('⏰ Background services started successfully');
 
     // Graceful shutdown handling
     const gracefulShutdown = async (signal: string) => {

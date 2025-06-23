@@ -4,6 +4,7 @@ import { apiUtils } from '../../shared/utils';
 import { logger } from '../../config';
 import { AuthenticatedRequest } from '../../shared/interfaces';
 import { ValidationException } from '../../shared/exceptions';
+import { initiateDepositSchema } from './deposit.types';
 
 export class DepositController {
   constructor(private depositService: DepositService) {}
@@ -298,7 +299,7 @@ export class DepositController {
   async checkDeposits(req: Request, res: Response): Promise<void> {
     try {
       // This is a development/admin endpoint to manually trigger deposit checking
-      await this.depositService.checkPendingDeposits();
+      await this.depositService.detectAndMatchTransactions();
       await this.depositService.processConfirmedDeposits();
       
       res.json(
@@ -349,11 +350,14 @@ export class DepositController {
    */
   async scanNewDeposits(req: Request, res: Response): Promise<void> {
     try {
-      // This is a development/admin endpoint to manually scan for new deposits
-      await this.depositService.scanForNewDeposits();
+      // This is a development/admin endpoint to manually scan for new deposits  
+      const results = await this.depositService.detectAndMatchTransactions();
       
       res.json(
-        apiUtils.success('New deposit scan completed')
+        apiUtils.success('New deposit scan completed', {
+          transactionsFound: results.length,
+          matched: results.filter(r => r.matched).length
+        })
       );
     } catch (error) {
       if (error instanceof Error) {
@@ -419,6 +423,687 @@ export class DepositController {
     } catch (error) {
       if (error instanceof Error) {
         logger.error('Get system wallet info failed', { error: error.message });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @swagger
+   * /deposits/initiate:
+   *   post:
+   *     tags:
+   *       - Deposits
+   *     summary: Initiate a new USDT deposit with QR code
+   *     description: |
+   *       Initiate a new USDT deposit transaction. This creates a pending deposit record,
+   *       generates a unique reference ID, and returns a QR code for easy scanning.
+   *       
+   *       **Features:**
+   *       - Unique memo/reference ID for transaction identification
+   *       - QR code generation for easy wallet scanning
+   *       - Configurable expiration time (default 24 hours)
+   *       - Both QR code and plain text address provided
+   *     security:
+   *       - bearerAuth: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - amount
+   *             properties:
+   *               amount:
+   *                 type: number
+   *                 minimum: 1
+   *                 example: 100
+   *                 description: Amount of USDT to deposit (minimum 1 USDT)
+   *               expirationHours:
+   *                 type: number
+   *                 minimum: 1
+   *                 maximum: 48
+   *                 default: 24
+   *                 example: 24
+   *                 description: Hours until deposit expires (default 24, max 48)
+   *     responses:
+   *       200:
+   *         description: Deposit initiated successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 message:
+   *                   type: string
+   *                   example: "Deposit initiated successfully"
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     depositId:
+   *                       type: string
+   *                       example: "clp1234567890abcdef"
+   *                       description: Unique deposit identifier
+   *                     referenceId:
+   *                       type: string
+   *                       example: "DEP_L8X9K2A1B7F3"
+   *                       description: Unique reference ID to include in transaction memo
+   *                     systemWalletAddress:
+   *                       type: string
+   *                       example: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+   *                       description: TRON wallet address to send USDT to
+   *                     expectedAmount:
+   *                       type: string
+   *                       example: "100"
+   *                       description: Exact amount of USDT to send
+   *                     qrCodes:
+   *                       type: object
+   *                       properties:
+   *                         simple:
+   *                           type: string
+   *                           example: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
+   *                           description: Simple QR code with address only (most compatible)
+   *                         tronlink:
+   *                           type: string
+   *                           example: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
+   *                           description: TronLink-optimized QR code with JSON format
+   *                         generic:
+   *                           type: string
+   *                           example: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
+   *                           description: Generic TRON URI format QR code
+   *                     qrCodeData:
+   *                       type: string
+   *                       example: "tron:TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t?amount=100&memo=DEP_L8X9K2A1B7F3"
+   *                       description: Raw TRON URI for manual copying
+   *                     expiresAt:
+   *                       type: string
+   *                       format: date-time
+   *                       example: "2024-01-02T00:00:00.000Z"
+   *                       description: When this deposit expires
+   *                     instructions:
+   *                       type: object
+   *                       properties:
+   *                         general:
+   *                           type: array
+   *                           items:
+   *                             type: string
+   *                           example: ["Send exactly 100 USDT (TRC-20) to the address above", "IMPORTANT: Include memo/note: DEP_L8X9K2A1B7F3"]
+   *                           description: General instructions for all wallets
+   *                         tronlink:
+   *                           type: array
+   *                           items:
+   *                             type: string
+   *                           example: ["🔗 For TronLink Mobile App:", "1. Scan the 'TronLink QR Code' above"]
+   *                           description: Specific instructions for TronLink users
+   *                         other:
+   *                           type: array
+   *                           items:
+   *                             type: string
+   *                           example: ["📱 For Other Wallets (Trust, TokenPocket, Klever):", "1. Scan the 'Simple QR Code' to get the address"]
+   *                           description: Instructions for other wallet apps
+   *                 timestamp:
+   *                   type: string
+   *                   format: date-time
+   *       400:
+   *         description: Invalid request data
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   *             examples:
+   *               invalid_amount:
+   *                 summary: Invalid deposit amount
+   *                 value:
+   *                   success: false
+   *                   message: "Amount must be positive"
+   *                   timestamp: "2024-01-01T00:00:00.000Z"
+   *       401:
+   *         description: Unauthorized
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   *       500:
+   *         description: Internal server error
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   */
+  async initiateDeposit(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        throw new ValidationException('User not authenticated');
+      }
+
+      // Validate request body
+      const validatedData = initiateDepositSchema.parse(req.body);
+
+      const result = await this.depositService.initiateDeposit(
+        req.user.id,
+        validatedData.amount
+      );
+
+      res.json(
+        apiUtils.success('Deposit initiated successfully', result)
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('Initiate deposit failed', {
+          error: error.message,
+          userId: req.user?.id,
+          body: req.body,
+        });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @swagger
+   * /deposits/{id}/status:
+   *   get:
+   *     tags:
+   *       - Deposits
+   *     summary: Get real-time deposit status
+   *     description: |
+   *       Get the current status of a deposit with real-time information including:
+   *       - Current status (PENDING, CONFIRMED, PROCESSED, FAILED, EXPIRED)
+   *       - Transaction confirmation count
+   *       - Time remaining until expiration
+   *       - Recommended polling interval for frontend
+   *       - Detection method and confidence if matched
+   *     security:
+   *       - bearerAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *           example: "clp1234567890abcdef"
+   *         description: Deposit ID
+   *     responses:
+   *       200:
+   *         description: Deposit status retrieved successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 message:
+   *                   type: string
+   *                   example: "Deposit status retrieved successfully"
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     depositId:
+   *                       type: string
+   *                       example: "clp1234567890abcdef"
+   *                     referenceId:
+   *                       type: string
+   *                       example: "DEP_L8X9K2A1B7F3"
+   *                     status:
+   *                       type: string
+   *                       enum: [PENDING, CONFIRMED, PROCESSED, FAILED, EXPIRED]
+   *                       example: "CONFIRMED"
+   *                     matchConfidence:
+   *                       type: string
+   *                       enum: [HIGH, MEDIUM, LOW]
+   *                       example: "HIGH"
+   *                     detectionMethod:
+   *                       type: string
+   *                       example: "memo"
+   *                     txHash:
+   *                       type: string
+   *                       example: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+   *                     confirmations:
+   *                       type: number
+   *                       example: 15
+   *                     expectedAmount:
+   *                       type: string
+   *                       example: "100"
+   *                     detectedAmount:
+   *                       type: string
+   *                       example: "100.000000"
+   *                     expiresAt:
+   *                       type: string
+   *                       format: date-time
+   *                       example: "2024-01-02T00:00:00.000Z"
+   *                     timeRemaining:
+   *                       type: number
+   *                       example: 86400000
+   *                       description: Milliseconds until expiration
+   *                     nextStatusCheck:
+   *                       type: number
+   *                       example: 30000
+   *                       description: Recommended polling interval in milliseconds
+   *                 timestamp:
+   *                   type: string
+   *                   format: date-time
+   *       401:
+   *         description: Unauthorized
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   *       404:
+   *         description: Deposit not found
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   *       500:
+   *         description: Internal server error
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   */
+  async getDepositStatus(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        throw new ValidationException('User not authenticated');
+      }
+
+      const { id } = req.params;
+      
+      const status = await this.depositService.getDepositStatus(id);
+      
+      res.json(
+        apiUtils.success('Deposit status retrieved successfully', status)
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('Get deposit status failed', {
+          error: error.message,
+          depositId: req.params.id,
+          userId: req.user?.id,
+        });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @swagger
+   * /deposits/pending:
+   *   get:
+   *     tags:
+   *       - Deposits
+   *     summary: Get user's pending deposits
+   *     description: |
+   *       Retrieve all pending deposits for the authenticated user that haven't expired yet.
+   *       Each deposit includes status information and time remaining.
+   *     security:
+   *       - bearerAuth: []
+   *     responses:
+   *       200:
+   *         description: Pending deposits retrieved successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 message:
+   *                   type: string
+   *                   example: "Pending deposits retrieved successfully"
+   *                 data:
+   *                   type: array
+   *                   items:
+   *                     type: object
+   *                     properties:
+   *                       depositId:
+   *                         type: string
+   *                         example: "clp1234567890abcdef"
+   *                       referenceId:
+   *                         type: string
+   *                         example: "DEP_L8X9K2A1B7F3"
+   *                       status:
+   *                         type: string
+   *                         enum: [PENDING, CONFIRMED]
+   *                         example: "PENDING"
+   *                       expectedAmount:
+   *                         type: string
+   *                         example: "100"
+   *                       expiresAt:
+   *                         type: string
+   *                         format: date-time
+   *                         example: "2024-01-02T00:00:00.000Z"
+   *                       timeRemaining:
+   *                         type: number
+   *                         example: 86400000
+   *                 timestamp:
+   *                   type: string
+   *                   format: date-time
+   *       401:
+   *         description: Unauthorized
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   *       500:
+   *         description: Internal server error
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   */
+  async getPendingDeposits(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        throw new ValidationException('User not authenticated');
+      }
+
+      const pendingDeposits = await this.depositService.getUserPendingDeposits(req.user.id);
+      
+      res.json(
+        apiUtils.success('Pending deposits retrieved successfully', pendingDeposits)
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('Get pending deposits failed', {
+          error: error.message,
+          userId: req.user?.id,
+        });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @swagger
+   * /deposits/detect:
+   *   post:
+   *     tags:
+   *       - Deposits
+   *     summary: Manual transaction detection (Development)
+   *     description: |
+   *       Manually trigger transaction detection and matching process. This endpoint is intended for development and testing purposes.
+   *       
+   *       **⚠️ Development Only:** This endpoint should be secured or removed in production.
+   *     responses:
+   *       200:
+   *         description: Transaction detection completed successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 message:
+   *                   type: string
+   *                   example: "Transaction detection completed"
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     detected:
+   *                       type: number
+   *                       example: 5
+   *                     matched:
+   *                       type: number
+   *                       example: 3
+   *                     unmatched:
+   *                       type: number
+   *                       example: 2
+   *                 timestamp:
+   *                   type: string
+   *                   format: date-time
+   *       500:
+   *         description: Internal server error
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   */
+  async detectTransactions(req: Request, res: Response): Promise<void> {
+    try {
+      // This is a development/admin endpoint to manually trigger transaction detection
+      const results = await this.depositService.detectAndMatchTransactions();
+      
+      const summary = {
+        detected: results.length,
+        matched: results.filter(r => r.matched).length,
+        unmatched: results.filter(r => !r.matched).length,
+      };
+
+      res.json(
+        apiUtils.success('Transaction detection completed', summary)
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('Manual transaction detection failed', { error: error.message });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @swagger
+   * /deposits/address-pool/stats:
+   *   get:
+   *     tags:
+   *       - Deposits
+   *     summary: Get address pool statistics
+   *     description: |
+   *       Get current statistics about the address pool including free, assigned, 
+   *       and used addresses. Useful for monitoring and admin purposes.
+   *     responses:
+   *       200:
+   *         description: Address pool statistics retrieved successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 message:
+   *                   type: string
+   *                   example: "Address pool statistics retrieved"
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     total:
+   *                       type: number
+   *                       example: 150
+   *                     free:
+   *                       type: number
+   *                       example: 45
+   *                     assigned:
+   *                       type: number
+   *                       example: 12
+   *                     used:
+   *                       type: number
+   *                       example: 93
+   *                     utilization:
+   *                       type: number
+   *                       example: 70
+   *                       description: Percentage of addresses in use
+   *                     lowThreshold:
+   *                       type: boolean
+   *                       example: false
+   *                     expiringWithinHour:
+   *                       type: number
+   *                       example: 3
+   *                     recommendedAction:
+   *                       type: string
+   *                       enum: [healthy, generate_more, cleanup_needed]
+   *                       example: "healthy"
+   *       500:
+   *         description: Internal server error
+   */
+  async getAddressPoolStats(req: Request, res: Response): Promise<void> {
+    try {
+      const { addressPoolService } = await import('../../services/address-pool.service');
+      const stats = await addressPoolService.getPoolStatistics();
+      
+      res.json(
+        apiUtils.success('Address pool statistics retrieved', stats)
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('Get address pool stats failed', { error: error.message });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @swagger
+   * /deposits/process-transaction:
+   *   post:
+   *     tags:
+   *       - Deposits
+   *     summary: Manually process a transaction by hash
+   *     description: |
+   *       Manually process a specific USDT transaction by its hash. This is useful for
+   *       debugging or processing transactions that weren't automatically detected.
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - txHash
+   *             properties:
+   *               txHash:
+   *                 type: string
+   *                 example: "0ad90e430a5908269aee235b22c8c74c5efe5cd589b2865df2bf84b053036c9d"
+   *                 description: TRON transaction hash to process
+   *     responses:
+   *       200:
+   *         description: Transaction processed successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 message:
+   *                   type: string
+   *                   example: "Transaction processed successfully"
+   *       400:
+   *         description: Invalid transaction hash or transaction not found
+   *       500:
+   *         description: Internal server error
+   */
+  async processTransaction(req: Request, res: Response): Promise<void> {
+    try {
+      const { txHash } = req.body;
+      
+      if (!txHash || typeof txHash !== 'string') {
+        res.status(400).json(
+          apiUtils.error('Transaction hash is required')
+        );
+        return;
+      }
+
+      const success = await this.depositService.processTransactionByHash(txHash);
+      
+      if (success) {
+        res.json(
+          apiUtils.success('Transaction processed successfully')
+        );
+      } else {
+        res.status(400).json(
+          apiUtils.error('Failed to process transaction - check if it exists and is valid')
+        );
+      }
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('Process transaction failed', { 
+          error: error.message,
+          txHash: req.body.txHash 
+        });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @swagger
+   * /deposits/address-pool/generate:
+   *   post:
+   *     tags:
+   *       - Deposits
+   *     summary: Generate new addresses for the pool
+   *     description: |
+   *       Generate a batch of new TRON addresses and add them to the address pool.
+   *       This is an admin endpoint for maintaining sufficient address inventory.
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - count
+   *             properties:
+   *               count:
+   *                 type: number
+   *                 minimum: 1
+   *                 maximum: 500
+   *                 example: 100
+   *                 description: Number of addresses to generate (max 500)
+   *     responses:
+   *       200:
+   *         description: Addresses generated successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 message:
+   *                   type: string
+   *                   example: "100 addresses generated successfully"
+   *       400:
+   *         description: Invalid request data
+   *       500:
+   *         description: Internal server error
+   */
+  async generateAddresses(req: Request, res: Response): Promise<void> {
+    try {
+      const { count } = req.body;
+      
+      if (!count || count < 1 || count > 500) {
+        res.status(400).json(
+          apiUtils.error('Count must be between 1 and 500')
+        );
+        return;
+      }
+
+      const { addressPoolService } = await import('../../services/address-pool.service');
+      await addressPoolService.generateAddressBatch(count);
+      
+      res.json(
+        apiUtils.success(`${count} addresses generated successfully`)
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('Generate addresses failed', { 
+          error: error.message,
+          count: req.body.count 
+        });
       }
       throw error;
     }

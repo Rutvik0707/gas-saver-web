@@ -6,14 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a TRON ENERGY Broker API service built with Node.js and TypeScript that enables USDT (TRC-20) holders to convert their deposits into TRON ENERGY credits, eliminating the need to purchase TRX for network fees.
 
-**Current Implementation Status:** ✅ **COMPLETED** - Basic workflow fully implemented
+**Current Implementation Status:** ✅ **COMPLETED** - Address pool system with real energy delegation fully implemented
 
 **Core Business Flow:**
 1. Users register with email, password, and TRON wallet address
-2. Users deposit USDT to the system wallet address
-3. Cron jobs automatically detect and verify USDT deposits
-4. System credits user accounts and transfers 1 TRX worth of energy
-5. All transactions are logged and tracked
+2. Users initiate deposits and receive unique TRON addresses from address pool
+3. Users send USDT to their assigned address (no memo required)
+4. Cron jobs automatically detect USDT transactions and process deposits
+5. System credits user accounts and delegates real TRON energy to user wallets
+6. All transactions are logged and tracked with proper blockchain validation
 
 ## Technology Stack
 
@@ -48,11 +49,13 @@ src/
 
 **Implemented Components:**
 - ✅ User module: registration, authentication, profile management
-- ✅ Deposit module: USDT tracking, verification, processing
-- ✅ Cron service: automated deposit monitoring and processing
-- ✅ Energy service: simulated energy delegation to users
+- ✅ Deposit module: address-based USDT tracking with unique addresses per deposit
+- ✅ Address pool service: manages 100+ TRON addresses with encrypted private keys
+- ✅ Cron service: automated transaction detection and deposit processing
+- ✅ Energy service: real TRON energy delegation using delegateResource protocol
+- ✅ Transaction detection: TronGrid API integration for real-time USDT monitoring
 - ✅ Middleware: authentication, validation, error handling
-- ✅ Database schema: users, deposits, transactions tables
+- ✅ Database schema: users, deposits, address_pool, transactions tables
 
 ## Development Commands
 
@@ -110,17 +113,25 @@ npm run test:coverage
 - **Profile Management:** Update user info, view credits and transaction history
 - **Credit System:** Track user credits from USDT deposits (1:1 ratio)
 
+### Address Pool System (src/services/address-pool.service.ts)
+1. **Address Generation:** Creates batches of TRON addresses with encrypted private keys
+2. **Address Assignment:** Assigns unique addresses to deposits with 3-hour expiration
+3. **Address Management:** Handles reuse, cleanup, and pool maintenance
+4. **Pool Statistics:** Monitors free, assigned, and used addresses
+
 ### Deposit Processing (src/modules/deposit/)
-1. **Deposit Detection:** Cron jobs scan for USDT transfers to system wallet
-2. **Verification:** Validate transactions on TRON blockchain
-3. **Credit Assignment:** Convert confirmed USDT deposits to user credits
-4. **Energy Transfer:** Automatically send 1 TRX worth of energy to user's wallet
+1. **Deposit Initiation:** Users get unique TRON addresses from address pool
+2. **Transaction Detection:** TronGrid API monitors assigned addresses for USDT transfers
+3. **Verification:** Validates transactions on TRON blockchain with confirmation checks
+4. **Credit Assignment:** Converts confirmed USDT deposits to user credits (1:1 ratio)
+5. **Energy Delegation:** Uses TRON's delegateResource protocol to transfer real energy
 
 ### Background Services (src/services/)
-- **Deposit Checker** (every 30s): Verifies pending deposits on blockchain
-- **Deposit Processor** (every 1m): Processes confirmed deposits and updates credits
-- **Deposit Scanner** (every 2m): Scans for new USDT transfers to system wallet
-- **Energy Service:** Handles simulated energy delegation to user wallets
+- **Transaction Detector** (every 30s): Monitors assigned addresses for USDT transactions
+- **Deposit Processor** (every 1m): Processes confirmed deposits and credits accounts
+- **Address Pool Maintenance** (every hour): Releases expired assignments and auto-replenishes
+- **Deposit Expirer** (every 5m): Expires old deposits and releases addresses
+- **Energy Service:** Real TRON energy delegation to user wallets
 
 ### Security Features
 - JWT authentication with configurable expiration
@@ -140,13 +151,21 @@ npm run test:coverage
 
 **Implemented Tables:**
 - `users` - User profiles with email, password, TRON address, and credits
-- `deposits` - USDT deposit tracking with status (PENDING/CONFIRMED/PROCESSED/FAILED)
-- `transactions` - All system transactions including deposits, credits, and energy transfers
+- `deposits` - Address-based USDT deposit tracking with unique address assignments
+- `address_pool` - Pool of TRON addresses with encrypted private keys and status management
+- `transactions` - All system transactions including deposits, credits, and energy delegations
 
 **Key Fields:**
 - Users: id, email, passwordHash, tronAddress, credits, isActive
-- Deposits: id, userId, txHash, amountUsdt, status, confirmed, blockNumber
-- Transactions: id, userId, type, amount, txHash, status, fromAddress, toAddress
+- Deposits: id, userId, assignedAddress, assignedAddressId, txHash, amountUsdt, expectedAmount, status, expiresAt
+- AddressPool: id, address, privateKeyEncrypted, status (FREE/ASSIGNED/USED), assignedToDepositId, expiresAt, usageCount
+- Transactions: id, userId, type, amount, txHash, status, fromAddress, toAddress, description
+
+**Address Pool System:**
+- **Address States**: FREE → ASSIGNED → USED → (cooldown) → FREE
+- **Expiration**: 3-hour assignment expiration with automatic release
+- **Security**: AES-256 encrypted private keys stored in database
+- **Reuse**: Addresses can be reused after successful transactions and cooldown period
 
 ## Testing Strategy
 
@@ -167,12 +186,21 @@ npm run test:coverage
 - `GET /api/v1/users/transactions` - Get transaction history
 
 **Deposit Management:**
-- `GET /api/v1/deposits/wallet-info` - Get system wallet address for deposits
-- `GET /api/v1/deposits/my-deposits` - Get user's deposit history
+- `POST /api/v1/deposits/initiate` - Initiate deposit and get unique assigned address with QR code
+- `GET /api/v1/deposits/:id/status` - Get real-time deposit status with confirmation count
+- `GET /api/v1/deposits/pending` - Get user's pending deposits (not expired)
+- `GET /api/v1/deposits/my-deposits` - Get user's deposit history with pagination
 - `GET /api/v1/deposits/:id` - Get specific deposit details
 - `GET /api/v1/deposits/tx/:txHash` - Get deposit by transaction hash
+- `GET /api/v1/deposits/wallet-info` - Get system wallet info (deprecated - use initiate instead)
 - `POST /api/v1/deposits/check` - Manual deposit verification (dev/testing)
 - `POST /api/v1/deposits/scan` - Manual deposit scan (dev/testing)
+- `POST /api/v1/deposits/detect` - Manual transaction detection (dev/testing)
+- `POST /api/v1/deposits/process-transaction` - Manual transaction processing by hash (dev/testing)
+
+**Address Pool Management:**
+- `GET /api/v1/deposits/address-pool/stats` - Get address pool statistics (free, assigned, used)
+- `POST /api/v1/deposits/address-pool/generate` - Generate new addresses for the pool (admin)
 
 **System:**
 - `GET /health` - Health check with system status and TRON connectivity
@@ -200,11 +228,12 @@ npm run test:coverage
 
 ## Important Development Notes
 
-**Current Status:** ✅ **FULLY IMPLEMENTED** - Basic workflow is complete and functional
+**Current Status:** ✅ **FULLY IMPLEMENTED** - Address pool system with real energy delegation complete
 
 **Testnet Configuration:**
 - All TRON operations use Shasta testnet (https://api.shasta.trongrid.io)
-- Energy transfers are simulated for development/testing
+- Real energy delegation using TRON's delegateResource protocol
+- TronGrid API integration for real-time transaction detection
 - Use TRON Shasta faucets to get test TRX and USDT
 - Never use real funds or mainnet keys
 - Built-in key generator: `npm run generate-keys`
@@ -212,7 +241,8 @@ npm run test:coverage
 **Environment Setup Required:**
 - PostgreSQL database connection
 - TRON testnet private keys and addresses
-- System wallet for receiving USDT deposits
+- System wallet with staked TRX for energy delegation
+- ENCRYPTION_SECRET for address pool private key encryption (AES-256)
 - JWT secret for authentication (minimum 32 characters)
 
 **Important Setup Steps:**
@@ -223,24 +253,40 @@ npm run test:coverage
 5. Get test tokens from Shasta faucet: https://www.trongrid.io/shasta
 
 **Key Implementation Details:**
+- **Address Pool System:** 100+ unique TRON addresses with AES-256 encrypted private keys
+- **Real Energy Delegation:** Uses TRON's delegateResource protocol (not TRX transfers)
+- **Transaction Detection:** TronGrid API integration for real-time USDT monitoring
 - **Modular Architecture:** Each feature is in its own module with controller, service, repository
 - **Error Handling:** Comprehensive exception handling with custom exception classes
 - **Validation:** Zod schemas validate all API inputs
 - **Logging:** Structured Winston logging for debugging and monitoring
-- **Background Processing:** Node-cron handles automated deposit monitoring
-- **Security:** JWT auth, bcrypt hashing, rate limiting, input validation
+- **Background Processing:** Node-cron handles automated deposit monitoring and address management
+- **Security:** JWT auth, bcrypt hashing, rate limiting, input validation, encrypted key storage
 
-**Testing the Workflow:**
-1. Start the server: `npm run dev`
+**Testing the Address Pool Workflow:**
+1. Start the server: `npm run dev` (auto-generates 100 addresses on startup)
 2. Register a user with your testnet TRON address
-3. Get system wallet from `/api/v1/deposits/wallet-info`
-4. Send test USDT to the system wallet
-5. Use `/api/v1/deposits/check` to trigger manual processing
-6. Check your credits and transaction history
+3. Initiate deposit: `POST /api/v1/deposits/initiate` with amount
+4. Get unique address and QR code for your deposit
+5. Send test USDT to the assigned address (no memo required)
+6. System auto-detects transaction and processes deposit
+7. Check your credits and energy delegation in your TRON wallet
+
+**Address Pool Management:**
+- Check pool stats: `GET /api/v1/deposits/address-pool/stats`
+- Generate more addresses: `POST /api/v1/deposits/address-pool/generate`
+- Monitor address usage and auto-replenishment
+- 3-hour expiration with automatic address release and reuse
+
+**Real Energy Delegation:**
+- System delegates actual TRON energy (not TRX tokens) to user wallets
+- Users receive energy that can be used for USDT transaction fees
+- Energy delegation uses TRON's official delegateResource contract
+- Real blockchain transactions with proper validation and confirmation
 
 **Next Steps for Production:**
-- Implement real TRON energy staking and delegation
 - Add comprehensive test suite
 - Set up proper TRON mainnet configuration
 - Add admin dashboard and monitoring
 - Implement proper WebSocket for real-time updates
+- Add energy reclaim mechanisms for unused delegations

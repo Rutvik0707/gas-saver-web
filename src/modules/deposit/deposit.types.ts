@@ -1,12 +1,9 @@
 import { z } from 'zod';
 import { Deposit, DepositStatus } from '@prisma/client';
 
-// Zod validation schemas
-export const createDepositSchema = z.object({
-  userId: z.string().cuid(),
-  txHash: z.string().min(1, 'Transaction hash is required'),
-  amountUsdt: z.number().positive('Amount must be positive'),
-  blockNumber: z.bigint().optional(),
+// Zod validation schemas for address-based deposit system
+export const initiateDepositSchema = z.object({
+  amount: z.number().positive('Amount must be positive').min(1, 'Minimum deposit is 1 USDT'),
 });
 
 export const updateDepositStatusSchema = z.object({
@@ -16,20 +13,93 @@ export const updateDepositStatusSchema = z.object({
 });
 
 // TypeScript types
-export type CreateDepositDto = z.infer<typeof createDepositSchema>;
+export type InitiateDepositDto = z.infer<typeof initiateDepositSchema>;
 export type UpdateDepositStatusDto = z.infer<typeof updateDepositStatusSchema>;
+
+// Address-based deposit interfaces
+export interface DepositInitiationResponse {
+  depositId: string;
+  assignedAddress: string;
+  qrCodeBase64: string;        // Simple address QR code only
+  expectedAmount: string;
+  expiresAt: Date;             // 3-hour expiration
+  instructions: string[];      // Simple instructions, no memo required
+}
+
+export interface DepositStatusResponse {
+  depositId: string;
+  assignedAddress: string;
+  status: DepositStatus;
+  txHash?: string;
+  confirmations?: number;
+  expectedAmount: string;
+  detectedAmount?: string;
+  expiresAt: Date;
+  timeRemaining: number;
+  nextStatusCheck: number;
+}
 
 export interface DepositResponse {
   id: string;
   userId: string;
-  txHash: string;
-  amountUsdt: string;
+  assignedAddress: string;
+  txHash?: string;
+  amountUsdt?: string;
   status: DepositStatus;
   confirmed: boolean;
-  blockNumber: string | null;
+  blockNumber?: string;
   processedAt: Date | null;
+  expiresAt: Date;
   createdAt: Date;
   updatedAt: Date;
+}
+
+// Address pool management types
+export interface AddressAssignment {
+  addressId: string;
+  address: string;
+  expiresAt: Date;
+}
+
+export interface PoolStats {
+  total: number;
+  free: number;
+  assigned: number;
+  used: number;
+  utilization: number;
+  lowThreshold: boolean;
+  expiringWithinHour: number;
+  recommendedAction: 'healthy' | 'generate_more' | 'cleanup_needed';
+}
+
+export interface CreateAddressDto {
+  address: string;
+  privateKeyEncrypted: string;
+}
+
+export interface GenerateAddressesDto {
+  count: number;
+}
+
+// Transaction detection types (simplified for address-based system)
+export interface TransactionDetectionResult {
+  address: string;
+  txHash: string;
+  fromAddress: string;
+  amount: string;
+  blockNumber?: number;
+  matched: boolean;
+  depositId?: string;
+}
+
+export interface USDTTransferEvent {
+  transaction_id: string;
+  block_number: number;
+  block_timestamp: number;
+  contract_address: string;
+  from: string;
+  to: string;
+  value: string;
 }
 
 export interface TronTransaction {
@@ -52,14 +122,4 @@ export interface TronTransaction {
     vip: boolean;
   };
   confirmed: boolean;
-}
-
-export interface USDTTransferEvent {
-  transaction_id: string;
-  block_number: number;
-  block_timestamp: number;
-  contract_address: string;
-  from: string;
-  to: string;
-  value: string;
 }

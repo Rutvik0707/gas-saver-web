@@ -17,7 +17,11 @@
       "Bash(curl:*)",
       "Bash(rm:*)",
       "Bash(node:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run seed:*)",
+      "WebFetch(domain:shasta.tronscan.org)"
     ],
     "deny": []
   }
