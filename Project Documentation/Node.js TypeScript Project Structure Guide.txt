@@ -1,0 +1,413 @@
+﻿103-A Sadashiv Bhavan,Shukrawar Peth, Pune 411002 |Tel: +912024436859  
+Node.js TypeScript Project Structure Guide
+A comprehensive guide for organizing Node.js TypeScript projects following industry best practices and clean architecture principles.
+Overview
+This guide establishes a standardized project structure for Node.js TypeScript applications that promotes maintainability, scalability, and developer productivity. The structure follows domain-driven design principles with clear separation of concerns.
+Core Principles
+1. Modular Architecture
+* Organize code by business domains/features rather than technical layers
+* Each module should be self-contained and loosely coupled
+* Clear boundaries between different business concerns
+2. Clean Architecture
+* Separate business logic from infrastructure concerns
+* Dependency inversion (high-level modules don't depend on low-level modules)
+* Framework-agnostic core business logic
+3. Type Safety
+* Strict TypeScript configuration
+* Comprehensive type definitions
+* Runtime validation where needed
+4. Scalability
+* Structure supports growth from small to large applications
+* Easy to add new features without disrupting existing code
+* Clear patterns for team collaboration
+Standard Project Structure
+project-name/
+├── src/                           # Source code
+│   ├── config/                    # Configuration files
+│   │   ├── database.ts            # Database configuration
+│   │   ├── environment.ts         # Environment variables
+│   │   ├── logger.ts              # Logging configuration
+│   │   └── index.ts               # Export all configs
+│   │
+│   ├── middleware/                # Express middleware
+│   │   ├── auth.middleware.ts     # Authentication middleware
+│   │   ├── error.middleware.ts    # Error handling middleware
+│   │   ├── validation.middleware.ts # Request validation
+│   │   ├── rate-limit.middleware.ts # Rate limiting
+│   │   └── index.ts               # Export all middleware
+│   │
+│   ├── modules/                   # Feature modules (domain-driven)
+│   │   ├── user/                  # User management module
+│   │   │   ├── user.controller.ts # HTTP request handlers
+│   │   │   ├── user.service.ts    # Business logic
+│   │   │   ├── user.repository.ts # Data access layer
+│   │   │   ├── user.routes.ts     # Route definitions
+│   │   │   ├── user.types.ts      # Type definitions
+│   │   │   ├── user.validation.ts # Input validation schemas
+│   │   │   └── index.ts           # Module exports
+│   │   │
+│   │   ├── auth/                  # Authentication module
+│   │   │   ├── auth.controller.ts
+│   │   │   ├── auth.service.ts
+│   │   │   ├── auth.routes.ts
+│   │   │   ├── auth.types.ts
+│   │   │   └── index.ts
+│   │   │
+│   │   └── [feature-name]/        # Additional feature modules
+│   │       ├── [feature].controller.ts
+│   │       ├── [feature].service.ts
+│   │       ├── [feature].repository.ts
+│   │       ├── [feature].routes.ts
+│   │       ├── [feature].types.ts
+│   │       └── index.ts
+│   │
+│   ├── shared/                    # Shared utilities and common code
+│   │   ├── constants/             # Application constants
+│   │   │   ├── api.constants.ts   # API-related constants
+│   │   │   ├── error.constants.ts # Error codes and messages
+│   │   │   └── index.ts
+│   │   │
+│   │   ├── interfaces/            # Common interfaces
+│   │   │   ├── api.interface.ts   # API response interfaces
+│   │   │   ├── database.interface.ts # Database interfaces
+│   │   │   └── index.ts
+│   │   │
+│   │   ├── utils/                 # Utility functions
+│   │   │   ├── date.utils.ts      # Date manipulation
+│   │   │   ├── string.utils.ts    # String operations
+│   │   │   ├── validation.utils.ts # Validation helpers
+│   │   │   ├── crypto.utils.ts    # Encryption/hashing
+│   │   │   └── index.ts
+│   │   │
+│   │   ├── exceptions/            # Custom exception classes
+│   │   │   ├── base.exception.ts  # Base exception class
+│   │   │   ├── validation.exception.ts
+│   │   │   ├── not-found.exception.ts
+│   │   │   └── index.ts
+│   │   │
+│   │   └── decorators/            # Custom decorators
+│   │       ├── auth.decorator.ts  # Authentication decorators
+│   │       ├── validation.decorator.ts
+│   │       └── index.ts
+│   │
+│   ├── database/                  # Database-related files
+│   │   ├── migrations/            # Database migrations
+│   │   ├── seeds/                 # Database seed files
+│   │   ├── models/                # Database models (if using ORM)
+│   │   └── connection.ts          # Database connection setup
+│   │
+│   ├── types/                     # Global type definitions
+│   │   ├── express.d.ts           # Express type extensions
+│   │   ├── global.d.ts            # Global type definitions
+│   │   └── api.types.ts           # API-specific types
+│   │
+│   ├── app.ts                     # Express application setup
+│   └── server.ts                  # Server entry point
+│
+├── tests/                         # Test files
+│   ├── unit/                      # Unit tests
+│   │   ├── modules/               # Module-specific tests
+│   │   │   ├── user/
+│   │   │   │   ├── user.service.test.ts
+│   │   │   │   └── user.controller.test.ts
+│   │   │   └── auth/
+│   │   └── shared/                # Shared utility tests
+│   │
+│   ├── integration/               # Integration tests
+│   │   ├── user.integration.test.ts
+│   │   └── auth.integration.test.ts
+│   │
+│   ├── fixtures/                  # Test data fixtures
+│   │   ├── user.fixtures.ts
+│   │   └── common.fixtures.ts
+│   │
+│   └── helpers/                   # Test helper functions
+│       ├── test-db.helper.ts      # Database test helpers
+│       └── api.helper.ts          # API test helpers
+│
+├── docs/                          # Documentation
+│   ├── api/                       # API documentation
+│   │   ├── openapi.yaml           # OpenAPI specification
+│   │   └── postman.json           # Postman collection
+│   │
+│   ├── deployment/                # Deployment documentation
+│   │   ├── docker.md              # Docker setup
+│   │   └── production.md          # Production deployment
+│   │
+│   └── development/               # Development documentation
+│       ├── setup.md               # Development setup
+│       ├── coding-standards.md    # Coding guidelines
+│       └── architecture.md        # Architecture overview
+│
+├── scripts/                       # Build and deployment scripts
+│   ├── build.sh                   # Build script
+│   ├── deploy.sh                  # Deployment script
+│   ├── seed-db.ts                 # Database seeding
+│   └── migrate.ts                 # Migration runner
+│
+├── public/                        # Static files (if applicable)
+│   ├── uploads/                   # File uploads
+│   └── assets/                    # Static assets
+│
+├── .env.example                   # Environment variables template
+├── .env                          # Environment variables (gitignored)
+├── .gitignore                    # Git ignore rules
+├── .eslintrc.js                  # ESLint configuration
+├── .prettierrc                   # Prettier configuration
+├── tsconfig.json                 # TypeScript configuration
+├── package.json                  # NPM dependencies and scripts
+├── yarn.lock                     # Yarn lock file
+├── jest.config.js                # Jest testing configuration
+└── README.md                     # Project documentation
+
+Module Structure Guidelines
+Standard Module Files
+Each module should follow this consistent structure:
+1. Controller (*.controller.ts)
+* Handles HTTP requests and responses
+* Input validation and sanitization
+* Calls appropriate service methods
+* Returns formatted responses
+// Example: user.controller.ts
+export class UserController {
+  constructor(private userService: UserService) {}
+
+
+  async createUser(req: Request, res: Response) {
+    // Handle request, call service, return response
+  }
+
+
+  async getUser(req: Request, res: Response) {
+    // Implementation
+  }
+}
+2. Service (*.service.ts)
+* Contains business logic
+* Orchestrates data operations
+* Handles business rules and validations
+* Framework-agnostic
+// Example: user.service.ts
+export class UserService {
+  constructor(private userRepository: UserRepository) {}
+
+
+  async createUser(userData: CreateUserDto): Promise<User> {
+    // Business logic implementation
+  }
+}
+3. Repository (*.repository.ts)
+* Data access layer
+* Database queries and operations
+* Abstracts database implementation details
+// Example: user.repository.ts
+export class UserRepository {
+  async create(userData: CreateUserData): Promise<User> {
+    // Database operations
+  }
+
+
+  async findById(id: string): Promise<User | null> {
+    // Database query
+  }
+}
+4. Routes (*.routes.ts)
+* Route definitions
+* Middleware application
+* Route-level validation
+// Example: user.routes.ts
+const router = express.Router();
+
+
+router.post('/users', validateCreateUser, userController.createUser);
+router.get('/users/:id', authMiddleware, userController.getUser);
+
+
+export { router as userRoutes };
+5. Types (*.types.ts)
+* TypeScript interfaces and types
+* DTOs (Data Transfer Objects)
+* Request/response types
+// Example: user.types.ts
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  createdAt: Date;
+}
+
+
+export interface CreateUserDto {
+  email: string;
+  name: string;
+  password: string;
+}
+6. Validation (*.validation.ts)
+* Input validation schemas
+* Validation middleware
+* Custom validators
+Configuration Management
+Environment Variables Structure
+// config/environment.ts
+export const config = {
+  port: process.env.PORT || 3000,
+  nodeEnv: process.env.NODE_ENV || 'development',
+  database: {
+    url: process.env.DATABASE_URL,
+    host: process.env.DB_HOST,
+    port: parseInt(process.env.DB_PORT || '5432'),
+    name: process.env.DB_NAME,
+    username: process.env.DB_USERNAME,
+    password: process.env.DB_PASSWORD,
+  },
+  jwt: {
+    secret: process.env.JWT_SECRET,
+    expiresIn: process.env.JWT_EXPIRES_IN || '24h',
+  },
+  redis: {
+    url: process.env.REDIS_URL,
+  },
+  email: {
+    provider: process.env.EMAIL_PROVIDER,
+    apiKey: process.env.EMAIL_API_KEY,
+  },
+};
+
+Best Practices
+1. Naming Conventions
+* Files: Use kebab-case or camelCase consistently
+   * user.controller.ts, auth.service.ts
+* Classes: Use PascalCase
+   * UserController, AuthService
+* Functions/Variables: Use camelCase
+   * createUser, isAuthenticated
+* Constants: Use SCREAMING_SNAKE_CASE
+   * API_BASE_URL, DEFAULT_PAGE_SIZE
+2. Import/Export Patterns
+// Barrel exports in index.ts files
+export { UserController } from './user.controller';
+export { UserService } from './user.service';
+export { UserRepository } from './user.repository';
+export * from './user.types';
+
+
+// Clean imports in consuming files
+import { UserController, UserService, CreateUserDto } from '../user';
+3. Error Handling
+// shared/exceptions/base.exception.ts
+export abstract class BaseException extends Error {
+  abstract statusCode: number;
+  abstract status: string;
+  
+  constructor(message: string) {
+    super(message);
+    Error.captureStackTrace(this, this.constructor);
+  }
+}
+
+
+// shared/exceptions/validation.exception.ts
+export class ValidationException extends BaseException {
+  statusCode = 400;
+  status = 'fail';
+  
+  constructor(message: string) {
+    super(message);
+  }
+}
+4. Dependency Injection
+Consider using a DI container or manual dependency injection:
+// Manual DI example
+export class UserModule {
+  static create() {
+    const userRepository = new UserRepository();
+    const userService = new UserService(userRepository);
+    const userController = new UserController(userService);
+    
+    return {
+      controller: userController,
+      service: userService,
+      repository: userRepository,
+    };
+  }
+}
+Database Integration
+With Prisma ORM
+├── prisma/
+│   ├── schema.prisma              # Database schema
+│   ├── migrations/                # Migration files
+│   └── seed.ts                    # Database seeding
+With TypeORM
+├── src/
+│   ├── database/
+│   │   ├── entities/              # Database entities
+│   │   ├── migrations/            # Migration files
+│   │   ├── repositories/          # Custom repositories
+│   │   └── data-source.ts         # Database configuration
+
+Documentation Standards
+API Documentation
+Use OpenAPI/Swagger for API documentation:
+/**
+ * @swagger
+ * /api/users:
+ *   post:
+ *     summary: Create a new user
+ *     tags: [Users]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/CreateUserDto'
+ *     responses:
+ *       201:
+ *         description: User created successfully
+ */
+
+Code Documentation
+/**
+ * Creates a new user account
+ * @param userData - User registration data
+ * @returns Promise<User> - Created user object
+ * @throws ValidationException - When user data is invalid
+ * @throws ConflictException - When email already exists
+ */
+async createUser(userData: CreateUserDto): Promise<User> {
+  // Implementation
+}
+Package.json Scripts
+{
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint . --ext .ts",
+    "lint:fix": "eslint . --ext .ts --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "migrate": "prisma migrate dev",
+    "seed": "ts-node scripts/seed-db.ts"
+  }
+}
+Getting Started Checklist
+When starting a new project using this structure:
+* [ ] Set up basic folder structure
+* [ ] Configure TypeScript (tsconfig.json)
+* [ ] Set up ESLint and Prettier
+* [ ] Configure testing framework (Jest)
+* [ ] Set up database connection
+* [ ] Create first module following the pattern
+* [ ] Set up basic middleware (error handling, logging)
+* [ ] Configure environment variables
+* [ ] Set up API documentation
+* [ ] Write README with setup instructions
+Conclusion
+This structure provides a solid foundation for scalable Node.js TypeScript applications. It promotes:
+* Maintainability: Clear separation of concerns
+* Scalability: Easy to add new features and modules
+* Testability: Well-organized test structure
+* Team Collaboration: Consistent patterns and conventions
+* Developer Experience: Clear guidelines and tooling

@@ -1,0 +1,391 @@
+﻿TRON ENERGY Broker API - Development Plan & Execution
+1. Project Overview
+Business Context
+Develop a Node.js TypeScript API service that enables USDT (TRC-20) holders to convert their deposits into TRON ENERGY credits, eliminating the need to purchase TRX for network fees.
+Core Objectives
+* Process USDT deposits and convert to ENERGY credits
+* Provide secure user authentication and management
+* Enable real-time ENERGY delegation and monitoring
+* Support admin operations for system management
+* Achieve 99.9% uptime with p95 latency < 300ms
+2. Technical Requirements
+Technology Stack
+* Runtime: Node.js 18 LTS
+* Language: TypeScript 5
+* Framework: Express 5 + express-async-errors
+* Database: PostgreSQL 15 (AWS RDS) + Prisma ORM
+* Cache/Queue: Redis 7 + BullMQ 3
+* Blockchain: TronWeb SDK + TronGrid WebSocket
+* Validation: Zod + openapi-zod-converter
+* Logging: Winston-pino (JSON to CloudWatch)
+* Security: Argon2id, TOTP 2FA, Helmet
+* Testing: Vitest + Supertest
+Performance Targets
+* p95 REST latency < 300ms
+* Support 100 deposits/minute
+* 99.9% monthly uptime SLA
+* Real-time deposit detection (≤15s)
+3. Project Structure
+Following the Script Lanes structure guide with domain-driven modules:
+energy-broker-api/
+├── src/
+│   ├── config/           # Configuration management
+│   ├── middleware/       # Express middleware
+│   ├── modules/          # Feature modules
+│   │   ├── auth/         # Authentication & authorization
+│   │   ├── user/         # User management
+│   │   ├── deposit/      # USDT deposit handling
+│   │   ├── energy/       # ENERGY delegation & management
+│   │   └── admin/        # Admin operations
+│   ├── jobs/             # BullMQ background processors
+│   ├── shared/           # Common utilities & types
+│   ├── database/         # Prisma schema & migrations
+│   └── types/            # Global TypeScript definitions
+├── tests/                # Unit & integration tests
+├── docs/                 # API documentation
+└── scripts/              # Build & deployment scripts
+4. Development Phases
+Phase 1: Foundation & Core Infrastructure (Weeks 1-2)
+Duration: 10 days Team: 2 Backend Developers
+Phase 1 Tasks:
+1.1 Project Setup (Day 1-2)
+* [ ] Initialize project structure following Script Lanes guide
+* [ ] Configure TypeScript with strict settings
+* [ ] Set up ESLint, Prettier, and pre-commit hooks
+* [ ] Configure package.json scripts
+* [ ] Set up development environment with Docker Compose
+1.2 Database & ORM Setup (Day 2-3)
+* [ ] Design Prisma schema for all entities
+* [ ] Set up PostgreSQL with initial migrations
+* [ ] Create database connection and configuration
+* [ ] Implement database seeding scripts
+* [ ] Set up Redis for caching and job queues
+1.3 Core Express Application (Day 3-4)
+* [ ] Create Express app with middleware stack
+* [ ] Implement global error handling
+* [ ] Set up request logging and monitoring
+* [ ] Configure CORS and security headers
+* [ ] Implement rate limiting
+1.4 Configuration Management (Day 4-5)
+* [ ] Environment variable validation with Zod
+* [ ] Configuration modules for all services
+* [ ] Secrets management setup
+* [ ] Logger configuration with structured logging
+1.5 Testing Framework (Day 5)
+* [ ] Configure Vitest for unit tests
+* [ ] Set up test database and helpers
+* [ ] Create test fixtures and utilities
+* [ ] Implement CI/CD pipeline basics
+Phase 2: Authentication & User Management (Weeks 2-3)
+Duration: 8 days Team: 2 Backend Developers
+Phase 2 Tasks:
+2.1 Authentication Module (Day 6-8)
+* [ ] JWT token generation and validation
+* [ ] Password hashing with Argon2id
+* [ ] Email verification system
+* [ ] Password reset functionality
+* [ ] TOTP 2FA implementation for admin users
+2.2 User Management (Day 8-10)
+* [ ] User registration and profile management
+* [ ] TRON address generation and assignment
+* [ ] User quota tracking and management
+* [ ] Audit logging for user actions
+2.3 Security Middleware (Day 10-11)
+* [ ] Authentication middleware
+* [ ] Authorization middleware with role-based access
+* [ ] Request validation middleware
+* [ ] OFAC sanctions screening integration
+2.4 API Documentation (Day 11-13)
+* [ ] OpenAPI 3.1 specification
+* [ ] Swagger UI setup
+* [ ] Endpoint documentation
+* [ ] Example requests and responses
+Phase 3: TRON Integration & Deposit Processing (Weeks 3-4)
+Duration: 10 days Team: 2 Backend Developers + 1 Blockchain Developer
+Phase 3 Tasks:
+3.1 TronWeb Integration (Day 14-16)
+* [ ] TronWeb SDK configuration
+* [ ] Wallet management and key handling
+* [ ] Smart contract interaction setup
+* [ ] Network configuration (testnet/mainnet)
+3.2 Deposit Detection System (Day 16-18)
+* [ ] TronGrid WebSocket integration
+* [ ] USDT transfer monitoring
+* [ ] Deposit confirmation tracking
+* [ ] Fallback polling mechanism
+3.3 USDT to TRX Swap Engine (Day 18-20)
+* [ ] SunSwap smart router integration
+* [ ] Swap execution and monitoring
+* [ ] Price calculation and slippage protection
+* [ ] Transaction retry mechanism
+3.4 Background Job Processing (Day 20-23)
+* [ ] BullMQ queue setup
+* [ ] Deposit watcher job
+* [ ] Swap processor job
+* [ ] Transaction monitoring jobs
+* [ ] Job failure handling and alerting
+Phase 4: ENERGY Management & Delegation (Weeks 4-5)
+Duration: 8 days Team: 2 Backend Developers + 1 Blockchain Developer
+Phase 4 Tasks:
+4.1 Staking Manager (Day 24-26)
+* [ ] TRX staking implementation (Stake 2.0)
+* [ ] ENERGY calculation and tracking
+* [ ] Unstaking and resource management
+* [ ] Multi-signature wallet support
+4.2 ENERGY Delegation (Day 26-28)
+* [ ] Automatic delegation to users
+* [ ] Delegation tracking and monitoring
+* [ ] ENERGY consumption monitoring
+* [ ] Re-delegation logic
+4.3 Quota Management (Day 28-30)
+* [ ] User quota calculation
+* [ ] ENERGY credit system
+* [ ] Usage tracking and limits
+* [ ] Real-time balance updates
+4.4 WebSocket Events (Day 30-31)
+* [ ] Real-time quota updates
+* [ ] Delegation notifications
+* [ ] System status broadcasting
+* [ ] Client connection management
+Phase 5: Admin Dashboard & Monitoring (Weeks 5-6)
+Duration: 8 days Team: 2 Backend Developers
+Phase 5 Tasks:
+5.1 Admin APIs (Day 32-34)
+* [ ] System reserves monitoring
+* [ ] Manual delegation endpoints
+* [ ] User management operations
+* [ ] USDT refund functionality
+* [ ] System health endpoints
+5.2 Reporting & Analytics (Day 34-36)
+* [ ] Transaction reporting
+* [ ] System metrics collection
+* [ ] Performance monitoring
+* [ ] Financial reconciliation tools
+5.3 Alerting System (Day 36-38)
+* [ ] Low reserve alerts
+* [ ] Failed transaction monitoring
+* [ ] System health alerts
+* [ ] Slack/email notifications
+5.4 Audit & Compliance (Day 38-39)
+* [ ] Comprehensive audit logging
+* [ ] SOC 2 compliance features
+* [ ] Data retention policies
+* [ ] Regulatory reporting tools
+Phase 6: Testing & Optimization (Weeks 6-7)
+Duration: 8 days Team: 2 Backend Developers + 1 QA Engineer
+Phase 6 Tasks:
+6.1 Comprehensive Testing (Day 40-43)
+* [ ] Unit test coverage (≥90%)
+* [ ] Integration test suite
+* [ ] End-to-end testing
+* [ ] Load testing and performance optimization
+6.2 Security Hardening (Day 43-45)
+* [ ] Security audit and penetration testing
+* [ ] Vulnerability assessment
+* [ ] Security best practices implementation
+* [ ] Third-party security review
+6.3 Performance Optimization (Day 45-47)
+* [ ] Database query optimization
+* [ ] Caching strategy implementation
+* [ ] API response optimization
+* [ ] Memory and resource optimization
+Phase 7: Deployment & Production Setup (Week 7)
+Duration: 5 days Team: 2 Backend Developers + 1 DevOps Engineer
+Phase 7 Tasks:
+7.1 Production Environment (Day 48-50)
+* [ ] AWS infrastructure setup
+* [ ] ECS service configuration
+* [ ] Load balancer and SSL setup
+* [ ] Database migration to production
+7.2 CI/CD Pipeline (Day 50-52)
+* [ ] GitHub Actions workflow
+* [ ] Automated testing pipeline
+* [ ] Blue-green deployment setup
+* [ ] Rollback procedures
+7.3 Monitoring & Logging (Day 52)
+* [ ] CloudWatch integration
+* [ ] Application metrics
+* [ ] Error tracking setup
+* [ ] Performance monitoring
+5. API Endpoints Specification
+Authentication Endpoints
+POST /v1/auth/signup          # User registration
+POST /v1/auth/verify          # Email verification
+POST /v1/auth/login           # User login
+POST /v1/auth/refresh         # Token refresh
+POST /v1/auth/forgot-password # Password reset request
+POST /v1/auth/reset-password  # Password reset confirmation
+POST /v1/auth/logout          # User logout
+User Management Endpoints
+GET  /v1/user/profile         # Get user profile
+PUT  /v1/user/profile         # Update user profile
+GET  /v1/user/quota           # Get ENERGY quota
+GET  /v1/user/history         # Transaction history
+GET  /v1/user/deposits        # Deposit history
+Wallet & Deposit Endpoints
+GET  /v1/wallet/address       # Get deposit address
+GET  /v1/wallet/balance       # Get wallet balances
+POST /v1/deposits/webhook     # Deposit notification webhook
+GET  /v1/deposits/:id         # Get deposit details
+Admin Endpoints
+GET  /v1/admin/dashboard      # Admin dashboard data
+GET  /v1/admin/reserves       # System reserves
+GET  /v1/admin/users          # User management
+POST /v1/admin/delegate       # Manual delegation
+POST /v1/admin/refund         # Process refund
+GET  /v1/admin/transactions   # All transactions
+GET  /v1/admin/health         # System health
+System Endpoints
+GET  /v1/health               # Health check
+GET  /v1/metrics              # System metrics
+6. Database Schema Design
+Core Entities
+Users Table
+- id (UUID, Primary Key)
+- email (String, Unique)
+- passwordHash (String)
+- verified (Boolean)
+- tronAddress (String)
+- energyQuota (Integer)
+- role (Enum: user, admin)
+- createdAt (DateTime)
+- updatedAt (DateTime)
+Deposits Table
+- id (CUID, Primary Key)
+- userId (UUID, Foreign Key)
+- txHash (String, Unique)
+- amountUSDT (Decimal)
+- confirmed (Boolean)
+- processedAt (DateTime)
+- createdAt (DateTime)
+Delegations Table
+- id (CUID, Primary Key)
+- userId (UUID, Foreign Key)
+- energyAmount (Integer)
+- txHash (String)
+- status (Enum: pending, completed, failed)
+- createdAt (DateTime)
+- completedAt (DateTime)
+Transactions Table
+- id (CUID, Primary Key)
+- type (Enum: deposit, swap, stake, delegate)
+- fromAddress (String)
+- toAddress (String)
+- amount (Decimal)
+- txHash (String)
+- status (Enum: pending, completed, failed)
+- createdAt (DateTime)
+7. Security Implementation
+Authentication & Authorization
+* JWT tokens with 15-minute access and 7-day refresh
+* Argon2id password hashing
+* TOTP 2FA for admin accounts
+* Role-based access control
+API Security
+* Helmet.js for security headers
+* CORS configuration
+* Rate limiting (auth: 5/min, API: 100/min)
+* Request size limits
+* Input validation with Zod
+Data Protection
+* Environment variable encryption
+* Database connection SSL
+* Secrets management with AWS SSM
+* PII data encryption at rest
+8. Testing Strategy
+Unit Tests (≥90% coverage)
+* Service layer business logic
+* Utility functions
+* Validation schemas
+* Error handling
+Integration Tests
+* API endpoint testing
+* Database operations
+* External service mocking
+* Authentication flows
+End-to-End Tests
+* Complete user journeys
+* Deposit to delegation flow
+* Admin operations
+* Error scenarios
+Performance Tests
+* Load testing with 100 concurrent users
+* Stress testing deposit processing
+* Database performance under load
+* Memory leak detection
+9. Monitoring & Observability
+Application Metrics
+* API response times
+* Error rates
+* Queue processing times
+* Database connection pool
+Business Metrics
+* Daily deposit volume
+* ENERGY delegation success rate
+* User registration rate
+* System reserve levels
+Alerting
+* Critical error threshold alerts
+* Low reserve warnings
+* Failed transaction alerts
+* Performance degradation notifications
+10. Risk Mitigation
+Technical Risks
+* Blockchain Network Issues: Implement retry mechanisms and fallback nodes
+* API Rate Limits: Implement caching and request optimization
+* Database Performance: Connection pooling and query optimization
+* Memory Leaks: Regular monitoring and automated restarts
+Business Risks
+* Insufficient Reserves: Real-time monitoring and automated alerts
+* Regulatory Changes: Compliance monitoring and legal review
+* Smart Contract Risks: Multi-signature wallets and tested contracts
+* Market Volatility: Price monitoring and slippage protection
+11. Deployment Strategy
+Environment Setup
+* Development: Local Docker Compose
+* Staging: AWS ECS with reduced resources
+* Production: AWS ECS with auto-scaling
+Deployment Process
+1. Code review and approval
+2. Automated testing pipeline
+3. Staging deployment and testing
+4. Blue-green production deployment
+5. Post-deployment monitoring
+Rollback Procedures
+* Automated rollback on health check failures
+* Database migration rollback scripts
+* Traffic routing to previous version
+* Manual rollback procedures documented
+12. Success Metrics
+Technical KPIs
+* 99.9% uptime achievement
+* p95 latency < 300ms
+* Zero security incidents
+* Test coverage ≥ 90%
+Business KPIs
+* User onboarding within 30 seconds
+* 99.9% delegation success rate
+* Zero fund losses
+* Customer satisfaction > 4.5/5
+13. Team & Timeline
+Team Composition
+* 2 Senior Backend Developers: Core API development
+* 1 Blockchain Developer: TRON integration
+* 1 DevOps Engineer: Infrastructure and deployment
+* 1 QA Engineer: Testing and quality assurance
+* 1 Product Manager: Requirements and coordination
+Critical Path Timeline
+Total Duration: 7 weeks (49 days)
+* Week 1-2: Foundation & Infrastructure
+* Week 2-3: Authentication & User Management
+* Week 3-4: TRON Integration & Deposits
+* Week 4-5: ENERGY Management
+* Week 5-6: Admin & Monitoring
+* Week 6-7: Testing & Deployment
+Milestone Deliverables
+* Week 2: Core API foundation with auth
+* Week 4: USDT deposit processing working
+* Week 5: ENERGY delegation functional
+* Week 6: Admin dashboard complete
+* Week 7: Production deployment ready
+This comprehensive plan ensures systematic development of a robust, secure, and scalable TRON ENERGY broker API service meeting all specified requirements and performance targets.

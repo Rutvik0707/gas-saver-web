@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run lint)",
+      "Bash(timeout 10s npm run dev)",
+      "Bash(npm run generate-keys:*)",
+      "Bash(npx prisma migrate:*)",
+      "Bash(npx prisma:*)",
+      "Bash(npm run dev:*)",
+      "Bash(timeout 15 npm run dev)",
+      "Bash(npx ts-node --transpile-only -e \"console.log('Testing TronWeb import...'); const TronWeb = require('tronweb'); console.log('TronWeb imported successfully');\")",
+      "Bash(npx ts-node:*)",
+      "Bash(timeout 10 npm run dev)",
+      "Bash(timeout 10 npm start)",
+      "Bash(curl:*)",
+      "Bash(rm:*)",
+      "Bash(node:*)",
+      "Bash(grep:*)"
+    ],
+    "deny": []
+  }
+}
