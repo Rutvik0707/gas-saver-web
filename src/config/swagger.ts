@@ -38,7 +38,7 @@ const swaggerDefinition = {
       description: 'Development server',
     },
     {
-      url: `https://api.energybroker.com/api/${config.app.apiVersion}`,
+      url: `https://energy-demo.scriptlanes.in/api/${config.app.apiVersion}`,
       description: 'Production server',
     },
   ],
