@@ -14,6 +14,25 @@ import { apiUtils } from './shared/utils';
 export function createApp(): express.Application {
   const app = express();
 
+  // Global serialization fix for BigInt, Decimal, and Date
+  const originalStringify = JSON.stringify;
+  JSON.stringify = function(value, replacer, space) {
+    return originalStringify(value, function(key, val) {
+      if (typeof val === 'bigint') {
+        return val.toString();
+      }
+      // Handle Prisma Decimal type
+      if (val && typeof val === 'object' && 'toString' in val && val.constructor.name === 'Decimal') {
+        return val.toString();
+      }
+      // Handle Date objects
+      if (val instanceof Date) {
+        return val.toISOString();
+      }
+      return typeof replacer === 'function' ? replacer(key, val) : val;
+    }, space);
+  };
+
   // Security middleware
   app.use(helmet());
   app.use(cors({

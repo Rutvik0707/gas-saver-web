@@ -98,13 +98,13 @@ export class UserService {
     return this.formatUserResponse(user);
   }
 
-  async getUserWithRelations(id: string): Promise<UserWithRelations> {
+  async getUserWithRelations(id: string): Promise<any> {
     const user = await this.userRepository.findByIdWithRelations(id);
     if (!user) {
       throw new NotFoundException('User', id);
     }
 
-    return user;
+    return this.formatUserWithRelationsResponse(user);
   }
 
   async updateUser(id: string, updateData: UpdateUserDto): Promise<UserResponse> {
@@ -206,5 +206,54 @@ export class UserService {
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };
+  }
+
+  private formatUserWithRelationsResponse(user: UserWithRelations): any {
+    // Helper function to recursively convert problematic types
+    const convertTypes = (obj: any): any => {
+      if (obj === null || obj === undefined) {
+        return obj;
+      }
+      
+      if (typeof obj === 'bigint') {
+        return obj.toString();
+      }
+      
+      // Handle Prisma Decimal type
+      if (obj && typeof obj === 'object' && 'toString' in obj && obj.constructor.name === 'Decimal') {
+        return obj.toString();
+      }
+      
+      // Handle Date objects
+      if (obj instanceof Date) {
+        return obj.toISOString();
+      }
+      
+      if (Array.isArray(obj)) {
+        return obj.map(item => convertTypes(item));
+      }
+      
+      if (typeof obj === 'object') {
+        const converted: any = {};
+        for (const [key, value] of Object.entries(obj)) {
+          converted[key] = convertTypes(value);
+        }
+        return converted;
+      }
+      
+      return obj;
+    };
+
+    return convertTypes({
+      id: user.id,
+      email: user.email,
+      tronAddress: user.tronAddress,
+      credits: user.credits.toString(),
+      isActive: user.isActive,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+      deposits: user.deposits || [],
+      transactions: user.transactions || [],
+    });
   }
 }

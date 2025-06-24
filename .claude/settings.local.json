@@ -21,7 +21,9 @@
       "Bash(npm install:*)",
       "Bash(npx tsc:*)",
       "Bash(npm run seed:*)",
-      "WebFetch(domain:shasta.tronscan.org)"
+      "WebFetch(domain:shasta.tronscan.org)",
+      "Bash(pkill:*)",
+      "Bash(npm start)"
     ],
     "deny": []
   }
