@@ -33,3 +33,24 @@ export function validateParams(schema: ZodSchema) {
     }
   };
 }
+
+export function validationMiddleware(schema: ZodSchema, type: 'body' | 'query' | 'params' = 'body') {
+  return (req: Request, res: Response, next: NextFunction) => {
+    try {
+      switch (type) {
+        case 'body':
+          req.body = schema.parse(req.body);
+          break;
+        case 'query':
+          req.query = schema.parse(req.query);
+          break;
+        case 'params':
+          req.params = schema.parse(req.params);
+          break;
+      }
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
+}

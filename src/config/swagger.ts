@@ -15,10 +15,14 @@ const swaggerDefinition = {
     - Credit system for internal accounting
     - Automated energy delegation to user wallets
     - Real-time transaction monitoring and history
+    - Comprehensive admin dashboard with user and transaction management
     
     ## Authentication
     Most endpoints require authentication using JWT tokens. After successful login, include the token in the Authorization header:
     \`Authorization: Bearer <your-jwt-token>\`
+    
+    **User Authentication**: Use \`/api/v1/users/login\` for regular user access
+    **Admin Authentication**: Use \`/api/v1/admin/login\` for admin dashboard access
     
     ## Testnet Notice
     ⚠️ This API operates on TRON testnet only. Do not use real funds or mainnet addresses.
@@ -389,6 +393,225 @@ const swaggerDefinition = {
           },
         },
       },
+      // Admin schemas
+      AdminLogin: {
+        type: 'object',
+        required: ['email', 'password'],
+        properties: {
+          email: {
+            type: 'string',
+            format: 'email',
+            example: 'admin@example.com',
+          },
+          password: {
+            type: 'string',
+            example: 'adminPassword123',
+          },
+        },
+      },
+      CreateAdminDto: {
+        type: 'object',
+        required: ['email', 'password'],
+        properties: {
+          email: {
+            type: 'string',
+            format: 'email',
+            example: 'newadmin@example.com',
+          },
+          password: {
+            type: 'string',
+            minLength: 8,
+            example: 'securePassword123',
+          },
+          name: {
+            type: 'string',
+            example: 'John Admin',
+          },
+          role: {
+            type: 'string',
+            enum: ['SUPER_ADMIN', 'ADMIN', 'VIEWER'],
+            default: 'ADMIN',
+            example: 'ADMIN',
+          },
+          permissions: {
+            type: 'array',
+            items: {
+              type: 'string',
+            },
+            example: ['view_users', 'edit_users', 'view_deposits'],
+          },
+        },
+      },
+      UpdateAdminDto: {
+        type: 'object',
+        properties: {
+          email: {
+            type: 'string',
+            format: 'email',
+            example: 'updated@example.com',
+          },
+          name: {
+            type: 'string',
+            example: 'Updated Name',
+          },
+          role: {
+            type: 'string',
+            enum: ['SUPER_ADMIN', 'ADMIN', 'VIEWER'],
+            example: 'ADMIN',
+          },
+          permissions: {
+            type: 'array',
+            items: {
+              type: 'string',
+            },
+            example: ['view_users', 'edit_users'],
+          },
+          isActive: {
+            type: 'boolean',
+            example: true,
+          },
+        },
+      },
+      ChangePasswordDto: {
+        type: 'object',
+        required: ['currentPassword', 'newPassword'],
+        properties: {
+          currentPassword: {
+            type: 'string',
+            example: 'currentPassword123',
+          },
+          newPassword: {
+            type: 'string',
+            minLength: 8,
+            example: 'newPassword123',
+          },
+        },
+      },
+      AdminResponse: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            example: 'clp1234567890abcdef',
+          },
+          email: {
+            type: 'string',
+            format: 'email',
+            example: 'admin@example.com',
+          },
+          name: {
+            type: 'string',
+            example: 'John Admin',
+          },
+          role: {
+            type: 'string',
+            enum: ['SUPER_ADMIN', 'ADMIN', 'VIEWER'],
+            example: 'ADMIN',
+          },
+          permissions: {
+            type: 'array',
+            items: {
+              type: 'string',
+            },
+            example: ['view_users', 'edit_users', 'view_deposits'],
+          },
+          isActive: {
+            type: 'boolean',
+            example: true,
+          },
+          lastLoginAt: {
+            type: 'string',
+            format: 'date-time',
+            nullable: true,
+            example: '2024-01-01T00:00:00.000Z',
+          },
+          createdAt: {
+            type: 'string',
+            format: 'date-time',
+            example: '2024-01-01T00:00:00.000Z',
+          },
+          updatedAt: {
+            type: 'string',
+            format: 'date-time',
+            example: '2024-01-01T00:00:00.000Z',
+          },
+        },
+      },
+      AdminLoginResponse: {
+        type: 'object',
+        properties: {
+          admin: {
+            $ref: '#/components/schemas/AdminResponse',
+          },
+          token: {
+            type: 'string',
+            example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+            description: 'JWT authentication token for admin',
+          },
+          expiresIn: {
+            type: 'string',
+            example: '8h',
+            description: 'Token expiration time',
+          },
+        },
+      },
+      DashboardStats: {
+        type: 'object',
+        properties: {
+          users: {
+            type: 'object',
+            properties: {
+              total: { type: 'number', example: 1250 },
+              active: { type: 'number', example: 1100 },
+              inactive: { type: 'number', example: 150 },
+              recentRegistrations: { type: 'number', example: 25 },
+            },
+          },
+          deposits: {
+            type: 'object',
+            properties: {
+              total: { type: 'number', example: 500 },
+              pending: { type: 'number', example: 10 },
+              confirmed: { type: 'number', example: 15 },
+              processed: { type: 'number', example: 450 },
+              failed: { type: 'number', example: 20 },
+              expired: { type: 'number', example: 5 },
+              totalAmount: { type: 'string', example: '125000.500000' },
+              recentDeposits: { type: 'number', example: 35 },
+            },
+          },
+          transactions: {
+            type: 'object',
+            properties: {
+              total: { type: 'number', example: 2500 },
+              pending: { type: 'number', example: 20 },
+              completed: { type: 'number', example: 2400 },
+              failed: { type: 'number', example: 80 },
+              totalVolume: { type: 'string', example: '500000.750000' },
+              recentTransactions: { type: 'number', example: 150 },
+            },
+          },
+          addressPool: {
+            type: 'object',
+            properties: {
+              total: { type: 'number', example: 100 },
+              free: { type: 'number', example: 75 },
+              assigned: { type: 'number', example: 15 },
+              used: { type: 'number', example: 10 },
+              utilization: { type: 'number', example: 25.0 },
+            },
+          },
+          system: {
+            type: 'object',
+            properties: {
+              uptime: { type: 'string', example: '86400' },
+              tronConnectivity: { type: 'boolean', example: true },
+              dbConnectivity: { type: 'boolean', example: true },
+              lastCronRun: { type: 'string', format: 'date-time', example: '2024-01-01T00:00:00.000Z' },
+            },
+          },
+        },
+      },
     },
   },
   tags: [
@@ -407,6 +630,10 @@ const swaggerDefinition = {
     {
       name: 'System',
       description: 'System health and information endpoints',
+    },
+    {
+      name: 'Admin',
+      description: 'Admin authentication and management endpoints',
     },
   ],
 };

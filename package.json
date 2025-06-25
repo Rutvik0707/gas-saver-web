@@ -17,6 +17,7 @@
     "migrate:reset": "prisma migrate reset",
     "generate": "prisma generate",
     "seed": "ts-node prisma/seed.ts",
+    "seed:admin": "ts-node scripts/seed-admin.ts",
     "studio": "prisma studio",
     "generate-keys": "ts-node scripts/generate-tron-keys.ts"
   },

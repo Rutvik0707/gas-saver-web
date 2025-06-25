@@ -9,6 +9,7 @@ import { config, validateTronConnection, swaggerSpec } from './config';
 import { errorMiddleware } from './middleware';
 import { userRoutes } from './modules/user';
 import { depositRoutes } from './modules/deposit';
+import { adminRoutes } from './modules/admin';
 import { apiUtils } from './shared/utils';
 
 export function createApp(): express.Application {
@@ -130,6 +131,7 @@ export function createApp(): express.Application {
   apiRouter.use('/users', userRoutes);
   apiRouter.use('/auth', userRoutes); // Auth routes are part of user module
   apiRouter.use('/deposits', depositRoutes);
+  apiRouter.use('/admin', adminRoutes);
 
   // Mount API router
   app.use(`/api/${config.app.apiVersion}`, apiRouter);

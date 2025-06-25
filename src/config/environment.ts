@@ -37,6 +37,11 @@ const envSchema = z.object({
   // Rate Limiting
   RATE_LIMIT_WINDOW_MS: z.string().transform(Number).default('900000'),
   RATE_LIMIT_MAX_REQUESTS: z.string().transform(Number).default('100'),
+
+  // Admin Settings
+  DEFAULT_ADMIN_EMAIL: z.string().email().optional(),
+  DEFAULT_ADMIN_PASSWORD: z.string().min(8).optional(),
+  ENCRYPTION_SECRET: z.string().min(32, 'ENCRYPTION_SECRET must be at least 32 characters'),
 });
 
 const env = envSchema.parse(process.env);
@@ -74,5 +79,10 @@ export const config = {
   rateLimit: {
     windowMs: env.RATE_LIMIT_WINDOW_MS,
     maxRequests: env.RATE_LIMIT_MAX_REQUESTS,
+  },
+  admin: {
+    defaultEmail: env.DEFAULT_ADMIN_EMAIL,
+    defaultPassword: env.DEFAULT_ADMIN_PASSWORD,
+    encryptionSecret: env.ENCRYPTION_SECRET,
   },
 } as const;
