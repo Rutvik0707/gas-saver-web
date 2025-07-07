@@ -5,12 +5,15 @@ import rateLimit from 'express-rate-limit';
 import swaggerUi from 'swagger-ui-express';
 import 'express-async-errors';
 
+
 import { config, validateTronConnection, swaggerSpec } from './config';
 import { errorMiddleware } from './middleware';
 import { userRoutes } from './modules/user';
 import { depositRoutes } from './modules/deposit';
 import { adminRoutes } from './modules/admin';
 import { apiUtils } from './shared/utils';
+import { feedbackRoutes } from './modules/feedback';
+
 
 export function createApp(): express.Application {
   const app = express();
@@ -132,6 +135,7 @@ export function createApp(): express.Application {
   apiRouter.use('/auth', userRoutes); // Auth routes are part of user module
   apiRouter.use('/deposits', depositRoutes);
   apiRouter.use('/admin', adminRoutes);
+  apiRouter.use('/feedback', feedbackRoutes); // <-- Add this line
 
   // Mount API router
   app.use(`/api/${config.app.apiVersion}`, apiRouter);
