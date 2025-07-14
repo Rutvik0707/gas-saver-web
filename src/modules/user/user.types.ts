@@ -29,6 +29,7 @@ export interface UserResponse {
   tronAddress: string;
   credits: string;
   isActive: boolean;
+  isVerified?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -42,4 +43,15 @@ export interface LoginResponse {
   user: UserResponse;
   token: string;
   expiresIn: string;
+}
+
+export const verifyEmailSchema = z.object({
+  token: z.string().min(1, 'Verification token is required'),
+});
+
+export type VerifyEmailDto = z.infer<typeof verifyEmailSchema>;
+
+export interface VerifyEmailResponse {
+  success: boolean;
+  message: string;
 }

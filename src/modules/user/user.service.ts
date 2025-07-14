@@ -7,6 +7,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '../../shared/exceptions';
+import { emailService } from '../../services';
 import { UserRepository } from './user.repository';
 import {
   CreateUserDto,
@@ -45,12 +46,18 @@ export class UserService {
     const passwordHash = await cryptoUtils.hashPassword(password);
 
     // Create user
+    // Generate verification token
+    const verificationToken = cryptoUtils.generateToken();
+
     const newUser = await this.userRepository.create({
       email,
-      password,
       tronAddress,
       passwordHash,
+      verificationToken,
     });
+
+    // Send verification email
+    await emailService.sendVerificationEmail(email, verificationToken);
 
     logger.info(`New user created: ${email}`, { userId: newUser.id });
 
@@ -89,6 +96,16 @@ export class UserService {
     };
   }
 
+  async verifyEmailToken(token: string): Promise<void> {
+    const user = await this.userRepository.findByVerificationToken(token);
+    if (!user || !user.verificationTokenExpiry || user.verificationTokenExpiry < new Date()) {
+      throw new UnauthorizedException('Invalid or expired verification token');
+    }
+
+    await this.userRepository.setVerified(user.id);
+    logger.info(`User email verified: ${user.email}`, { userId: user.id });
+  }
+
   async getUserById(id: string): Promise<UserResponse> {
     const user = await this.userRepository.findById(id);
     if (!user) {
@@ -97,6 +114,7 @@ export class UserService {
 
     return this.formatUserResponse(user);
   }
+  
 
   async getUserWithRelations(id: string): Promise<any> {
     const user = await this.userRepository.findByIdWithRelations(id);

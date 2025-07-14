@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { UserService } from './user.service';
-import { createUserSchema, loginUserSchema, updateUserSchema } from './user.types';
+import { createUserSchema, loginUserSchema, updateUserSchema, verifyEmailSchema } from './user.types';
 import { ValidationException } from '../../shared/exceptions';
 import { apiUtils } from '../../shared/utils';
 import { logger } from '../../config';
@@ -214,17 +214,22 @@ export class UserController {
 
   /**
    * @swagger
-   * /users/profile:
+   * /users/verify-email:
    *   get:
    *     tags:
-   *       - User Management
-   *     summary: Get user profile
-   *     description: Retrieve the authenticated user's profile including credits, recent deposits, and transactions.
-   *     security:
-   *       - bearerAuth: []
+   *       - Authentication
+   *     summary: Verify email address
+   *     description: Verify a user's email address using a token.
+   *     parameters:
+   *       - in: query
+   *         name: token
+   *         schema:
+   *           type: string
+   *         required: true
+   *         description: The token sent to the user's email for verification.
    *     responses:
    *       200:
-   *         description: User profile retrieved successfully
+   *         description: Email verified successfully
    *         content:
    *           application/json:
    *             schema:
@@ -235,52 +240,18 @@ export class UserController {
    *                   example: true
    *                 message:
    *                   type: string
-   *                   example: "User profile retrieved successfully"
-   *                 data:
-   *                   type: object
-   *                   properties:
-   *                     id:
-   *                       type: string
-   *                       example: "clp1234567890abcdef"
-   *                     email:
-   *                       type: string
-   *                       example: "john.doe@example.com"
-   *                     tronAddress:
-   *                       type: string
-   *                       example: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
-   *                     credits:
-   *                       type: string
-   *                       example: "150.750000"
-   *                     isActive:
-   *                       type: boolean
-   *                       example: true
-   *                     createdAt:
-   *                       type: string
-   *                       format: date-time
-   *                     updatedAt:
-   *                       type: string
-   *                       format: date-time
-   *                     deposits:
-   *                       type: array
-   *                       items:
-   *                         $ref: '#/components/schemas/DepositResponse'
-   *                       description: "Recent deposits (last 10)"
-   *                     transactions:
-   *                       type: array
-   *                       items:
-   *                         $ref: '#/components/schemas/TransactionResponse'
-   *                       description: "Recent transactions (last 10)"
+   *                   example: "Email verified successfully"
    *                 timestamp:
    *                   type: string
    *                   format: date-time
-   *       401:
-   *         description: Unauthorized - Invalid or missing token
+   *       400:
+   *         description: Validation error
    *         content:
    *           application/json:
    *             schema:
    *               $ref: '#/components/schemas/ErrorResponse'
-   *       404:
-   *         description: User not found
+   *       401:
+   *         description: Invalid or expired token
    *         content:
    *           application/json:
    *             schema:
@@ -292,6 +263,20 @@ export class UserController {
    *             schema:
    *               $ref: '#/components/schemas/ErrorResponse'
    */
+  async verifyEmail(req: Request, res: Response): Promise<void> {
+    try {
+      const { token } = req.query;
+      const validatedToken = verifyEmailSchema.parse({ token: String(token) });
+      await this.userService.verifyEmailToken(validatedToken.token);
+      res.status(200).json(apiUtils.success('Email verified successfully'));
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('Email verification failed', { error: error.message });
+        throw error;
+      }
+    }
+  }
+
   async getProfile(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       if (!req.user) {

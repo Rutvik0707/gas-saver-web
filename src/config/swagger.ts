@@ -175,6 +175,11 @@ Most endpoints require JWT authentication. After login, include the token in:
             type: 'boolean',
             example: true,
           },
+          isVerified: {
+            type: 'boolean',
+            example: false,
+            description: 'Whether the user has verified their email address',
+          },
           createdAt: {
             type: 'string',
             format: 'date-time',
