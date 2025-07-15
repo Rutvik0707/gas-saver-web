@@ -1,11 +1,12 @@
 import { prisma } from '../../config';
 
 export class FeedbackService {
-  async submitFeedback(userId: string, message: string) {
+  async submitFeedback(userId: string, message: string, rating: number | null = null) {
     return prisma.feedback.create({
       data: {
         userId,
         message,
+        rating,
       },
       include: {
         user: {

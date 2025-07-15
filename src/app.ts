@@ -140,6 +140,12 @@ export function createApp(): express.Application {
   // Mount API router
   app.use(`/api/${config.app.apiVersion}`, apiRouter);
 
+  // Email verification redirect
+  app.get('/verify-email', (req, res) => {
+    // Redirect to the actual API endpoint
+    res.redirect(`/api/${config.app.apiVersion}/users/verify-email${req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : ''}`);
+  });
+
   // 404 handler
   app.use('*', (req, res) => {
     res.status(404).json(

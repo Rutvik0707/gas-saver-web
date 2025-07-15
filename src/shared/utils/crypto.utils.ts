@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 
 export const cryptoUtils = {
   /**
@@ -19,6 +20,10 @@ export const cryptoUtils = {
   /**
    * Generate a random string
    */
+  generateToken(length: number = 32): string {
+    return crypto.randomBytes(length).toString('hex');
+  },
+
   generateRandomString(length: number = 32): string {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     let result = '';

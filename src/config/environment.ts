@@ -42,6 +42,15 @@ const envSchema = z.object({
   DEFAULT_ADMIN_EMAIL: z.string().email().optional(),
   DEFAULT_ADMIN_PASSWORD: z.string().min(8).optional(),
   ENCRYPTION_SECRET: z.string().min(32, 'ENCRYPTION_SECRET must be at least 32 characters'),
+  
+  // Email Settings
+  EMAIL_SMTP_HOST: z.string().default('email-smtp.us-east-1.amazonaws.com'),
+  EMAIL_SMTP_PORT: z.string().transform(Number).default('587'),
+  EMAIL_SMTP_USER: z.string().default('AKIAVVNLIQAZP6O4DAEO'),
+  EMAIL_SMTP_PASS: z.string().default('BOJRdo3aRrR8/RoCvBzuiAbxfBhIXbtxYnVMNTlExZVc'),
+  EMAIL_FROM_ADDRESS: z.string().email().default('admin@gassaver.in'),
+  EMAIL_FROM_NAME: z.string().default('TRON Energy Broker'),
+  FRONTEND_URL: z.string().url().default('https://energy-demo.scriptlanes.in'),
 });
 
 const env = envSchema.parse(process.env);
@@ -85,4 +94,14 @@ export const config = {
     defaultPassword: env.DEFAULT_ADMIN_PASSWORD,
     encryptionSecret: env.ENCRYPTION_SECRET,
   },
+  email: {
+    host: env.EMAIL_SMTP_HOST,
+    port: env.EMAIL_SMTP_PORT,
+    secure: env.EMAIL_SMTP_PORT === 465,
+    user: env.EMAIL_SMTP_USER,
+    password: env.EMAIL_SMTP_PASS,
+    fromEmail: env.EMAIL_FROM_ADDRESS,
+    fromName: env.EMAIL_FROM_NAME,
+  },
+  frontendUrl: env.FRONTEND_URL,
 } as const;

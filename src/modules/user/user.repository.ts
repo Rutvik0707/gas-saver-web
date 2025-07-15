@@ -2,14 +2,21 @@ import { prisma } from '../../config';
 import { User, Prisma } from '@prisma/client';
 import { CreateUserDto, UpdateUserDto, UserWithRelations } from './user.types';
 
+interface CreateUserData extends Omit<CreateUserDto, 'password'> {
+  passwordHash: string;
+  verificationToken?: string;
+}
+
 export class UserRepository {
-  async create(userData: CreateUserDto & { passwordHash: string }): Promise<User> {
+  async create(userData: CreateUserData): Promise<User> {
     const { password, ...data } = userData as any;
     return prisma.user.create({
       data: {
         email: data.email,
         passwordHash: data.passwordHash,
         tronAddress: data.tronAddress,
+        verificationToken: data.verificationToken,
+        verificationTokenExpiry: data.verificationToken ? new Date(Date.now() + 24 * 60 * 60 * 1000) : undefined, // 24 hours from now
       },
     });
   }
@@ -29,6 +36,36 @@ export class UserRepository {
   async findByTronAddress(tronAddress: string): Promise<User | null> {
     return prisma.user.findUnique({
       where: { tronAddress },
+    });
+  }
+  
+  async findByVerificationToken(token: string): Promise<User | null> {
+    return prisma.user.findFirst({
+      where: { verificationToken: token },
+    });
+  }
+  
+  async setVerified(id: string): Promise<User> {
+    return prisma.user.update({
+      where: { id },
+      data: { 
+        isVerified: true,
+        verificationToken: null,
+        verificationTokenExpiry: null
+      },
+    });
+  }
+  
+  async createVerificationToken(id: string, token: string, expiryHours: number = 24): Promise<User> {
+    const expiryDate = new Date();
+    expiryDate.setHours(expiryDate.getHours() + expiryHours);
+    
+    return prisma.user.update({
+      where: { id },
+      data: {
+        verificationToken: token,
+        verificationTokenExpiry: expiryDate
+      },
     });
   }
 

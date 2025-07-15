@@ -7,7 +7,7 @@ export class FeedbackController {
 
   async submitFeedback(req: Request, res: Response) {
     const id = (req as any).user?.id;
-    const { message } = req.body;
+    const { message, rating } = req.body;
     console.log((req as any).user);
     if (!id) {
       return res.status(401).json(
@@ -21,7 +21,15 @@ export class FeedbackController {
       );
     }
 
-    const feedback = await this.feedbackService.submitFeedback(id, message);
+    // Validate rating if provided
+    const parsedRating = rating !== undefined ? parseInt(rating, 10) : null;
+    if (parsedRating !== null && (isNaN(parsedRating) || parsedRating < 1 || parsedRating > 5)) {
+      return res.status(400).json(
+        apiUtils.error('Rating must be a number between 1 and 5')
+      );
+    }
+
+    const feedback = await this.feedbackService.submitFeedback(id, message, parsedRating);
 
     res.json(apiUtils.success('Feedback submitted successfully', feedback));
   }

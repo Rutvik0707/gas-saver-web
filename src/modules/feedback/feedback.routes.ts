@@ -31,6 +31,12 @@ import { authMiddleware } from '../../middleware/auth.middleware';
  *                 type: string
  *                 description: The feedback message
  *                 example: "Great platform! Love the energy trading features."
+ *               rating:
+ *                 type: integer
+ *                 description: Optional rating from 1 to 5
+ *                 minimum: 1
+ *                 maximum: 5
+ *                 example: 5
  *     responses:
  *       200:
  *         description: Feedback submitted successfully
