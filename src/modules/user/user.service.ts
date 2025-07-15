@@ -8,6 +8,8 @@ import {
   UnauthorizedException,
 } from '../../shared/exceptions';
 import { UserRepository } from './user.repository';
+import { emailService } from '../../services/email.service';
+import { randomBytes } from 'crypto';
 import {
   CreateUserDto,
   LoginUserDto,
@@ -15,6 +17,9 @@ import {
   UserResponse,
   LoginResponse,
   UserWithRelations,
+  ForgotPasswordDto,
+  ResetPasswordDto,
+  ChangePasswordDto,
 } from './user.types';
 import { tronUtils } from '../../config';
 
@@ -255,5 +260,102 @@ export class UserService {
       deposits: user.deposits || [],
       transactions: user.transactions || [],
     });
+  }
+
+  // Password reset methods
+  async forgotPassword(forgotPasswordData: ForgotPasswordDto): Promise<{ message: string }> {
+    const { email } = forgotPasswordData;
+
+    // Find user by email
+    const user = await this.userRepository.findByEmail(email);
+    if (!user) {
+      // For security, don't reveal if email exists or not
+      logger.warn(`Password reset requested for non-existent email: ${email}`);
+      return { message: 'If an account with that email exists, we have sent a password reset link.' };
+    }
+
+    // Check if user is active
+    if (!user.isActive) {
+      logger.warn(`Password reset requested for inactive user: ${email}`);
+      return { message: 'If an account with that email exists, we have sent a password reset link.' };
+    }
+
+    // Generate secure reset token
+    const resetToken = this.generateResetToken();
+    const tokenExpiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
+
+    // Save reset token to database
+    await this.userRepository.updateResetToken(user.id, resetToken, tokenExpiresAt);
+
+    // Send email with reset token
+    try {
+      await emailService.sendPasswordResetEmail(email, resetToken, user.email);
+      logger.info(`Password reset email sent to: ${email}`, { userId: user.id });
+    } catch (error) {
+      logger.error(`Failed to send password reset email to: ${email}`, { 
+        userId: user.id, 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      });
+      throw new ValidationException('Failed to send password reset email. Please try again later.');
+    }
+
+    return { message: 'If an account with that email exists, we have sent a password reset link.' };
+  }
+
+  async resetPassword(resetPasswordData: ResetPasswordDto): Promise<{ message: string }> {
+    const { token, newPassword } = resetPasswordData;
+
+    // Find user by reset token
+    const user = await this.userRepository.findByResetToken(token);
+    if (!user) {
+      throw new ValidationException('Invalid or expired reset token');
+    }
+
+    // Hash new password
+    const passwordHash = await cryptoUtils.hashPassword(newPassword);
+
+    // Update password and clear reset token
+    await this.userRepository.updatePassword(user.id, passwordHash);
+
+    logger.info(`Password reset successful for user: ${user.email}`, { userId: user.id });
+
+    return { message: 'Password has been reset successfully. You can now log in with your new password.' };
+  }
+
+  async changePassword(userId: string, changePasswordData: ChangePasswordDto): Promise<{ message: string }> {
+    const { currentPassword, newPassword } = changePasswordData;
+
+    // Find user
+    const user = await this.userRepository.findById(userId);
+    if (!user) {
+      throw new NotFoundException('User', userId);
+    }
+
+    // Verify current password
+    const isCurrentPasswordValid = await cryptoUtils.verifyPassword(currentPassword, user.passwordHash);
+    if (!isCurrentPasswordValid) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+
+    // Check if new password is different from current password
+    const isSamePassword = await cryptoUtils.verifyPassword(newPassword, user.passwordHash);
+    if (isSamePassword) {
+      throw new ValidationException('New password must be different from current password');
+    }
+
+    // Hash new password
+    const passwordHash = await cryptoUtils.hashPassword(newPassword);
+
+    // Update password
+    await this.userRepository.updatePassword(user.id, passwordHash);
+
+    logger.info(`Password changed for user: ${user.email}`, { userId });
+
+    return { message: 'Password has been changed successfully.' };
+  }
+
+  private generateResetToken(): string {
+    // Generate a cryptographically secure random token
+    return randomBytes(32).toString('hex');
   }
 }

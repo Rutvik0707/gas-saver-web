@@ -91,4 +91,48 @@ export class UserRepository {
       where: { id },
     });
   }
+
+  // Password reset methods
+  async updateResetToken(id: string, resetToken: string, expiresAt: Date): Promise<User> {
+    return prisma.user.update({
+      where: { id },
+      data: {
+        resetToken,
+        resetTokenExpiresAt: expiresAt,
+      },
+    });
+  }
+
+  async findByResetToken(resetToken: string): Promise<User | null> {
+    return prisma.user.findFirst({
+      where: {
+        resetToken,
+        resetTokenExpiresAt: {
+          gt: new Date(), // Token must not be expired
+        },
+        isActive: true, // User must be active
+      },
+    });
+  }
+
+  async clearResetToken(id: string): Promise<User> {
+    return prisma.user.update({
+      where: { id },
+      data: {
+        resetToken: null,
+        resetTokenExpiresAt: null,
+      },
+    });
+  }
+
+  async updatePassword(id: string, passwordHash: string): Promise<User> {
+    return prisma.user.update({
+      where: { id },
+      data: {
+        passwordHash,
+        resetToken: null, // Clear reset token after password change
+        resetTokenExpiresAt: null,
+      },
+    });
+  }
 }
