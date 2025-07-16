@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import crypto from 'crypto';
+import crypto, { randomBytes } from 'crypto';
 import { config, logger } from '../../config';
 import { cryptoUtils } from '../../shared/utils';
 import { emailService } from '../../services/email.service';
@@ -11,13 +11,11 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '../../shared/exceptions';
-import { emailService } from '../../services';
 import { UserRepository } from './user.repository';
-import { emailService } from '../../services/email.service';
-import { randomBytes } from 'crypto';
 import {
   CreateUserDto,
   LoginUserDto,
+  LoginWithOtpDto,
   UpdateUserDto,
   UserResponse,
   LoginResponse,
@@ -25,6 +23,7 @@ import {
   ForgotPasswordDto,
   ResetPasswordDto,
   ChangePasswordDto,
+  VerifyOtpLoginDto,
 } from './user.types';
 // import { tronUtils } from '../../config';
 
@@ -126,15 +125,50 @@ async loginUser(loginData: LoginUserDto): Promise<LoginResponse> {
     };
   }
 
-  async verifyEmailToken(token: string): Promise<void> {
-    const user = await this.userRepository.findByVerificationToken(token);
-    if (!user || !user.verificationTokenExpiry || user.verificationTokenExpiry < new Date()) {
-      throw new UnauthorizedException('Invalid or expired verification token');
+  async loginWithOtp(loginData: LoginWithOtpDto): Promise<{ message: string }> {
+    const { identifier } = loginData;
+    let user;
+    
+    // Check if identifier is email or phone number
+    if (identifier.includes('@')) {
+      // It's an email
+      user = await this.userRepository.findByEmail(identifier);
+    } else {
+      // It's a phone number
+      user = await this.userRepository.findByPhoneNumber(identifier);
     }
-
-    await this.userRepository.setVerified(user.id);
-    logger.info(`User email verified: ${user.email}`, { userId: user.id });
+    
+    if (!user) {
+      throw new NotFoundException('User not found with the provided email or phone number');
+    }
+    
+    // Check if user is active
+    if (!user.isActive) {
+      throw new UnauthorizedException('User account is deactivated');
+    }
+    
+    // Generate new OTP
+    const otp = otpService.generateOTP(6);
+    const otpExpiry = otpService.calculateOTPExpiry();
+    
+    // Update OTP in database
+    await this.userRepository.setOtpCode(user.id, otp, otpExpiry);
+    
+    // Send OTP via email and WhatsApp
+    if (user.phoneNumber) {
+      await otpService.sendOTP(user.email, user.phoneNumber, otp);
+    } else {
+      // If no phone number, send only via email
+      await emailService.sendOTPEmail(user.email, otp);
+    }
+    
+    logger.info(`OTP login initiated for user: ${user.email}`, { userId: user.id });
+    
+    return { 
+      message: 'OTP has been sent to your registered email and phone number' 
+    };
   }
+
 
   async getUserById(id: string): Promise<UserResponse> {
     const user = await this.userRepository.findById(id);
@@ -385,6 +419,48 @@ async verifyEmailToken(token: string): Promise<UserResponse> {
     logger.info(`Phone verified for user: ${user.email}`, { userId: user.id });
     
     return this.formatUserResponse(verifiedUser);
+  }
+
+  async verifyOtpLogin(verifyData: VerifyOtpLoginDto): Promise<LoginResponse> {
+    const { identifier, otp } = verifyData;
+    let user;
+    
+    // Check if identifier is email or phone number
+    if (identifier.includes('@')) {
+      // It's an email
+      user = await this.userRepository.findByEmail(identifier);
+    } else {
+      // It's a phone number
+      user = await this.userRepository.findByPhoneNumber(identifier);
+    }
+    
+    if (!user) {
+      throw new ValidationException('User not found');
+    }
+    
+    // Check if user is active
+    if (!user.isActive) {
+      throw new UnauthorizedException('User account is deactivated');
+    }
+    
+    // Verify OTP
+    if (!otpService.isValidOTP(otp, user.otpCode, user.otpExpiry)) {
+      throw new ValidationException('Invalid or expired OTP');
+    }
+    
+    // Clear OTP after successful verification
+    await this.userRepository.setOtpCode(user.id, null, null);
+    
+    // Generate JWT token
+    const token = this.generateToken(user);
+    
+    logger.info(`User logged in via OTP: ${user.email}`, { userId: user.id });
+    
+    return {
+      user: this.formatUserResponse(user),
+      token,
+      expiresIn: config.jwt.expiresIn,
+    };
   }
 
   async resendOTP(email: string, phoneNumber: string): Promise<boolean> {

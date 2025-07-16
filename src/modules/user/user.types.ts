@@ -16,8 +16,17 @@ export const loginUserSchema = z.object({
   password: z.string().min(1, 'Password is required'),
 });
 
+export const loginWithOtpSchema = z.object({
+  identifier: z.string().min(1, 'Email or phone number is required'),
+});
+
 export const verifyOtpSchema = z.object({
   email: z.string().email('Invalid email format'),
+  otp: z.string().length(6, 'OTP must be 6 digits'),
+});
+
+export const verifyOtpLoginSchema = z.object({
+  identifier: z.string().min(1, 'Email or phone number is required'),
   otp: z.string().length(6, 'OTP must be 6 digits'),
 });
 
@@ -49,6 +58,7 @@ export const changePasswordSchema = z.object({
 // TypeScript types
 export type CreateUserDto = z.infer<typeof createUserSchema>;
 export type LoginUserDto = z.infer<typeof loginUserSchema>;
+export type LoginWithOtpDto = z.infer<typeof loginWithOtpSchema>;
 export type UpdateUserDto = z.infer<typeof updateUserSchema>;
 export type ForgotPasswordDto = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordDto = z.infer<typeof resetPasswordSchema>;
@@ -58,6 +68,7 @@ export const verifyEmailSchema = z.object({
 
 export type ChangePasswordDto = z.infer<typeof changePasswordSchema>;
 export type VerifyOtpDto = z.infer<typeof verifyOtpSchema>;
+export type VerifyOtpLoginDto = z.infer<typeof verifyOtpLoginSchema>;
 export type ResendOtpDto = z.infer<typeof resendOtpSchema>;
 export type VerifyEmailDto = z.infer<typeof verifyEmailSchema>;
 

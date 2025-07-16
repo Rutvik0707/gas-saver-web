@@ -11,6 +11,7 @@ export function createUserRoutes(userController: UserController): Router {
   
   // OTP and email verification routes (public)
   router.post('/verify-otp', userController.verifyOtp.bind(userController));
+  router.post('/verify-otp-login', userController.verifyOtpLogin.bind(userController));
   router.post('/resend-otp', userController.resendOtp.bind(userController));
   router.get('/verify-email', userController.verifyEmail.bind(userController));
   

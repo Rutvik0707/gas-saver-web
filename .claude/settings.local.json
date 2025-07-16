@@ -26,7 +26,13 @@
       "Bash(npm start)",
       "Bash(ls:*)",
       "Bash(rg:*)",
-      "Bash(npm run generate-system-wallet:*)"
+      "Bash(npm run generate-system-wallet:*)",
+      "Bash(git fetch:*)",
+      "Bash(mv:*)",
+      "Bash(npm run livecoins:*)",
+      "Bash(cp:*)",
+      "WebFetch(domain:developers.tron.network)",
+      "Bash(true)"
     ],
     "deny": []
   }

@@ -2,7 +2,9 @@ import { Request, Response } from 'express';
 import { UserService } from './user.service';
 import { 
   createUserSchema, 
-  loginUserSchema, 
+  loginUserSchema,
+  loginWithOtpSchema,
+  verifyOtpLoginSchema,
   updateUserSchema, 
   forgotPasswordSchema, 
   resetPasswordSchema, 
@@ -116,8 +118,8 @@ export class UserController {
    *   post:
    *     tags:
    *       - Authentication
-   *     summary: User login
-   *     description: Authenticate user with email and password
+   *     summary: Request OTP for login
+   *     description: Request OTP to be sent to user's email and phone number
    *     requestBody:
    *       required: true
    *       content:
@@ -125,19 +127,15 @@ export class UserController {
    *           schema:
    *             type: object
    *             required:
-   *               - email
-   *               - password
+   *               - identifier
    *             properties:
-   *               email:
+   *               identifier:
    *                 type: string
-   *                 format: email
-   *                 example: user@example.com
-   *               password:
-   *                 type: string
-   *                 example: SecurePass123!
+   *                 description: Email address or phone number
+   *                 example: user@example.com or +919876543210
    *     responses:
    *       200:
-   *         description: Login successful
+   *         description: OTP sent successfully
    *         content:
    *           application/json:
    *             schema:
@@ -148,33 +146,26 @@ export class UserController {
    *                   example: true
    *                 message:
    *                   type: string
-   *                   example: Login successful
-   *                 data:
-   *                   type: object
-   *                   properties:
-   *                     user:
-   *                       type: object
-   *                     token:
-   *                       type: string
-   *                     expiresIn:
-   *                       type: string
+   *                   example: OTP has been sent to your registered email and phone number
+   *       404:
+   *         description: User not found
    *       401:
-   *         description: Invalid credentials
+   *         description: User account is deactivated
    */
   async login(req: Request, res: Response): Promise<void> {
     try {
-      const validatedData = loginUserSchema.parse(req.body);
+      const validatedData = loginWithOtpSchema.parse(req.body);
       
-      logger.info('User login attempt', { email: validatedData.email });
+      logger.info('OTP login request', { identifier: validatedData.identifier });
       
-      const result = await this.userService.loginUser(validatedData);
+      const result = await this.userService.loginWithOtp(validatedData);
       
       res.json(
-        apiUtils.success('Login successful', result)
+        apiUtils.success(result.message)
       );
     } catch (error) {
       if (error instanceof Error) {
-        logger.error('User login failed', { error: error.message });
+        logger.error('OTP login request failed', { error: error.message });
       }
       throw error;
     }
@@ -224,6 +215,79 @@ export class UserController {
     } catch (error) {
       if (error instanceof Error) {
         logger.error('OTP verification failed', { error: error.message });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @swagger
+   * /users/verify-otp-login:
+   *   post:
+   *     tags:
+   *       - Authentication
+   *     summary: Verify OTP for login
+   *     description: Verify the OTP and receive access token
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - identifier
+   *               - otp
+   *             properties:
+   *               identifier:
+   *                 type: string
+   *                 description: Email address or phone number used for login
+   *                 example: user@example.com or +919876543210
+   *               otp:
+   *                 type: string
+   *                 pattern: '^[0-9]{6}$'
+   *                 example: "123456"
+   *     responses:
+   *       200:
+   *         description: OTP verified successfully, returns access token
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 message:
+   *                   type: string
+   *                   example: Login successful
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     user:
+   *                       type: object
+   *                     token:
+   *                       type: string
+   *                     expiresIn:
+   *                       type: string
+   *       400:
+   *         description: Invalid or expired OTP
+   *       404:
+   *         description: User not found
+   */
+  async verifyOtpLogin(req: Request, res: Response): Promise<void> {
+    try {
+      const validatedData = verifyOtpLoginSchema.parse(req.body);
+      
+      logger.info('OTP login verification attempt', { identifier: validatedData.identifier });
+      
+      const result = await this.userService.verifyOtpLogin(validatedData);
+      
+      res.json(
+        apiUtils.success('Login successful', result)
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('OTP login verification failed', { error: error.message });
       }
       throw error;
     }
