@@ -24,6 +24,11 @@ export interface DepositInitiationResponse {
   expectedAmount: string;
   expiresAt: Date;             // 3-hour expiration
   instructions: string[];      // Simple instructions, no memo required
+  energyInfo: {
+    estimatedEnergy: number;   // Energy amount to be delegated
+    energyInTRX: number;       // TRX equivalent of energy
+    description: string;       // Human-readable description
+  };
 }
 
 export interface DepositStatusResponse {

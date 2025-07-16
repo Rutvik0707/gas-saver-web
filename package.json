@@ -5,8 +5,12 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "devcoins": "cross-env NODE_ENV=development ts-node-dev --respawn --transpile-only src/server.ts",
+    "livecoins": "cross-env NODE_ENV=production ts-node-dev --respawn --transpile-only src/server.ts",
     "build": "tsc",
+    "build:production": "cross-env NODE_ENV=production tsc",
     "start": "node dist/server.js",
+    "start:production": "cross-env NODE_ENV=production node dist/server.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
@@ -19,7 +23,14 @@
     "seed": "ts-node prisma/seed.ts",
     "seed:admin": "ts-node scripts/seed-admin.ts",
     "studio": "prisma studio",
-    "generate-keys": "ts-node scripts/generate-tron-keys.ts"
+    "generate-keys": "ts-node scripts/generate-tron-keys.ts",
+    "generate-system-wallet": "ts-node scripts/generate-system-wallet.ts",
+    "test-env": "ts-node scripts/test-environment.ts",
+    "test-env:dev": "cross-env NODE_ENV=development ts-node scripts/test-environment.ts",
+    "test-env:prod": "cross-env NODE_ENV=production ts-node scripts/test-environment.ts",
+    "test-energy": "ts-node scripts/test-energy-calculations.ts",
+    "test-energy:dev": "cross-env NODE_ENV=development ts-node scripts/test-energy-calculations.ts",
+    "test-energy:prod": "cross-env NODE_ENV=production ts-node scripts/test-energy-calculations.ts"
   },
   "keywords": [
     "tron",
@@ -69,6 +80,7 @@
     "@types/swagger-ui-express": "^4.1.6",
     "@typescript-eslint/eslint-plugin": "^6.13.1",
     "@typescript-eslint/parser": "^6.13.1",
+    "cross-env": "^7.0.3",
     "eslint": "^8.55.0",
     "jest": "^29.7.0",
     "prettier": "^3.1.0",

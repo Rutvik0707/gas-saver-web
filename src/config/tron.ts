@@ -1,6 +1,7 @@
 import TronWeb from 'tronweb';
 import { config } from './environment';
 import { logger } from './logger';
+import { NETWORK_CONSTANTS, isTestnetUrl } from './network-constants';
 
 // Initialize TronWeb instance
 export const tronWeb = new TronWeb({
@@ -38,6 +39,22 @@ export async function validateTronConnection(): Promise<boolean> {
       // Validate testnet configuration
       if (config.tron.network === 'testnet' && !isShasta) {
         logger.warn('⚠️ Testnet mode enabled but not using Shasta endpoint');
+      }
+      
+      // Additional safety check for mainnet
+      if (config.tron.network === 'mainnet') {
+        const expectedUrl = NETWORK_CONSTANTS.mainnet.nodes.full;
+        const expectedUSDT = NETWORK_CONSTANTS.mainnet.contracts.usdt;
+        
+        if (isTestnetUrl(networkUrl)) {
+          throw new Error('CRITICAL: Mainnet mode enabled but using testnet URL! This is dangerous.');
+        }
+        
+        if (config.tron.usdtContract !== expectedUSDT) {
+          throw new Error(`CRITICAL: Wrong USDT contract for mainnet! Expected ${expectedUSDT} but got ${config.tron.usdtContract}`);
+        }
+        
+        logger.warn('🚨 MAINNET MODE ACTIVE - Please ensure all configurations are correct!');
       }
       
       return true;

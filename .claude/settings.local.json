@@ -23,7 +23,10 @@
       "Bash(npm run seed:*)",
       "WebFetch(domain:shasta.tronscan.org)",
       "Bash(pkill:*)",
-      "Bash(npm start)"
+      "Bash(npm start)",
+      "Bash(ls:*)",
+      "Bash(rg:*)",
+      "Bash(npm run generate-system-wallet:*)"
     ],
     "deny": []
   }

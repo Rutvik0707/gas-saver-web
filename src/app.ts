@@ -13,6 +13,7 @@ import { depositRoutes } from './modules/deposit';
 import { adminRoutes } from './modules/admin';
 import { apiUtils } from './shared/utils';
 import { feedbackRoutes } from './modules/feedback';
+import { energyRoutes } from './modules/energy';
 
 
 export function createApp(): express.Application {
@@ -135,7 +136,8 @@ export function createApp(): express.Application {
   apiRouter.use('/auth', userRoutes); // Auth routes are part of user module
   apiRouter.use('/deposits', depositRoutes);
   apiRouter.use('/admin', adminRoutes);
-  apiRouter.use('/feedback', feedbackRoutes); // <-- Add this line
+  apiRouter.use('/feedback', feedbackRoutes);
+  apiRouter.use('/energy', energyRoutes);
 
   // Mount API router
   app.use(`/api/${config.app.apiVersion}`, apiRouter);

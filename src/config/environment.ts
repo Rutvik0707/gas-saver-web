@@ -1,7 +1,22 @@
 import { z } from 'zod';
 import dotenv from 'dotenv';
+import path from 'path';
+import fs from 'fs';
 
-dotenv.config();
+// Load environment-specific .env file based on NODE_ENV
+const nodeEnv = process.env.NODE_ENV || 'development';
+const envFile = nodeEnv === 'production' ? '.env.production' : '.env.development';
+const envPath = path.resolve(process.cwd(), envFile);
+
+// Try to load environment-specific file first
+if (fs.existsSync(envPath)) {
+  console.log(`Loading environment from ${envFile}`);
+  dotenv.config({ path: envPath });
+} else {
+  // Fall back to default .env file
+  console.log('Loading environment from .env (default)');
+  dotenv.config();
+}
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -51,6 +66,13 @@ const envSchema = z.object({
   EMAIL_FROM_ADDRESS: z.string().email().default('admin@gassaver.in'),
   EMAIL_FROM_NAME: z.string().default('TRON Energy Broker'),
   FRONTEND_URL: z.string().url().default('https://energy-demo.scriptlanes.in'),
+  
+  // Energy Configuration
+  USDT_TRANSFER_ENERGY_BASE: z.string().transform(Number).default('65000'),
+  ENERGY_BUFFER_PERCENTAGE: z.string().transform(Number).default('0.2'),
+  ENERGY_PRICE_SUN: z.string().transform(Number).default('420'),
+  MIN_ENERGY_DELEGATION: z.string().transform(Number).default('65000'),
+  MAX_ENERGY_DELEGATION: z.string().transform(Number).default('150000'),
 });
 
 const env = envSchema.parse(process.env);
@@ -104,4 +126,61 @@ export const config = {
     fromName: env.EMAIL_FROM_NAME,
   },
   frontendUrl: env.FRONTEND_URL,
+  energy: {
+    usdtTransferEnergyBase: env.USDT_TRANSFER_ENERGY_BASE,
+    bufferPercentage: env.ENERGY_BUFFER_PERCENTAGE,
+    priceSun: env.ENERGY_PRICE_SUN,
+    minDelegation: env.MIN_ENERGY_DELEGATION,
+    maxDelegation: env.MAX_ENERGY_DELEGATION,
+  },
 } as const;
+
+// Import network constants for validation
+import { validateUSDTContract, isTestnetUrl, NETWORK_CONSTANTS } from './network-constants';
+
+// Perform network validation
+function validateNetworkConfiguration() {
+  const isTestnet = config.tron.network === 'testnet';
+  const isMainnet = config.tron.network === 'mainnet';
+  const nodeUrl = config.tron.fullNode;
+  
+  // Check if network matches the node URL
+  if (isTestnet && !isTestnetUrl(nodeUrl)) {
+    console.warn('⚠️  WARNING: TRON_NETWORK is set to testnet but node URL appears to be mainnet!');
+    console.warn(`   Node URL: ${nodeUrl}`);
+    console.warn('   Please ensure you are using the correct network configuration.');
+  }
+  
+  if (isMainnet && isTestnetUrl(nodeUrl)) {
+    throw new Error('FATAL: TRON_NETWORK is set to mainnet but node URL is testnet! This could result in loss of funds.');
+  }
+  
+  // Validate USDT contract matches network
+  if (!validateUSDTContract(config.tron.usdtContract, config.tron.network)) {
+    const expectedContract = NETWORK_CONSTANTS[config.tron.network].contracts.usdt;
+    throw new Error(
+      `FATAL: USDT contract address mismatch!\n` +
+      `Expected ${config.tron.network} USDT contract: ${expectedContract}\n` +
+      `But got: ${config.tron.usdtContract}\n` +
+      `Please update USDT_CONTRACT_ADDRESS in your environment file.`
+    );
+  }
+  
+  // Warn about production mode
+  if (config.app.nodeEnv === 'production') {
+    console.log('🚨 Running in PRODUCTION mode with TRON mainnet');
+    console.log(`   Network: ${NETWORK_CONSTANTS[config.tron.network].name}`);
+    console.log(`   USDT Contract: ${config.tron.usdtContract}`);
+    console.log(`   Node URL: ${nodeUrl}`);
+    console.log('   Please ensure all private keys and configurations are correct!');
+  }
+  
+  // Log network configuration
+  console.log(`✅ Network configuration validated`);
+  console.log(`   Environment: ${config.app.nodeEnv}`);
+  console.log(`   Network: ${NETWORK_CONSTANTS[config.tron.network].name}`);
+  console.log(`   USDT Contract: ${config.tron.usdtContract}`);
+}
+
+// Run validation
+validateNetworkConfiguration();

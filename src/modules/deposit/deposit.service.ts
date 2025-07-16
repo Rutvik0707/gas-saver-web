@@ -57,11 +57,18 @@ export class DepositService {
         3
       );
 
+      // Calculate energy information
+      const { energyService } = await import('../../services/energy.service');
+      const estimatedEnergy = energyService.calculateRequiredEnergy(amount);
+      const energyInTRX = energyService.convertEnergyToTRX(estimatedEnergy);
+      
       logger.info('Deposit initiated successfully', {
         userId,
         depositId: deposit.id,
         assignedAddress: addressAssignment.address,
         amount,
+        estimatedEnergy,
+        energyInTRX,
         expiresAt: expiresAt.toISOString(),
       });
 
@@ -72,6 +79,11 @@ export class DepositService {
         expectedAmount: amount.toString(),
         expiresAt,
         instructions,
+        energyInfo: {
+          estimatedEnergy,
+          energyInTRX,
+          description: `You will receive ${estimatedEnergy.toLocaleString()} energy (≈ ${energyInTRX.toFixed(6)} TRX) for ${amount} USDT`
+        }
       };
     } catch (error) {
       logger.error('Failed to initiate deposit', {
@@ -423,7 +435,7 @@ export class DepositService {
 
       // Find USDT transfer
       const usdtTransfer = trc20Transfers.find((transfer: any) => 
-        transfer.contract_address === 'TG3XXyExBkPp9nzdajDZsozEu4BkaSJozs'
+        transfer.contract_address === config.tron.usdtContract
       );
 
       if (!usdtTransfer) {
@@ -492,8 +504,9 @@ export class DepositService {
    */
   private async getUSDTTransactionsForAddress(address: string): Promise<USDTTransferEvent[]> {
     try {
-      const usdtContractAddress = 'TG3XXyExBkPp9nzdajDZsozEu4BkaSJozs'; // Shasta testnet USDT
-      const tronGridUrl = `https://api.shasta.trongrid.io/v1/accounts/${address}/transactions/trc20`;
+      const usdtContractAddress = config.tron.usdtContract;
+      const baseUrl = config.tron.fullNode.replace('/jsonrpc', ''); // Remove jsonrpc suffix if present
+      const tronGridUrl = `${baseUrl}/v1/accounts/${address}/transactions/trc20`;
       
       const params = new URLSearchParams({
         limit: '50',
@@ -557,7 +570,7 @@ export class DepositService {
   /**
    * Initiate energy transfer to user's wallet
    */
-  private async initiateEnergyTransfer(userId: string, amount: number): Promise<void> {
+  private async initiateEnergyTransfer(userId: string, usdtAmount: number): Promise<void> {
     try {
       // Get user details
       const user = await userService.getUserById(userId);
@@ -565,11 +578,12 @@ export class DepositService {
       // Import energy service
       const { energyService } = await import('../../services/energy.service');
       
-      // Transfer 1 TRX worth of energy to user's wallet
+      // Delegate energy based on USDT amount
       const txHash = await energyService.delegateEnergyToUser(
         user.tronAddress,
         userId,
-        1 // 1 TRX worth of energy
+        1, // Legacy amount parameter (not used when usdtAmount is provided)
+        usdtAmount // Pass USDT amount for proper energy calculation
       );
       
       if (txHash) {
@@ -577,12 +591,13 @@ export class DepositService {
           userId,
           userTronAddress: user.tronAddress,
           txHash,
-          amount: 1,
+          usdtAmount,
         });
       } else {
         logger.warn('Energy transfer failed', {
           userId,
           userTronAddress: user.tronAddress,
+          usdtAmount,
         });
       }
       

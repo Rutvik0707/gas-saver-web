@@ -3,18 +3,121 @@ import { prisma } from '../config/database';
 import { TransactionType, TransactionStatus } from '@prisma/client';
 
 export class EnergyService {
-  private readonly ENERGY_AMOUNT_TRX = 1; // 1 TRX worth of energy per deposit
+  private readonly ENERGY_AMOUNT_TRX = 1; // 1 TRX worth of energy per deposit (deprecated)
+
+  /**
+   * Calculate required energy for USDT transfer
+   * @param usdtAmount Amount of USDT being transferred
+   * @returns Required energy amount
+   */
+  calculateRequiredEnergy(usdtAmount: number): number {
+    // Base energy for USDT transfer
+    const baseEnergy = config.energy.usdtTransferEnergyBase;
+    
+    // Add buffer for safety
+    const bufferMultiplier = 1 + config.energy.bufferPercentage;
+    const calculatedEnergy = Math.floor(baseEnergy * bufferMultiplier);
+    
+    // For larger amounts, we might need more energy due to contract complexity
+    // Add 10% more energy for every 1000 USDT
+    const amountMultiplier = 1 + (Math.floor(usdtAmount / 1000) * 0.1);
+    const adjustedEnergy = Math.floor(calculatedEnergy * amountMultiplier);
+    
+    // Apply min/max constraints
+    return Math.max(
+      config.energy.minDelegation,
+      Math.min(config.energy.maxDelegation, adjustedEnergy)
+    );
+  }
+
+  /**
+   * Convert energy amount to TRX equivalent
+   * @param energy Energy amount
+   * @returns TRX equivalent in SUN
+   */
+  convertEnergyToSun(energy: number): number {
+    // Energy price in SUN (1 energy = X sun)
+    const energyPriceSun = config.energy.priceSun;
+    return Math.floor(energy * energyPriceSun);
+  }
+
+  /**
+   * Convert energy amount to TRX
+   * @param energy Energy amount
+   * @returns TRX equivalent
+   */
+  convertEnergyToTRX(energy: number): number {
+    const sunAmount = this.convertEnergyToSun(energy);
+    return tronUtils.fromSun(sunAmount);
+  }
+
+  /**
+   * Get available energy for delegation from system wallet
+   * @returns Available energy amount
+   */
+  async getAvailableEnergyForDelegation(): Promise<number> {
+    try {
+      const systemAddress = config.systemWallet.address;
+      const accountResources = await systemTronWeb.trx.getAccountResources(systemAddress);
+      
+      // Get total energy limit
+      const totalEnergy = accountResources.EnergyLimit || 0;
+      
+      // Get used energy
+      const usedEnergy = accountResources.EnergyUsed || 0;
+      
+      // Get delegated energy
+      const delegatedInfo = await this.getDelegatedEnergyInfo(systemAddress);
+      const delegatedEnergy = delegatedInfo.totalDelegated || 0;
+      
+      // Calculate available energy (total - used - already delegated)
+      const availableEnergy = Math.max(0, totalEnergy - usedEnergy - delegatedEnergy);
+      
+      logger.info('System wallet energy status', {
+        totalEnergy,
+        usedEnergy,
+        delegatedEnergy,
+        availableEnergy,
+        systemAddress
+      });
+      
+      return availableEnergy;
+    } catch (error) {
+      logger.error('Failed to get available energy for delegation', {
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      return 0;
+    }
+  }
+
+  /**
+   * Check if system has enough energy for delegation
+   * @param requiredEnergy Energy amount required
+   * @returns true if sufficient energy available
+   */
+  async hasEnoughEnergyForDelegation(requiredEnergy: number): Promise<boolean> {
+    const availableEnergy = await this.getAvailableEnergyForDelegation();
+    return availableEnergy >= requiredEnergy;
+  }
 
   async delegateEnergyToUser(
     userTronAddress: string, 
     userId: string, 
-    amount: number = this.ENERGY_AMOUNT_TRX
+    amount: number = this.ENERGY_AMOUNT_TRX,
+    usdtAmount?: number
   ): Promise<string | null> {
     try {
+      // Calculate required energy based on USDT amount if provided
+      const requiredEnergy = usdtAmount 
+        ? this.calculateRequiredEnergy(usdtAmount)
+        : Math.floor(amount * 32000); // Default: 1 TRX ≈ 32,000 energy
+      
       logger.info('Starting energy delegation', {
         userTronAddress,
         userId,
         amount,
+        usdtAmount,
+        requiredEnergy,
       });
 
       // Validate user TRON address
@@ -23,37 +126,38 @@ export class EnergyService {
       }
 
       // Check if system wallet has enough energy to delegate
-      const systemEnergyBalance = await this.getEnergyBalance(config.systemWallet.address);
-      const requiredEnergy = tronUtils.toSun(amount); // Approximate energy calculation
+      const hasEnoughEnergy = await this.hasEnoughEnergyForDelegation(requiredEnergy);
       
-      if (systemEnergyBalance < requiredEnergy) {
-        logger.warn('Insufficient energy in system wallet', {
-          available: systemEnergyBalance,
+      if (!hasEnoughEnergy) {
+        const availableEnergy = await this.getAvailableEnergyForDelegation();
+        logger.error('Insufficient energy in system wallet', {
+          available: availableEnergy,
           required: requiredEnergy,
           systemWallet: config.systemWallet.address
         });
-        // Continue anyway - TRON will handle the exact energy calculations
+        throw new Error(`Insufficient energy for delegation. Required: ${requiredEnergy}, Available: ${availableEnergy}`);
       }
 
-      // Convert TRX to Sun (TRON's smallest unit)
-      const amountInSun = tronUtils.toSun(amount);
+      // Convert energy to SUN for delegation
+      const amountInSun = this.convertEnergyToSun(requiredEnergy);
+      const amountInTRX = this.convertEnergyToTRX(requiredEnergy);
 
       // Create transaction record
       const transaction = await prisma.transaction.create({
         data: {
           userId,
           type: TransactionType.ENERGY_TRANSFER,
-          amount,
+          amount: amountInTRX,
           toAddress: userTronAddress,
           fromAddress: config.systemWallet.address,
           status: TransactionStatus.PENDING,
-          description: `Energy delegation: ${amount} TRX worth of energy`,
+          description: `Energy delegation: ${requiredEnergy} energy (${amountInTRX.toFixed(6)} TRX equivalent)`,
         },
       });
 
       try {
         // Real TRON energy delegation to user's wallet
-        const txHash = await this.delegateEnergyToAddress(userTronAddress, amountInSun);
+        const txHash = await this.delegateEnergyToAddress(userTronAddress, requiredEnergy);
 
         // Update transaction with success
         await prisma.transaction.update({
@@ -67,7 +171,8 @@ export class EnergyService {
         logger.info('Energy delegation successful', {
           userId,
           userTronAddress,
-          amount,
+          energyAmount: requiredEnergy,
+          amountTRX: amountInTRX,
           txHash,
         });
 
@@ -90,34 +195,35 @@ export class EnergyService {
         error: error instanceof Error ? error.message : 'Unknown error',
         userTronAddress,
         userId,
-        amount,
+        requiredEnergy,
+        usdtAmount,
       });
       return null;
     }
   }
 
-  private async delegateEnergyToAddress(userAddress: string, amountInSun: number): Promise<string> {
+  private async delegateEnergyToAddress(userAddress: string, energyAmount: number): Promise<string> {
     // Real TRON energy delegation implementation
     // Prerequisites: System wallet must have staked TRX to generate energy
     
     try {
       const systemWalletAddress = config.systemWallet.address;
       
-      // Calculate energy amount (1 TRX ≈ 32,000 energy, but varies by network)
-      // For safety, we'll use the TRX amount directly as the delegation amount
-      const energyAmount = amountInSun; // Amount in sun to delegate as energy
+      // Convert energy to SUN for the delegation transaction
+      const amountInSun = this.convertEnergyToSun(energyAmount);
       
       logger.info('Creating energy delegation transaction', {
         from: systemWalletAddress,
         to: userAddress,
         energyAmount,
+        amountInSun,
         amountTRX: tronUtils.fromSun(amountInSun)
       });
 
       // Create resource delegation transaction
       // Use TronWeb's built-in delegation methods
       const delegationTx = await (systemTronWeb as any).transactionBuilder.delegateResource(
-        energyAmount,         // Amount of energy to delegate (in sun)
+        amountInSun,         // Amount to delegate (in sun)
         userAddress,          // Recipient address  
         'ENERGY',            // Resource type (ENERGY, not BANDWIDTH)
         systemWalletAddress, // System wallet address (delegator)  
@@ -146,8 +252,9 @@ export class EnergyService {
       logger.error('Energy delegation failed', {
         error: error instanceof Error ? error.message : 'Unknown error',
         userAddress,
-        amountInSun,
-        amountTRX: tronUtils.fromSun(amountInSun)
+        energyAmount,
+        amountInSun: this.convertEnergyToSun(energyAmount),
+        amountTRX: this.convertEnergyToTRX(energyAmount)
       });
       
       throw error; // Re-throw the error instead of generating mock IDs
