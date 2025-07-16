@@ -110,7 +110,7 @@ export interface RecentActivity {
   recentUsers: Array<{
     id: string;
     email: string;
-    tronAddress: string;
+    phoneNumber: string;
     credits: string;
     createdAt: Date;
   }>;

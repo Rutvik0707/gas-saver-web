@@ -8,10 +8,16 @@ export function createUserRoutes(userController: UserController): Router {
   // Public routes
   router.post('/register', userController.register.bind(userController));
   router.post('/login', userController.login.bind(userController));
+<<<<<<< HEAD
   
   // Password reset routes (public)
   router.post('/forgot-password', userController.forgotPassword.bind(userController));
   router.post('/reset-password', userController.resetPassword.bind(userController));
+=======
+  router.post('/verify-otp', userController.verifyOtp.bind(userController));
+  router.post('/resend-otp', userController.resendOtp.bind(userController));
+  router.get('/verify-email', userController.verifyEmail.bind(userController));
+>>>>>>> origin/account-verification
 
   // Protected routes
   router.use(authMiddleware);

@@ -578,6 +578,7 @@ export class DepositService {
       // Import energy service
       const { energyService } = await import('../../services/energy.service');
       
+<<<<<<< HEAD
       // Delegate energy based on USDT amount
       const txHash = await energyService.delegateEnergyToUser(
         user.tronAddress,
@@ -600,6 +601,17 @@ export class DepositService {
           usdtAmount,
         });
       }
+=======
+      // Note: Energy transfer functionality needs to be updated since tronAddress is no longer in user model
+      // This would require a different approach to handle energy delegation
+      logger.info('Energy transfer skipped - tronAddress no longer available', {
+        userId,
+        amount: 1,
+      });
+      
+      // TODO: Implement alternative energy transfer mechanism
+      // Perhaps using a different approach or storing wallet addresses separately
+>>>>>>> origin/account-verification
       
     } catch (error) {
       logger.error('Failed to initiate energy transfer', {

@@ -11,6 +11,7 @@ datasource db {
 }
 
 model User {
+<<<<<<< HEAD
   id            String    @id @default(cuid())
   email         String    @unique
   feedbacks Feedback[] // ✅ <--- THIS creates the backlink!
@@ -29,6 +30,24 @@ model User {
   
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
+=======
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  passwordHash       String    @map("password_hash")
+  phoneNumber        String    @unique @map("phone_number")
+  isPhoneVerified    Boolean   @default(false) @map("is_phone_verified")
+  otpCode            String?   @map("otp_code")
+  otpExpiry          DateTime? @map("otp_expiry")
+  credits            Decimal   @default(0) @db.Decimal(18, 6)
+  isActive           Boolean   @default(true) @map("is_active")
+  isEmailVerified    Boolean   @default(false) @map("is_email_verified")
+  verificationToken  String?   @map("verification_token")
+  verificationTokenExpiry DateTime? @map("verification_token_expiry")
+  resetToken         String?   @map("reset_token")
+  resetTokenExpiry   DateTime? @map("reset_token_expiry")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+>>>>>>> origin/account-verification
 
   // Relations
   deposits      Deposit[]

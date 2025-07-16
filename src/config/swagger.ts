@@ -37,8 +37,13 @@ Most endpoints require JWT authentication. After login, include the token in:
   },
   servers: [
     {
+<<<<<<< HEAD
       url: `http://localhost:${config.app.port}/api/${config.app.apiVersion}`,
       description: 'Local development server',
+=======
+      url: `http://localhost:3000/api/${config.app.apiVersion}`,
+      description: 'Development server',
+>>>>>>> origin/account-verification
     },
     {
       url: `https://energy-demo.scriptlanes.in/api/${config.app.apiVersion}`,
@@ -102,7 +107,7 @@ Most endpoints require JWT authentication. After login, include the token in:
       },
       UserRegistration: {
         type: 'object',
-        required: ['email', 'password', 'tronAddress'],
+        required: ['email', 'password', 'phoneNumber'],
         properties: {
           email: {
             type: 'string',
@@ -114,10 +119,15 @@ Most endpoints require JWT authentication. After login, include the token in:
             minLength: 8,
             example: 'securePassword123',
           },
-          tronAddress: {
+          phoneNumber: {
             type: 'string',
+<<<<<<< HEAD
             pattern: '^T[A-Za-z1-9]{33}$',
             example: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+=======
+            example: '+919876543210',
+            description: 'Valid phone number with country code',
+>>>>>>> origin/account-verification
           },
         },
       },
@@ -144,10 +154,10 @@ Most endpoints require JWT authentication. After login, include the token in:
             format: 'email',
             example: 'newemail@example.com',
           },
-          tronAddress: {
+          phoneNumber: {
             type: 'string',
-            pattern: '^T[A-Za-z1-9]{33}$',
-            example: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+            example: '+919876543210',
+            description: 'Valid phone number with country code',
           },
         },
       },
@@ -163,9 +173,20 @@ Most endpoints require JWT authentication. After login, include the token in:
             format: 'email',
             example: 'user@example.com',
           },
-          tronAddress: {
+          phoneNumber: {
             type: 'string',
-            example: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+            example: '+919876543210',
+            description: 'User phone number',
+          },
+          isPhoneVerified: {
+            type: 'boolean',
+            example: true,
+            description: 'Whether phone number is verified',
+          },
+          isEmailVerified: {
+            type: 'boolean',
+            example: true,
+            description: 'Whether email is verified',
           },
           credits: {
             type: 'string',
