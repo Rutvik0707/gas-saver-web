@@ -8,6 +8,9 @@ export function createUserRoutes(userController: UserController): Router {
   // Public routes
   router.post('/register', userController.register.bind(userController));
   router.post('/login', userController.login.bind(userController));
+  router.post('/verify-otp', userController.verifyOtp.bind(userController));
+  router.post('/resend-otp', userController.resendOtp.bind(userController));
+  router.get('/verify-email', userController.verifyEmail.bind(userController));
 
   // Protected routes
   router.use(authMiddleware);

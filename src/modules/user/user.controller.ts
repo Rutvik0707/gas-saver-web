@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { UserService } from './user.service';
-import { createUserSchema, loginUserSchema, updateUserSchema } from './user.types';
+import { createUserSchema, loginUserSchema, updateUserSchema, verifyOtpSchema, resendOtpSchema } from './user.types';
 import { ValidationException } from '../../shared/exceptions';
 import { apiUtils } from '../../shared/utils';
 import { logger } from '../../config';
@@ -16,7 +16,7 @@ export class UserController {
    *     tags:
    *       - Authentication
    *     summary: Register a new user
-   *     description: Create a new user account with email, password, and TRON wallet address. The TRON address will be used for energy delegation.
+   *     description: Create a new user account with email, password, and phone number. The phone number will be verified via OTP.
    *     requestBody:
    *       required: true
    *       content:
@@ -29,7 +29,7 @@ export class UserController {
    *               value:
    *                 email: "john.doe@example.com"
    *                 password: "securePassword123"
-   *                 tronAddress: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+   *                 phoneNumber: "+919876543210"
    *     responses:
    *       201:
    *         description: User registered successfully
@@ -63,15 +63,15 @@ export class UserController {
    *                   message: "Validation failed"
    *                   error: "Invalid email format"
    *                   timestamp: "2024-01-01T00:00:00.000Z"
-   *               invalid_tron_address:
-   *                 summary: Invalid TRON address
+   *               invalid_phone:
+   *                 summary: Invalid phone number
    *                 value:
    *                   success: false
-   *                   message: "Invalid TRON address format"
-   *                   error: "TRON address must start with T and be 34 characters long"
+   *                   message: "Invalid phone number format"
+   *                   error: "Phone number must include country code"
    *                   timestamp: "2024-01-01T00:00:00.000Z"
    *       409:
-   *         description: Conflict - Email or TRON address already exists
+   *         description: Conflict - Email or phone number already exists
    *         content:
    *           application/json:
    *             schema:
@@ -83,11 +83,11 @@ export class UserController {
    *                   success: false
    *                   message: "User with this email already exists"
    *                   timestamp: "2024-01-01T00:00:00.000Z"
-   *               tron_address_exists:
-   *                 summary: TRON address already registered
+   *               phone_exists:
+   *                 summary: Phone number already registered
    *                 value:
    *                   success: false
-   *                   message: "TRON address is already registered"
+   *                   message: "Phone number is already registered"
    *                   timestamp: "2024-01-01T00:00:00.000Z"
    *       500:
    *         description: Internal server error
@@ -245,9 +245,15 @@ export class UserController {
    *                     email:
    *                       type: string
    *                       example: "john.doe@example.com"
-   *                     tronAddress:
+   *                     phoneNumber:
    *                       type: string
-   *                       example: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+   *                       example: "+919876543210"
+   *                     isPhoneVerified:
+   *                       type: boolean
+   *                       example: true
+   *                     isEmailVerified:
+   *                       type: boolean
+   *                       example: true
    *                     credits:
    *                       type: string
    *                       example: "150.750000"
@@ -318,7 +324,7 @@ export class UserController {
    *     tags:
    *       - User Management
    *     summary: Update user profile
-   *     description: Update the authenticated user's profile information (email and/or TRON address).
+   *     description: Update the authenticated user's profile information (email and/or phone number).
    *     security:
    *       - bearerAuth: []
    *     requestBody:
@@ -332,15 +338,15 @@ export class UserController {
    *               summary: Update email only
    *               value:
    *                 email: "newemail@example.com"
-   *             update_tron_address:
-   *               summary: Update TRON address only
+   *             update_phone:
+   *               summary: Update phone number only
    *               value:
-   *                 tronAddress: "TNewTronAddressExample123456789abc"
+   *                 phoneNumber: "+919876543210"
    *             update_both:
-   *               summary: Update both email and TRON address
+   *               summary: Update both email and phone number
    *               value:
    *                 email: "newemail@example.com"
-   *                 tronAddress: "TNewTronAddressExample123456789abc"
+   *                 phoneNumber: "+919876543210"
    *     responses:
    *       200:
    *         description: Profile updated successfully
@@ -373,7 +379,7 @@ export class UserController {
    *             schema:
    *               $ref: '#/components/schemas/ErrorResponse'
    *       409:
-   *         description: Email or TRON address already in use
+   *         description: Email or phone number already in use
    *         content:
    *           application/json:
    *             schema:
@@ -419,7 +425,7 @@ export class UserController {
    *     tags:
    *       - User Management
    *     summary: Get user credits
-   *     description: Retrieve the current credit balance and TRON address for the authenticated user.
+   *     description: Retrieve the current credit balance for the authenticated user.
    *     security:
    *       - bearerAuth: []
    *     responses:
@@ -443,10 +449,6 @@ export class UserController {
    *                       type: string
    *                       example: "150.750000"
    *                       description: "Current credit balance"
-   *                     tronAddress:
-   *                       type: string
-   *                       example: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
-   *                       description: "User's TRON wallet address"
    *                 timestamp:
    *                   type: string
    *                   format: date-time
@@ -474,7 +476,6 @@ export class UserController {
       res.json(
         apiUtils.success('User credits retrieved successfully', {
           credits: user.credits,
-          tronAddress: user.tronAddress,
         })
       );
     } catch (error) {
@@ -616,6 +617,244 @@ export class UserController {
     } catch (error) {
       if (error instanceof Error) {
         logger.error('Get transaction history failed', { error: error.message, userId: req.user?.id });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @swagger
+   * /users/verify-otp:
+   *   post:
+   *     tags:
+   *       - Authentication
+   *     summary: Verify OTP for phone number
+   *     description: Verify the OTP sent to the user's phone number via WhatsApp and email.
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               email:
+   *                 type: string
+   *                 format: email
+   *                 example: "john.doe@example.com"
+   *               otp:
+   *                 type: string
+   *                 length: 6
+   *                 example: "123456"
+   *             required:
+   *               - email
+   *               - otp
+   *     responses:
+   *       200:
+   *         description: OTP verified successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 message:
+   *                   type: string
+   *                   example: "OTP verified successfully"
+   *                 data:
+   *                   $ref: '#/components/schemas/UserResponse'
+   *                 timestamp:
+   *                   type: string
+   *                   format: date-time
+   *       400:
+   *         description: Invalid or expired OTP
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   *       404:
+   *         description: User not found
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   *       500:
+   *         description: Internal server error
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   */
+  async verifyOtp(req: Request, res: Response): Promise<void> {
+    try {
+      // Validate request body
+      const validatedData = verifyOtpSchema.parse(req.body);
+
+      // Verify OTP
+      const user = await this.userService.verifyOTP(validatedData.email, validatedData.otp);
+
+      res.json(
+        apiUtils.success('OTP verified successfully', user)
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('OTP verification failed', { error: error.message, email: req.body.email });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @swagger
+   * /users/resend-otp:
+   *   post:
+   *     tags:
+   *       - Authentication
+   *     summary: Resend OTP for phone verification
+   *     description: Resend the OTP to the user's phone number via WhatsApp and email.
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               email:
+   *                 type: string
+   *                 format: email
+   *                 example: "john.doe@example.com"
+   *               phoneNumber:
+   *                 type: string
+   *                 example: "+919876543210"
+   *             required:
+   *               - email
+   *               - phoneNumber
+   *     responses:
+   *       200:
+   *         description: OTP resent successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 message:
+   *                   type: string
+   *                   example: "OTP resent successfully"
+   *                 timestamp:
+   *                   type: string
+   *                   format: date-time
+   *       400:
+   *         description: Validation error
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   *       404:
+   *         description: User not found
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   *       500:
+   *         description: Internal server error
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   */
+  async resendOtp(req: Request, res: Response): Promise<void> {
+    try {
+      // Validate request body
+      const validatedData = resendOtpSchema.parse(req.body);
+
+      // Resend OTP
+      const sent = await this.userService.resendOTP(validatedData.email, validatedData.phoneNumber);
+
+      res.json(
+        apiUtils.success('OTP resent successfully', { sent })
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('OTP resend failed', { error: error.message, email: req.body.email, phoneNumber: req.body.phoneNumber });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @swagger
+   * /users/verify-email:
+   *   get:
+   *     tags:
+   *       - Authentication
+   *     summary: Verify email address
+   *     description: Verify the user's email address using the verification token sent via email.
+   *     parameters:
+   *       - in: query
+   *         name: token
+   *         required: true
+   *         schema:
+   *           type: string
+   *         description: Email verification token
+   *     responses:
+   *       200:
+   *         description: Email verified successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 message:
+   *                   type: string
+   *                   example: "Email verified successfully"
+   *                 data:
+   *                   $ref: '#/components/schemas/UserResponse'
+   *                 timestamp:
+   *                   type: string
+   *                   format: date-time
+   *       400:
+   *         description: Invalid or expired token
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   *       404:
+   *         description: User not found
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   *       500:
+   *         description: Internal server error
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   */
+  async verifyEmail(req: Request, res: Response): Promise<void> {
+    try {
+      const { token } = req.query;
+      
+      if (!token || typeof token !== 'string') {
+        throw new ValidationException('Verification token is required');
+      }
+
+      // Verify email
+      const user = await this.userService.verifyEmailToken(token);
+
+      res.json(
+        apiUtils.success('Email verified successfully', user)
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('Email verification failed', { error: error.message, token: req.query.token });
       }
       throw error;
     }

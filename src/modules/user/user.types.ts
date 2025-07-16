@@ -2,10 +2,12 @@ import { z } from 'zod';
 import { User, Deposit, Transaction } from '@prisma/client';
 
 // Zod validation schemas
+import { WhatsAppService } from '../../services/whatsapp.service';
+
 export const createUserSchema = z.object({
   email: z.string().email('Invalid email format'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
-  tronAddress: z.string().regex(/^T[A-Za-z1-9]{33}$/, 'Invalid TRON address format').refine((addr) => { const TronWeb = require('tronweb'); const tronWeb = new TronWeb({ fullHost: 'https://api.shasta.trongrid.io' }); return tronWeb.isAddress(addr); }, 'Invalid TRON address - address verification failed'),
+  phoneNumber: z.string().refine((num) => WhatsAppService.validatePhoneNumber(num), 'Invalid phone number format'),
 });
 
 export const loginUserSchema = z.object({
@@ -13,20 +15,34 @@ export const loginUserSchema = z.object({
   password: z.string().min(1, 'Password is required'),
 });
 
+export const verifyOtpSchema = z.object({
+  email: z.string().email('Invalid email format'),
+  otp: z.string().length(6, 'OTP must be 6 digits'),
+});
+
+export const resendOtpSchema = z.object({
+  email: z.string().email('Invalid email format'),
+  phoneNumber: z.string().refine((num) => WhatsAppService.validatePhoneNumber(num), 'Invalid phone number format'),
+});
+
 export const updateUserSchema = z.object({
   email: z.string().email('Invalid email format').optional(),
-  tronAddress: z.string().regex(/^T[A-Za-z1-9]{33}$/, 'Invalid TRON address format').refine((addr) => { if (!addr) return true; const TronWeb = require('tronweb'); const tronWeb = new TronWeb({ fullHost: 'https://api.shasta.trongrid.io' }); return tronWeb.isAddress(addr); }, 'Invalid TRON address - address verification failed').optional(),
+  phoneNumber: z.string().refine((num) => { if (!num) return true; return WhatsAppService.validatePhoneNumber(num); }, 'Invalid phone number format').optional(),
 });
 
 // TypeScript types
 export type CreateUserDto = z.infer<typeof createUserSchema>;
 export type LoginUserDto = z.infer<typeof loginUserSchema>;
 export type UpdateUserDto = z.infer<typeof updateUserSchema>;
+export type VerifyOtpDto = z.infer<typeof verifyOtpSchema>;
+export type ResendOtpDto = z.infer<typeof resendOtpSchema>;
 
 export interface UserResponse {
   id: string;
   email: string;
-  tronAddress: string;
+  phoneNumber: string;
+  isPhoneVerified: boolean;
+  isEmailVerified: boolean;
   credits: string;
   isActive: boolean;
   createdAt: Date;

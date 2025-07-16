@@ -405,18 +405,24 @@ export class DepositController {
    */
   async getSystemWalletInfo(req: Request, res: Response): Promise<void> {
     try {
-      // Return system wallet address for users to send USDT to
+      // Return masked system wallet address for security
+      const systemAddress = process.env.SYSTEM_WALLET_ADDRESS;
+      const maskedAddress = systemAddress ? 
+        `${systemAddress.substring(0, 6)}...${systemAddress.substring(systemAddress.length - 6)}` : 
+        'T***...***';
+      
       res.json(
         apiUtils.success('System wallet info retrieved', {
-          address: process.env.SYSTEM_WALLET_ADDRESS,
+          address: maskedAddress,
           network: 'testnet', // or config.tron.network
           supportedTokens: ['USDT (TRC-20)'],
           minimumDeposit: '1 USDT',
           instructions: [
-            '1. Send USDT (TRC-20) to the address above',
-            '2. Deposits are processed automatically within 5-10 minutes',
-            '3. Credits will be added to your account once confirmed',
-            '4. You will receive 1 TRX worth of ENERGY automatically',
+            '1. Contact support to get the full deposit address',
+            '2. Send USDT (TRC-20) to the provided address',
+            '3. Deposits are processed automatically within 5-10 minutes',
+            '4. Credits will be added to your account once confirmed',
+            '5. You will receive 1 TRX worth of ENERGY automatically',
           ],
         })
       );

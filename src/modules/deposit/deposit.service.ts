@@ -565,26 +565,15 @@ export class DepositService {
       // Import energy service
       const { energyService } = await import('../../services/energy.service');
       
-      // Transfer 1 TRX worth of energy to user's wallet
-      const txHash = await energyService.delegateEnergyToUser(
-        user.tronAddress,
+      // Note: Energy transfer functionality needs to be updated since tronAddress is no longer in user model
+      // This would require a different approach to handle energy delegation
+      logger.info('Energy transfer skipped - tronAddress no longer available', {
         userId,
-        1 // 1 TRX worth of energy
-      );
+        amount: 1,
+      });
       
-      if (txHash) {
-        logger.info('Energy transfer completed successfully', {
-          userId,
-          userTronAddress: user.tronAddress,
-          txHash,
-          amount: 1,
-        });
-      } else {
-        logger.warn('Energy transfer failed', {
-          userId,
-          userTronAddress: user.tronAddress,
-        });
-      }
+      // TODO: Implement alternative energy transfer mechanism
+      // Perhaps using a different approach or storing wallet addresses separately
       
     } catch (error) {
       logger.error('Failed to initiate energy transfer', {

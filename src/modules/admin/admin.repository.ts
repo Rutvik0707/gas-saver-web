@@ -108,7 +108,7 @@ export class AdminRepository {
     if (search) {
       where.OR = [
         { email: { contains: search, mode: 'insensitive' } },
-        { tronAddress: { contains: search, mode: 'insensitive' } },
+        { phoneNumber: { contains: search, mode: 'insensitive' } },
       ];
     }
 
@@ -271,7 +271,7 @@ export class AdminRepository {
             select: {
               id: true,
               email: true,
-              tronAddress: true,
+              phoneNumber: true,
             },
           },
         },
@@ -385,7 +385,7 @@ export class AdminRepository {
             select: {
               id: true,
               email: true,
-              tronAddress: true,
+              phoneNumber: true,
             },
           },
         },
@@ -503,7 +503,7 @@ export class AdminRepository {
         select: {
           id: true,
           email: true,
-          tronAddress: true,
+          phoneNumber: true,
           credits: true,
           createdAt: true,
         },
