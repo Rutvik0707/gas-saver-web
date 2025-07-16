@@ -1,10 +1,16 @@
 import { Request, Response } from 'express';
 import { UserService } from './user.service';
-<<<<<<< HEAD
-import { createUserSchema, loginUserSchema, updateUserSchema, forgotPasswordSchema, resetPasswordSchema, changePasswordSchema } from './user.types';
-=======
-import { createUserSchema, loginUserSchema, updateUserSchema, verifyOtpSchema, resendOtpSchema } from './user.types';
->>>>>>> origin/account-verification
+import { 
+  createUserSchema, 
+  loginUserSchema, 
+  updateUserSchema, 
+  forgotPasswordSchema, 
+  resetPasswordSchema, 
+  changePasswordSchema,
+  verifyOtpSchema, 
+  resendOtpSchema,
+  verifyEmailSchema
+} from './user.types';
 import { ValidationException } from '../../shared/exceptions';
 import { apiUtils } from '../../shared/utils';
 import { logger } from '../../config';
@@ -20,23 +26,37 @@ export class UserController {
    *     tags:
    *       - Authentication
    *     summary: Register a new user
-   *     description: Create a new user account with email, password, and phone number. The phone number will be verified via OTP.
+   *     description: Register a new user with email, password, and phone number. TRON address is optional.
    *     requestBody:
    *       required: true
    *       content:
    *         application/json:
    *           schema:
-   *             $ref: '#/components/schemas/UserRegistration'
-   *           examples:
-   *             example1:
-   *               summary: Valid user registration
-   *               value:
-   *                 email: "john.doe@example.com"
-   *                 password: "securePassword123"
-   *                 phoneNumber: "+919876543210"
+   *             type: object
+   *             required:
+   *               - email
+   *               - password
+   *               - phoneNumber
+   *             properties:
+   *               email:
+   *                 type: string
+   *                 format: email
+   *                 example: user@example.com
+   *               password:
+   *                 type: string
+   *                 minLength: 8
+   *                 example: SecurePass123!
+   *               phoneNumber:
+   *                 type: string
+   *                 example: +919876543210
+   *               tronAddress:
+   *                 type: string
+   *                 pattern: '^T[A-Za-z1-9]{33}$'
+   *                 example: TXYZabcdefghijklmnopqrstuvwxyz123456
+   *                 description: Optional TRON wallet address
    *     responses:
    *       201:
-   *         description: User registered successfully
+   *         description: User successfully registered
    *         content:
    *           application/json:
    *             schema:
@@ -47,73 +67,44 @@ export class UserController {
    *                   example: true
    *                 message:
    *                   type: string
-   *                   example: "User registered successfully"
+   *                   example: User registered successfully
    *                 data:
-   *                   $ref: '#/components/schemas/UserResponse'
-   *                 timestamp:
-   *                   type: string
-   *                   format: date-time
+   *                   type: object
+   *                   properties:
+   *                     id:
+   *                       type: string
+   *                     email:
+   *                       type: string
+   *                     phoneNumber:
+   *                       type: string
+   *                     tronAddress:
+   *                       type: string
+   *                       nullable: true
+   *                     isEmailVerified:
+   *                       type: boolean
+   *                     isPhoneVerified:
+   *                       type: boolean
+   *                     credits:
+   *                       type: string
    *       400:
    *         description: Validation error
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
-   *             examples:
-   *               invalid_email:
-   *                 summary: Invalid email format
-   *                 value:
-   *                   success: false
-   *                   message: "Validation failed"
-   *                   error: "Invalid email format"
-   *                   timestamp: "2024-01-01T00:00:00.000Z"
-   *               invalid_phone:
-   *                 summary: Invalid phone number
-   *                 value:
-   *                   success: false
-   *                   message: "Invalid phone number format"
-   *                   error: "Phone number must include country code"
-   *                   timestamp: "2024-01-01T00:00:00.000Z"
    *       409:
-   *         description: Conflict - Email or phone number already exists
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
-   *             examples:
-   *               email_exists:
-   *                 summary: Email already registered
-   *                 value:
-   *                   success: false
-   *                   message: "User with this email already exists"
-   *                   timestamp: "2024-01-01T00:00:00.000Z"
-   *               phone_exists:
-   *                 summary: Phone number already registered
-   *                 value:
-   *                   success: false
-   *                   message: "Phone number is already registered"
-   *                   timestamp: "2024-01-01T00:00:00.000Z"
-   *       500:
-   *         description: Internal server error
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
+   *         description: User already exists
    */
   async register(req: Request, res: Response): Promise<void> {
     try {
-      // Validate request body
       const validatedData = createUserSchema.parse(req.body);
-
-      // Create user
+      
+      logger.info('User registration attempt', { email: validatedData.email });
+      
       const user = await this.userService.createUser(validatedData);
-
+      
       res.status(201).json(
-        apiUtils.success('User registered successfully', user)
+        apiUtils.success('User registered successfully. Please verify your email and phone number.', user)
       );
     } catch (error) {
       if (error instanceof Error) {
-        logger.error('User registration failed', { error: error.message, body: req.body });
+        logger.error('User registration failed', { error: error.message });
       }
       throw error;
     }
@@ -126,19 +117,24 @@ export class UserController {
    *     tags:
    *       - Authentication
    *     summary: User login
-   *     description: Authenticate user with email and password. Returns JWT token for accessing protected endpoints.
+   *     description: Authenticate user with email and password
    *     requestBody:
    *       required: true
    *       content:
    *         application/json:
    *           schema:
-   *             $ref: '#/components/schemas/UserLogin'
-   *           examples:
-   *             example1:
-   *               summary: Valid login credentials
-   *               value:
-   *                 email: "john.doe@example.com"
-   *                 password: "securePassword123"
+   *             type: object
+   *             required:
+   *               - email
+   *               - password
+   *             properties:
+   *               email:
+   *                 type: string
+   *                 format: email
+   *                 example: user@example.com
+   *               password:
+   *                 type: string
+   *                 example: SecurePass123!
    *     responses:
    *       200:
    *         description: Login successful
@@ -152,65 +148,168 @@ export class UserController {
    *                   example: true
    *                 message:
    *                   type: string
-   *                   example: "Login successful"
+   *                   example: Login successful
    *                 data:
-   *                   $ref: '#/components/schemas/LoginResponse'
-   *                 timestamp:
-   *                   type: string
-   *                   format: date-time
-   *       400:
-   *         description: Validation error
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
+   *                   type: object
+   *                   properties:
+   *                     user:
+   *                       type: object
+   *                     token:
+   *                       type: string
+   *                     expiresIn:
+   *                       type: string
    *       401:
-   *         description: Invalid credentials or inactive account
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
-   *             examples:
-   *               invalid_credentials:
-   *                 summary: Wrong email or password
-   *                 value:
-   *                   success: false
-   *                   message: "Invalid email or password"
-   *                   timestamp: "2024-01-01T00:00:00.000Z"
-   *               account_deactivated:
-   *                 summary: Account is deactivated
-   *                 value:
-   *                   success: false
-   *                   message: "User account is deactivated"
-   *                   timestamp: "2024-01-01T00:00:00.000Z"
-   *       500:
-   *         description: Internal server error
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
+   *         description: Invalid credentials
    */
   async login(req: Request, res: Response): Promise<void> {
     try {
-      // Debug: Log the raw body
-      logger.info('Login request received', { 
-        body: req.body,
-        headers: req.headers,
-        contentType: req.get('Content-Type')
-      });
-      
-      // Validate request body
       const validatedData = loginUserSchema.parse(req.body);
-
-      // Login user
-      const loginResult = await this.userService.loginUser(validatedData);
-
+      
+      logger.info('User login attempt', { email: validatedData.email });
+      
+      const result = await this.userService.loginUser(validatedData);
+      
       res.json(
-        apiUtils.success('Login successful', loginResult)
+        apiUtils.success('Login successful', result)
       );
     } catch (error) {
       if (error instanceof Error) {
-        logger.error('User login failed', { error: error.message, email: req.body.email });
+        logger.error('User login failed', { error: error.message });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @swagger
+   * /users/verify-otp:
+   *   post:
+   *     tags:
+   *       - Authentication
+   *     summary: Verify OTP
+   *     description: Verify the OTP sent to the user's phone number
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - email
+   *               - otp
+   *             properties:
+   *               email:
+   *                 type: string
+   *                 format: email
+   *                 example: user@example.com
+   *               otp:
+   *                 type: string
+   *                 pattern: '^[0-9]{6}$'
+   *                 example: "123456"
+   *     responses:
+   *       200:
+   *         description: OTP verified successfully
+   *       400:
+   *         description: Invalid or expired OTP
+   */
+  async verifyOtp(req: Request, res: Response): Promise<void> {
+    try {
+      const validatedData = verifyOtpSchema.parse(req.body);
+      
+      const user = await this.userService.verifyOTP(validatedData.email, validatedData.otp);
+      
+      res.json(
+        apiUtils.success('Phone number verified successfully', user)
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('OTP verification failed', { error: error.message });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @swagger
+   * /users/resend-otp:
+   *   post:
+   *     tags:
+   *       - Authentication
+   *     summary: Resend OTP
+   *     description: Resend OTP to the user's phone number
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - email
+   *               - phoneNumber
+   *             properties:
+   *               email:
+   *                 type: string
+   *                 format: email
+   *                 example: user@example.com
+   *               phoneNumber:
+   *                 type: string
+   *                 example: +919876543210
+   *     responses:
+   *       200:
+   *         description: OTP resent successfully
+   *       400:
+   *         description: Validation error
+   */
+  async resendOtp(req: Request, res: Response): Promise<void> {
+    try {
+      const validatedData = resendOtpSchema.parse(req.body);
+      
+      await this.userService.resendOTP(validatedData.email, validatedData.phoneNumber);
+      
+      res.json(
+        apiUtils.success('OTP resent successfully')
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('Resend OTP failed', { error: error.message });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @swagger
+   * /users/verify-email:
+   *   get:
+   *     tags:
+   *       - Authentication
+   *     summary: Verify email address
+   *     description: Verify user's email address using the token sent via email
+   *     parameters:
+   *       - in: query
+   *         name: token
+   *         required: true
+   *         schema:
+   *           type: string
+   *         description: Email verification token
+   *     responses:
+   *       200:
+   *         description: Email verified successfully
+   *       400:
+   *         description: Invalid or expired token
+   */
+  async verifyEmail(req: Request, res: Response): Promise<void> {
+    try {
+      const validatedData = verifyEmailSchema.parse(req.query);
+      
+      const user = await this.userService.verifyEmailToken(validatedData.token);
+      
+      res.json(
+        apiUtils.success('Email verified successfully', user)
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('Email verification failed', { error: error.message });
       }
       throw error;
     }
@@ -223,99 +322,29 @@ export class UserController {
    *     tags:
    *       - User Management
    *     summary: Get user profile
-   *     description: Retrieve the authenticated user's profile including credits, recent deposits, and transactions.
+   *     description: Get the authenticated user's profile information
    *     security:
    *       - bearerAuth: []
    *     responses:
    *       200:
    *         description: User profile retrieved successfully
-   *         content:
-   *           application/json:
-   *             schema:
-   *               type: object
-   *               properties:
-   *                 success:
-   *                   type: boolean
-   *                   example: true
-   *                 message:
-   *                   type: string
-   *                   example: "User profile retrieved successfully"
-   *                 data:
-   *                   type: object
-   *                   properties:
-   *                     id:
-   *                       type: string
-   *                       example: "clp1234567890abcdef"
-   *                     email:
-   *                       type: string
-   *                       example: "john.doe@example.com"
-   *                     phoneNumber:
-   *                       type: string
-   *                       example: "+919876543210"
-   *                     isPhoneVerified:
-   *                       type: boolean
-   *                       example: true
-   *                     isEmailVerified:
-   *                       type: boolean
-   *                       example: true
-   *                     credits:
-   *                       type: string
-   *                       example: "150.750000"
-   *                     isActive:
-   *                       type: boolean
-   *                       example: true
-   *                     createdAt:
-   *                       type: string
-   *                       format: date-time
-   *                     updatedAt:
-   *                       type: string
-   *                       format: date-time
-   *                     deposits:
-   *                       type: array
-   *                       items:
-   *                         $ref: '#/components/schemas/DepositResponse'
-   *                       description: "Recent deposits (last 10)"
-   *                     transactions:
-   *                       type: array
-   *                       items:
-   *                         $ref: '#/components/schemas/TransactionResponse'
-   *                       description: "Recent transactions (last 10)"
-   *                 timestamp:
-   *                   type: string
-   *                   format: date-time
    *       401:
-   *         description: Unauthorized - Invalid or missing token
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
-   *       404:
-   *         description: User not found
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
-   *       500:
-   *         description: Internal server error
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
+   *         description: Unauthorized
    */
   async getProfile(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      if (!req.user) {
-        throw new ValidationException('User not authenticated');
+      if (!req.user?.id) {
+        throw new ValidationException('User ID not found in request');
       }
 
-      const user = await this.userService.getUserWithRelations(req.user.id);
-
+      const user = await this.userService.getUserById(req.user.id);
+      
       res.json(
         apiUtils.success('User profile retrieved successfully', user)
       );
     } catch (error) {
       if (error instanceof Error) {
-        logger.error('Get user profile failed', { error: error.message, userId: req.user?.id });
+        logger.error('Get profile failed', { error: error.message, userId: req.user?.id });
       }
       throw error;
     }
@@ -328,7 +357,7 @@ export class UserController {
    *     tags:
    *       - User Management
    *     summary: Update user profile
-   *     description: Update the authenticated user's profile information (email and/or phone number).
+   *     description: Update the authenticated user's profile information
    *     security:
    *       - bearerAuth: []
    *     requestBody:
@@ -336,87 +365,38 @@ export class UserController {
    *       content:
    *         application/json:
    *           schema:
-   *             $ref: '#/components/schemas/UserUpdate'
-   *           examples:
-   *             update_email:
-   *               summary: Update email only
-   *               value:
-   *                 email: "newemail@example.com"
-   *             update_phone:
-   *               summary: Update phone number only
-   *               value:
-   *                 phoneNumber: "+919876543210"
-   *             update_both:
-   *               summary: Update both email and phone number
-   *               value:
-   *                 email: "newemail@example.com"
-   *                 phoneNumber: "+919876543210"
+   *             type: object
+   *             properties:
+   *               email:
+   *                 type: string
+   *                 format: email
+   *               phoneNumber:
+   *                 type: string
+   *               tronAddress:
+   *                 type: string
+   *                 pattern: '^T[A-Za-z1-9]{33}$'
    *     responses:
    *       200:
    *         description: Profile updated successfully
-   *         content:
-   *           application/json:
-   *             schema:
-   *               type: object
-   *               properties:
-   *                 success:
-   *                   type: boolean
-   *                   example: true
-   *                 message:
-   *                   type: string
-   *                   example: "Profile updated successfully"
-   *                 data:
-   *                   $ref: '#/components/schemas/UserResponse'
-   *                 timestamp:
-   *                   type: string
-   *                   format: date-time
-   *       400:
-   *         description: Validation error
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
    *       401:
    *         description: Unauthorized
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
-   *       409:
-   *         description: Email or phone number already in use
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
-   *       500:
-   *         description: Internal server error
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
    */
   async updateProfile(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      if (!req.user) {
-        throw new ValidationException('User not authenticated');
+      if (!req.user?.id) {
+        throw new ValidationException('User ID not found in request');
       }
 
-      // Validate request body
       const validatedData = updateUserSchema.parse(req.body);
-
-      // Update user
-      const updatedUser = await this.userService.updateUser(req.user.id, validatedData);
-
+      
+      const user = await this.userService.updateUser(req.user.id, validatedData);
+      
       res.json(
-        apiUtils.success('Profile updated successfully', updatedUser)
+        apiUtils.success('Profile updated successfully', user)
       );
     } catch (error) {
       if (error instanceof Error) {
-        logger.error('Update user profile failed', { 
-          error: error.message, 
-          userId: req.user?.id,
-          body: req.body 
-        });
+        logger.error('Update profile failed', { error: error.message, userId: req.user?.id });
       }
       throw error;
     }
@@ -424,339 +404,43 @@ export class UserController {
 
   /**
    * @swagger
-   * /users/credits:
-   *   get:
-   *     tags:
-   *       - User Management
-   *     summary: Get user credits
-   *     description: Retrieve the current credit balance for the authenticated user.
-   *     security:
-   *       - bearerAuth: []
-   *     responses:
-   *       200:
-   *         description: User credits retrieved successfully
-   *         content:
-   *           application/json:
-   *             schema:
-   *               type: object
-   *               properties:
-   *                 success:
-   *                   type: boolean
-   *                   example: true
-   *                 message:
-   *                   type: string
-   *                   example: "User credits retrieved successfully"
-   *                 data:
-   *                   type: object
-   *                   properties:
-   *                     credits:
-   *                       type: string
-   *                       example: "150.750000"
-   *                       description: "Current credit balance"
-   *                 timestamp:
-   *                   type: string
-   *                   format: date-time
-   *       401:
-   *         description: Unauthorized
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
-   *       500:
-   *         description: Internal server error
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
-   */
-  async getCredits(req: AuthenticatedRequest, res: Response): Promise<void> {
-    try {
-      if (!req.user) {
-        throw new ValidationException('User not authenticated');
-      }
-
-      const user = await this.userService.getUserById(req.user.id);
-
-      res.json(
-        apiUtils.success('User credits retrieved successfully', {
-          credits: user.credits,
-        })
-      );
-    } catch (error) {
-      if (error instanceof Error) {
-        logger.error('Get user credits failed', { error: error.message, userId: req.user?.id });
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * @swagger
-   * /users/deposits:
-   *   get:
-   *     tags:
-   *       - User Management
-   *     summary: Get user deposit history
-   *     description: Retrieve the deposit history for the authenticated user.
-   *     security:
-   *       - bearerAuth: []
-   *     responses:
-   *       200:
-   *         description: Deposit history retrieved successfully
-   *         content:
-   *           application/json:
-   *             schema:
-   *               type: object
-   *               properties:
-   *                 success:
-   *                   type: boolean
-   *                   example: true
-   *                 message:
-   *                   type: string
-   *                   example: "Deposit history retrieved successfully"
-   *                 data:
-   *                   type: object
-   *                   properties:
-   *                     deposits:
-   *                       type: array
-   *                       items:
-   *                         $ref: '#/components/schemas/DepositResponse'
-   *                 timestamp:
-   *                   type: string
-   *                   format: date-time
-   *       401:
-   *         description: Unauthorized
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
-   *       500:
-   *         description: Internal server error
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
-   */
-  async getDepositHistory(req: AuthenticatedRequest, res: Response): Promise<void> {
-    try {
-      if (!req.user) {
-        throw new ValidationException('User not authenticated');
-      }
-
-      const user = await this.userService.getUserWithRelations(req.user.id);
-
-      res.json(
-        apiUtils.success('Deposit history retrieved successfully', {
-          deposits: user.deposits || [],
-        })
-      );
-    } catch (error) {
-      if (error instanceof Error) {
-        logger.error('Get deposit history failed', { error: error.message, userId: req.user?.id });
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * @swagger
-   * /users/transactions:
-   *   get:
-   *     tags:
-   *       - User Management
-   *     summary: Get user transaction history
-   *     description: Retrieve the transaction history for the authenticated user, including deposits, credits, and energy transfers.
-   *     security:
-   *       - bearerAuth: []
-   *     responses:
-   *       200:
-   *         description: Transaction history retrieved successfully
-   *         content:
-   *           application/json:
-   *             schema:
-   *               type: object
-   *               properties:
-   *                 success:
-   *                   type: boolean
-   *                   example: true
-   *                 message:
-   *                   type: string
-   *                   example: "Transaction history retrieved successfully"
-   *                 data:
-   *                   type: object
-   *                   properties:
-   *                     transactions:
-   *                       type: array
-   *                       items:
-   *                         $ref: '#/components/schemas/TransactionResponse'
-   *                 timestamp:
-   *                   type: string
-   *                   format: date-time
-   *       401:
-   *         description: Unauthorized
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
-   *       500:
-   *         description: Internal server error
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
-   */
-  async getTransactionHistory(req: AuthenticatedRequest, res: Response): Promise<void> {
-    try {
-      if (!req.user) {
-        throw new ValidationException('User not authenticated');
-      }
-
-      const user = await this.userService.getUserWithRelations(req.user.id);
-
-      res.json(
-        apiUtils.success('Transaction history retrieved successfully', {
-          transactions: user.transactions || [],
-        })
-      );
-    } catch (error) {
-      if (error instanceof Error) {
-        logger.error('Get transaction history failed', { error: error.message, userId: req.user?.id });
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * @swagger
-<<<<<<< HEAD
    * /users/forgot-password:
    *   post:
    *     tags:
    *       - Authentication
    *     summary: Request password reset
-   *     description: Send a password reset token to the user's email address. The token will be valid for 1 hour.
-=======
-   * /users/verify-otp:
-   *   post:
-   *     tags:
-   *       - Authentication
-   *     summary: Verify OTP for phone number
-   *     description: Verify the OTP sent to the user's phone number via WhatsApp and email.
->>>>>>> origin/account-verification
+   *     description: Send a password reset link to the user's email
    *     requestBody:
    *       required: true
    *       content:
    *         application/json:
    *           schema:
    *             type: object
-<<<<<<< HEAD
    *             required:
    *               - email
-=======
->>>>>>> origin/account-verification
    *             properties:
    *               email:
    *                 type: string
    *                 format: email
-   *                 example: "john.doe@example.com"
-<<<<<<< HEAD
-   *             examples:
-   *               example1:
-   *                 summary: Valid email for password reset
-   *                 value:
-   *                   email: "john.doe@example.com"
+   *                 example: user@example.com
    *     responses:
    *       200:
-   *         description: Password reset email sent (or would be sent if email exists)
-=======
-   *               otp:
-   *                 type: string
-   *                 length: 6
-   *                 example: "123456"
-   *             required:
-   *               - email
-   *               - otp
-   *     responses:
-   *       200:
-   *         description: OTP verified successfully
->>>>>>> origin/account-verification
-   *         content:
-   *           application/json:
-   *             schema:
-   *               type: object
-   *               properties:
-   *                 success:
-   *                   type: boolean
-   *                   example: true
-   *                 message:
-   *                   type: string
-<<<<<<< HEAD
-   *                   example: "If an account with that email exists, we have sent a password reset link."
-=======
-   *                   example: "OTP verified successfully"
-   *                 data:
-   *                   $ref: '#/components/schemas/UserResponse'
->>>>>>> origin/account-verification
-   *                 timestamp:
-   *                   type: string
-   *                   format: date-time
+   *         description: Password reset email sent
    *       400:
-<<<<<<< HEAD
    *         description: Validation error
-=======
-   *         description: Invalid or expired OTP
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
-   *       404:
-   *         description: User not found
->>>>>>> origin/account-verification
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
-   *       500:
-   *         description: Internal server error
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
    */
-<<<<<<< HEAD
   async forgotPassword(req: Request, res: Response): Promise<void> {
     try {
-      // Validate request body
       const validatedData = forgotPasswordSchema.parse(req.body);
-
-      // Request password reset
-      const result = await this.userService.forgotPassword(validatedData);
-
+      
+      await this.userService.forgotPassword(validatedData.email);
+      
       res.json(
-        apiUtils.success(result.message)
+        apiUtils.success('If the email exists, a password reset link has been sent')
       );
     } catch (error) {
       if (error instanceof Error) {
-        logger.error('Forgot password request failed', { 
-          error: error.message, 
-          email: req.body.email 
-        });
-=======
-  async verifyOtp(req: Request, res: Response): Promise<void> {
-    try {
-      // Validate request body
-      const validatedData = verifyOtpSchema.parse(req.body);
-
-      // Verify OTP
-      const user = await this.userService.verifyOTP(validatedData.email, validatedData.otp);
-
-      res.json(
-        apiUtils.success('OTP verified successfully', user)
-      );
-    } catch (error) {
-      if (error instanceof Error) {
-        logger.error('OTP verification failed', { error: error.message, email: req.body.email });
->>>>>>> origin/account-verification
+        logger.error('Forgot password failed', { error: error.message });
       }
       throw error;
     }
@@ -764,124 +448,47 @@ export class UserController {
 
   /**
    * @swagger
-<<<<<<< HEAD
    * /users/reset-password:
    *   post:
    *     tags:
    *       - Authentication
-   *     summary: Reset password with token
-   *     description: Reset user password using the token received via email. The token must be valid and not expired.
-=======
-   * /users/resend-otp:
-   *   post:
-   *     tags:
-   *       - Authentication
-   *     summary: Resend OTP for phone verification
-   *     description: Resend the OTP to the user's phone number via WhatsApp and email.
->>>>>>> origin/account-verification
+   *     summary: Reset password
+   *     description: Reset user password using the token received via email
    *     requestBody:
    *       required: true
    *       content:
    *         application/json:
    *           schema:
    *             type: object
-<<<<<<< HEAD
    *             required:
    *               - token
    *               - newPassword
    *             properties:
    *               token:
    *                 type: string
-   *                 example: "abc123def456ghi789jkl012mno345pqr678stu901vwx234yz567890abcdef12"
-   *                 description: "Reset token received via email"
+   *                 example: reset-token-here
    *               newPassword:
    *                 type: string
    *                 minLength: 8
-   *                 example: "newSecurePassword123"
-   *                 description: "New password (minimum 8 characters)"
-   *             examples:
-   *               example1:
-   *                 summary: Valid password reset
-   *                 value:
-   *                   token: "abc123def456ghi789jkl012mno345pqr678stu901vwx234yz567890abcdef12"
-   *                   newPassword: "newSecurePassword123"
+   *                 example: NewSecurePass123!
    *     responses:
    *       200:
-   *         description: Password reset successful
-=======
-   *             properties:
-   *               email:
-   *                 type: string
-   *                 format: email
-   *                 example: "john.doe@example.com"
-   *               phoneNumber:
-   *                 type: string
-   *                 example: "+919876543210"
-   *             required:
-   *               - email
-   *               - phoneNumber
-   *     responses:
-   *       200:
-   *         description: OTP resent successfully
->>>>>>> origin/account-verification
-   *         content:
-   *           application/json:
-   *             schema:
-   *               type: object
-   *               properties:
-   *                 success:
-   *                   type: boolean
-   *                   example: true
-   *                 message:
-   *                   type: string
-<<<<<<< HEAD
-   *                   example: "Password has been reset successfully. You can now log in with your new password."
-   *                 timestamp:
-   *                   type: string
-   *                   format: date-time
+   *         description: Password reset successfully
    *       400:
-   *         description: Validation error or invalid/expired token
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
-   *             examples:
-   *               invalid_token:
-   *                 summary: Invalid or expired token
-   *                 value:
-   *                   success: false
-   *                   message: "Invalid or expired reset token"
-   *                   timestamp: "2024-01-01T00:00:00.000Z"
-   *               weak_password:
-   *                 summary: Password too short
-   *                 value:
-   *                   success: false
-   *                   message: "Password must be at least 8 characters"
-   *                   timestamp: "2024-01-01T00:00:00.000Z"
-   *       500:
-   *         description: Internal server error
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
+   *         description: Invalid or expired token
    */
   async resetPassword(req: Request, res: Response): Promise<void> {
     try {
-      // Validate request body
       const validatedData = resetPasswordSchema.parse(req.body);
-
-      // Reset password
-      const result = await this.userService.resetPassword(validatedData);
-
+      
+      await this.userService.resetPassword(validatedData.token, validatedData.newPassword);
+      
       res.json(
-        apiUtils.success(result.message)
+        apiUtils.success('Password reset successfully')
       );
     } catch (error) {
       if (error instanceof Error) {
-        logger.error('Password reset failed', { 
-          error: error.message, 
-          hasToken: !!req.body.token 
-        });
+        logger.error('Reset password failed', { error: error.message });
       }
       throw error;
     }
@@ -890,11 +497,11 @@ export class UserController {
   /**
    * @swagger
    * /users/change-password:
-   *   post:
+   *   put:
    *     tags:
    *       - User Management
-   *     summary: Change user password
-   *     description: Change the authenticated user's password. Requires current password for verification.
+   *     summary: Change password
+   *     description: Change the authenticated user's password
    *     security:
    *       - bearerAuth: []
    *     requestBody:
@@ -909,129 +516,37 @@ export class UserController {
    *             properties:
    *               currentPassword:
    *                 type: string
-   *                 example: "currentPassword123"
-   *                 description: "Current password for verification"
+   *                 example: CurrentPass123!
    *               newPassword:
    *                 type: string
    *                 minLength: 8
-   *                 example: "newSecurePassword123"
-   *                 description: "New password (minimum 8 characters)"
-   *             examples:
-   *               example1:
-   *                 summary: Valid password change
-   *                 value:
-   *                   currentPassword: "currentPassword123"
-   *                   newPassword: "newSecurePassword123"
+   *                 example: NewSecurePass123!
    *     responses:
    *       200:
    *         description: Password changed successfully
-   *         content:
-   *           application/json:
-   *             schema:
-   *               type: object
-   *               properties:
-   *                 success:
-   *                   type: boolean
-   *                   example: true
-   *                 message:
-   *                   type: string
-   *                   example: "Password has been changed successfully."
-=======
-   *                   example: "OTP resent successfully"
->>>>>>> origin/account-verification
-   *                 timestamp:
-   *                   type: string
-   *                   format: date-time
-   *       400:
-   *         description: Validation error
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
-<<<<<<< HEAD
-   *             examples:
-   *               same_password:
-   *                 summary: New password same as current
-   *                 value:
-   *                   success: false
-   *                   message: "New password must be different from current password"
-   *                   timestamp: "2024-01-01T00:00:00.000Z"
-   *               weak_password:
-   *                 summary: Password too short
-   *                 value:
-   *                   success: false
-   *                   message: "New password must be at least 8 characters"
-   *                   timestamp: "2024-01-01T00:00:00.000Z"
    *       401:
-   *         description: Unauthorized or incorrect current password
-=======
-   *       404:
-   *         description: User not found
->>>>>>> origin/account-verification
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
-<<<<<<< HEAD
-   *             examples:
-   *               wrong_current_password:
-   *                 summary: Current password is incorrect
-   *                 value:
-   *                   success: false
-   *                   message: "Current password is incorrect"
-   *                   timestamp: "2024-01-01T00:00:00.000Z"
-   *               unauthorized:
-   *                 summary: Not authenticated
-   *                 value:
-   *                   success: false
-   *                   message: "User not authenticated"
-   *                   timestamp: "2024-01-01T00:00:00.000Z"
-=======
->>>>>>> origin/account-verification
-   *       500:
-   *         description: Internal server error
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
+   *         description: Invalid current password
    */
-<<<<<<< HEAD
   async changePassword(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      if (!req.user) {
-        throw new ValidationException('User not authenticated');
+      if (!req.user?.id) {
+        throw new ValidationException('User ID not found in request');
       }
 
-      // Validate request body
       const validatedData = changePasswordSchema.parse(req.body);
-
-      // Change password
-      const result = await this.userService.changePassword(req.user.id, validatedData);
-
+      
+      await this.userService.changePassword(
+        req.user.id,
+        validatedData.currentPassword,
+        validatedData.newPassword
+      );
+      
       res.json(
-        apiUtils.success(result.message)
+        apiUtils.success('Password changed successfully')
       );
     } catch (error) {
       if (error instanceof Error) {
-        logger.error('Password change failed', { 
-          error: error.message, 
-          userId: req.user?.id 
-        });
-=======
-  async resendOtp(req: Request, res: Response): Promise<void> {
-    try {
-      // Validate request body
-      const validatedData = resendOtpSchema.parse(req.body);
-
-      // Resend OTP
-      const sent = await this.userService.resendOTP(validatedData.email, validatedData.phoneNumber);
-
-      res.json(
-        apiUtils.success('OTP resent successfully', { sent })
-      );
-    } catch (error) {
-      if (error instanceof Error) {
-        logger.error('OTP resend failed', { error: error.message, email: req.body.email, phoneNumber: req.body.phoneNumber });
+        logger.error('Change password failed', { error: error.message, userId: req.user?.id });
       }
       throw error;
     }
@@ -1039,22 +554,17 @@ export class UserController {
 
   /**
    * @swagger
-   * /users/verify-email:
+   * /users/credits:
    *   get:
    *     tags:
-   *       - Authentication
-   *     summary: Verify email address
-   *     description: Verify the user's email address using the verification token sent via email.
-   *     parameters:
-   *       - in: query
-   *         name: token
-   *         required: true
-   *         schema:
-   *           type: string
-   *         description: Email verification token
+   *       - User Management
+   *     summary: Get user credits
+   *     description: Get the authenticated user's credit balance
+   *     security:
+   *       - bearerAuth: []
    *     responses:
    *       200:
-   *         description: Email verified successfully
+   *         description: Credits retrieved successfully
    *         content:
    *           application/json:
    *             schema:
@@ -1063,51 +573,157 @@ export class UserController {
    *                 success:
    *                   type: boolean
    *                   example: true
-   *                 message:
-   *                   type: string
-   *                   example: "Email verified successfully"
    *                 data:
-   *                   $ref: '#/components/schemas/UserResponse'
-   *                 timestamp:
-   *                   type: string
-   *                   format: date-time
-   *       400:
-   *         description: Invalid or expired token
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
-   *       404:
-   *         description: User not found
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
-   *       500:
-   *         description: Internal server error
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/ErrorResponse'
+   *                   type: object
+   *                   properties:
+   *                     credits:
+   *                       type: string
+   *                       example: "100.50"
+   *       401:
+   *         description: Unauthorized
    */
-  async verifyEmail(req: Request, res: Response): Promise<void> {
+  async getCredits(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const { token } = req.query;
-      
-      if (!token || typeof token !== 'string') {
-        throw new ValidationException('Verification token is required');
+      if (!req.user?.id) {
+        throw new ValidationException('User ID not found in request');
       }
 
-      // Verify email
-      const user = await this.userService.verifyEmailToken(token);
-
+      const user = await this.userService.getUserById(req.user.id);
+      
       res.json(
-        apiUtils.success('Email verified successfully', user)
+        apiUtils.success('Credits retrieved successfully', {
+          credits: user.credits
+        })
       );
     } catch (error) {
       if (error instanceof Error) {
-        logger.error('Email verification failed', { error: error.message, token: req.query.token });
->>>>>>> origin/account-verification
+        logger.error('Get credits failed', { error: error.message, userId: req.user?.id });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @swagger
+   * /users/deposits:
+   *   get:
+   *     tags:
+   *       - User Management
+   *     summary: Get user deposits
+   *     description: Get the authenticated user's deposit history
+   *     security:
+   *       - bearerAuth: []
+   *     parameters:
+   *       - in: query
+   *         name: page
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           default: 1
+   *       - in: query
+   *         name: limit
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 100
+   *           default: 10
+   *     responses:
+   *       200:
+   *         description: Deposits retrieved successfully
+   *       401:
+   *         description: Unauthorized
+   */
+  async getDeposits(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user?.id) {
+        throw new ValidationException('User ID not found in request');
+      }
+
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 10;
+
+      const userWithDeposits = await this.userService.getUserWithRelations(req.user.id);
+      
+      const deposits = userWithDeposits.deposits || [];
+      const paginatedDeposits = deposits.slice((page - 1) * limit, page * limit);
+
+      res.json(
+        apiUtils.success('Deposits retrieved successfully', {
+          deposits: paginatedDeposits,
+          pagination: {
+            page,
+            limit,
+            total: deposits.length,
+            totalPages: Math.ceil(deposits.length / limit)
+          }
+        })
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('Get deposits failed', { error: error.message, userId: req.user?.id });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @swagger
+   * /users/transactions:
+   *   get:
+   *     tags:
+   *       - User Management
+   *     summary: Get user transactions
+   *     description: Get the authenticated user's transaction history
+   *     security:
+   *       - bearerAuth: []
+   *     parameters:
+   *       - in: query
+   *         name: page
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           default: 1
+   *       - in: query
+   *         name: limit
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 100
+   *           default: 10
+   *     responses:
+   *       200:
+   *         description: Transactions retrieved successfully
+   *       401:
+   *         description: Unauthorized
+   */
+  async getTransactions(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user?.id) {
+        throw new ValidationException('User ID not found in request');
+      }
+
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 10;
+
+      const userWithTransactions = await this.userService.getUserWithRelations(req.user.id);
+      
+      const transactions = userWithTransactions.transactions || [];
+      const paginatedTransactions = transactions.slice((page - 1) * limit, page * limit);
+
+      res.json(
+        apiUtils.success('Transactions retrieved successfully', {
+          transactions: paginatedTransactions,
+          pagination: {
+            page,
+            limit,
+            total: transactions.length,
+            totalPages: Math.ceil(transactions.length / limit)
+          }
+        })
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('Get transactions failed', { error: error.message, userId: req.user?.id });
       }
       throw error;
     }

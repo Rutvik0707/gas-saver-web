@@ -578,40 +578,38 @@ export class DepositService {
       // Import energy service
       const { energyService } = await import('../../services/energy.service');
       
-<<<<<<< HEAD
-      // Delegate energy based on USDT amount
-      const txHash = await energyService.delegateEnergyToUser(
-        user.tronAddress,
-        userId,
-        1, // Legacy amount parameter (not used when usdtAmount is provided)
-        usdtAmount // Pass USDT amount for proper energy calculation
-      );
-      
-      if (txHash) {
-        logger.info('Energy transfer completed successfully', {
+      // Check if user has a TRON address for energy delegation
+      if (user.tronAddress) {
+        // Delegate energy based on USDT amount
+        const txHash = await energyService.delegateEnergyToUser(
+          user.tronAddress,
           userId,
-          userTronAddress: user.tronAddress,
-          txHash,
-          usdtAmount,
-        });
+          1, // Legacy amount parameter (not used when usdtAmount is provided)
+          usdtAmount // Pass USDT amount for proper energy calculation
+        );
+        
+        if (txHash) {
+          logger.info('Energy transfer completed successfully', {
+            userId,
+            userTronAddress: user.tronAddress,
+            txHash,
+            usdtAmount,
+          });
+        } else {
+          logger.warn('Energy transfer failed', {
+            userId,
+            userTronAddress: user.tronAddress,
+            usdtAmount,
+          });
+        }
       } else {
-        logger.warn('Energy transfer failed', {
+        // User doesn't have a TRON address yet
+        logger.info('Energy transfer skipped - user has no TRON address', {
           userId,
-          userTronAddress: user.tronAddress,
           usdtAmount,
         });
+        // TODO: Consider notifying user to add TRON address to receive energy
       }
-=======
-      // Note: Energy transfer functionality needs to be updated since tronAddress is no longer in user model
-      // This would require a different approach to handle energy delegation
-      logger.info('Energy transfer skipped - tronAddress no longer available', {
-        userId,
-        amount: 1,
-      });
-      
-      // TODO: Implement alternative energy transfer mechanism
-      // Perhaps using a different approach or storing wallet addresses separately
->>>>>>> origin/account-verification
       
     } catch (error) {
       logger.error('Failed to initiate energy transfer', {

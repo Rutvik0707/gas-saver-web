@@ -8,6 +8,7 @@ export const createUserSchema = z.object({
   email: z.string().email('Invalid email format'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
   phoneNumber: z.string().refine((num) => WhatsAppService.validatePhoneNumber(num), 'Invalid phone number format'),
+  tronAddress: z.string().regex(/^T[A-Za-z1-9]{33}$/, 'Invalid TRON address format').optional(),
 });
 
 export const loginUserSchema = z.object({
@@ -49,24 +50,26 @@ export const changePasswordSchema = z.object({
 export type CreateUserDto = z.infer<typeof createUserSchema>;
 export type LoginUserDto = z.infer<typeof loginUserSchema>;
 export type UpdateUserDto = z.infer<typeof updateUserSchema>;
-<<<<<<< HEAD
 export type ForgotPasswordDto = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordDto = z.infer<typeof resetPasswordSchema>;
+export const verifyEmailSchema = z.object({
+  token: z.string().min(1, 'Verification token is required'),
+});
+
 export type ChangePasswordDto = z.infer<typeof changePasswordSchema>;
-=======
 export type VerifyOtpDto = z.infer<typeof verifyOtpSchema>;
 export type ResendOtpDto = z.infer<typeof resendOtpSchema>;
->>>>>>> origin/account-verification
+export type VerifyEmailDto = z.infer<typeof verifyEmailSchema>;
 
 export interface UserResponse {
   id: string;
   email: string;
-  phoneNumber: string;
+  tronAddress?: string;
+  phoneNumber?: string;
   isPhoneVerified: boolean;
   isEmailVerified: boolean;
   credits: string;
   isActive: boolean;
-  isVerified?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -81,12 +84,6 @@ export interface LoginResponse {
   token: string;
   expiresIn: string;
 }
-
-export const verifyEmailSchema = z.object({
-  token: z.string().min(1, 'Verification token is required'),
-});
-
-export type VerifyEmailDto = z.infer<typeof verifyEmailSchema>;
 
 export interface VerifyEmailResponse {
   success: boolean;

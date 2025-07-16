@@ -55,46 +55,31 @@ async createUser(userData: CreateUserDto): Promise<UserResponse> {
     const passwordHash = await cryptoUtils.hashPassword(password);
 
     // Generate verification token for email
-    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const verificationToken = cryptoUtils.generateToken();
     const verificationTokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
     // Generate OTP for phone verification
     const otp = otpService.generateOTP(6);
     const otpExpiry = otpService.calculateOTPExpiry();
 
-    // Create user
-    // Generate verification token
-    const verificationToken = cryptoUtils.generateToken();
-
     const newUser = await this.userRepository.create({
       email,
-<<<<<<< HEAD
-      tronAddress,
-      passwordHash,
-      verificationToken,
-=======
-      password,
       phoneNumber,
       passwordHash,
+      tronAddress: userData.tronAddress,
       verificationToken,
       verificationTokenExpiry,
       otpCode: otp,
       otpExpiry,
->>>>>>> origin/account-verification
     });
 
     // Send verification email
     await emailService.sendVerificationEmail(email, verificationToken);
-<<<<<<< HEAD
-
-    logger.info(`New user created: ${email}`, { userId: newUser.id });
-=======
     
     // Send OTP via email and WhatsApp
     await otpService.sendOTP(email, phoneNumber, otp);
 
     logger.info(`New user created: ${email}`, { userId: newUser.id, phoneNumber });
->>>>>>> origin/account-verification
 
     return this.formatUserResponse(newUser);
   }
@@ -450,7 +435,8 @@ private formatUserResponse(user: any): UserResponse {
     return {
       id: user.id,
       email: user.email,
-      phoneNumber: user.phoneNumber || '',
+      tronAddress: user.tronAddress || undefined,
+      phoneNumber: user.phoneNumber || undefined,
       isPhoneVerified: user.isPhoneVerified || false,
       isEmailVerified: user.isEmailVerified || false,
       credits: user.credits?.toString() || '0',

@@ -37,13 +37,8 @@ Most endpoints require JWT authentication. After login, include the token in:
   },
   servers: [
     {
-<<<<<<< HEAD
       url: `http://localhost:${config.app.port}/api/${config.app.apiVersion}`,
       description: 'Local development server',
-=======
-      url: `http://localhost:3000/api/${config.app.apiVersion}`,
-      description: 'Development server',
->>>>>>> origin/account-verification
     },
     {
       url: `https://energy-demo.scriptlanes.in/api/${config.app.apiVersion}`,
@@ -121,13 +116,15 @@ Most endpoints require JWT authentication. After login, include the token in:
           },
           phoneNumber: {
             type: 'string',
-<<<<<<< HEAD
-            pattern: '^T[A-Za-z1-9]{33}$',
-            example: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
-=======
             example: '+919876543210',
             description: 'Valid phone number with country code',
->>>>>>> origin/account-verification
+          },
+          tronAddress: {
+            type: 'string',
+            pattern: '^T[A-Za-z1-9]{33}$',
+            example: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+            description: 'Optional TRON wallet address',
+            required: false,
           },
         },
       },

@@ -8,29 +8,27 @@ interface CreateUserData extends Omit<CreateUserDto, 'password'> {
 }
 
 export class UserRepository {
-<<<<<<< HEAD
-  async create(userData: CreateUserData): Promise<User> {
-=======
-async create(userData: CreateUserDto & { passwordHash: string, verificationToken?: string, verificationTokenExpiry?: Date, otpCode?: string, otpExpiry?: Date }): Promise<User> {
->>>>>>> origin/account-verification
+  async create(userData: CreateUserDto & { 
+    passwordHash: string, 
+    tronAddress?: string,
+    verificationToken?: string, 
+    verificationTokenExpiry?: Date, 
+    otpCode?: string, 
+    otpExpiry?: Date 
+  }): Promise<User> {
     const { password, ...data } = userData as any;
     return prisma.user.create({
       data: {
         email: data.email,
         phoneNumber: data.phoneNumber,
         passwordHash: data.passwordHash,
-<<<<<<< HEAD
-        tronAddress: data.tronAddress,
-        verificationToken: data.verificationToken,
-        verificationTokenExpiry: data.verificationToken ? new Date(Date.now() + 24 * 60 * 60 * 1000) : undefined, // 24 hours from now
-=======
+        tronAddress: data.tronAddress || null,
         verificationToken: data.verificationToken,
         verificationTokenExpiry: data.verificationTokenExpiry,
         otpCode: data.otpCode,
         otpExpiry: data.otpExpiry,
         isEmailVerified: false,
         isPhoneVerified: false,
->>>>>>> origin/account-verification
       },
     });
   }
