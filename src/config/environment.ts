@@ -74,6 +74,12 @@ const envSchema = z.object({
   ENERGY_PRICE_SUN: z.string().transform(Number).default('420'),
   MIN_ENERGY_DELEGATION: z.string().transform(Number).default('65000'),
   MAX_ENERGY_DELEGATION: z.string().transform(Number).default('150000'),
+  
+  // Pricing Configuration
+  PRICE_CACHE_TTL_MS: z.string().transform(Number).default('60000'),
+  FALLBACK_USDT_PRICE: z.string().transform(Number).default('1.0'),
+  FALLBACK_TRX_PRICE: z.string().transform(Number).default('0.12'),
+  SERVICE_DISCOUNT_PERCENTAGE: z.string().transform(Number).default('15'),
 });
 
 const env = envSchema.parse(process.env);
@@ -134,6 +140,12 @@ export const config = {
     priceSun: env.ENERGY_PRICE_SUN,
     minDelegation: env.MIN_ENERGY_DELEGATION,
     maxDelegation: env.MAX_ENERGY_DELEGATION,
+  },
+  pricing: {
+    cacheTtlMs: env.PRICE_CACHE_TTL_MS,
+    fallbackUsdtPrice: env.FALLBACK_USDT_PRICE,
+    fallbackTrxPrice: env.FALLBACK_TRX_PRICE,
+    serviceDiscountPercentage: env.SERVICE_DISCOUNT_PERCENTAGE,
   },
 } as const;
 

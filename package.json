@@ -44,7 +44,7 @@
   "license": "MIT",
   "dependencies": {
     "@aws-sdk/client-ses": "^3.839.0",
-    "@prisma/client": "^5.7.1",
+    "@prisma/client": "^6.12.0",
     "axios": "^1.6.2",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
@@ -56,7 +56,6 @@
     "jsonwebtoken": "^9.0.2",
     "node-cron": "^3.0.3",
     "nodemailer": "^7.0.3",
-    "prisma": "^5.7.1",
     "qrcode": "^1.5.4",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.0",
@@ -84,6 +83,7 @@
     "eslint": "^8.55.0",
     "jest": "^29.7.0",
     "prettier": "^3.1.0",
+    "prisma": "^6.12.0",
     "ts-node": "^10.9.1",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.3.3"

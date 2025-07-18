@@ -21,6 +21,7 @@ declare module 'tronweb' {
       getBalance(address: string): Promise<number>;
       sendTransaction(to: string, amount: number): Promise<any>;
       getAccountResources(address: string): Promise<any>;
+      getAccount(address: string): Promise<any>;
     };
     
     contract(): {

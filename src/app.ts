@@ -14,6 +14,8 @@ import { adminRoutes } from './modules/admin';
 import { apiUtils } from './shared/utils';
 import { feedbackRoutes } from './modules/feedback';
 import { energyRoutes } from './modules/energy';
+import { pricingRoutes } from './modules/pricing';
+import { validationRoutes } from './modules/validation';
 
 
 export function createApp(): express.Application {
@@ -138,6 +140,8 @@ export function createApp(): express.Application {
   apiRouter.use('/admin', adminRoutes);
   apiRouter.use('/feedback', feedbackRoutes);
   apiRouter.use('/energy', energyRoutes);
+  apiRouter.use('/pricing', pricingRoutes);
+  apiRouter.use('/validation', validationRoutes);
 
   // Mount API router
   app.use(`/api/${config.app.apiVersion}`, apiRouter);

@@ -16,6 +16,13 @@ A Node.js TypeScript API service that enables USDT (TRC-20) holders to convert t
 - Automated energy delegation to user wallets
 - Real-time transaction monitoring and history
 - Comprehensive admin dashboard with user and transaction management
+- Live pricing based on market rates (65,000 energy per USDT transaction)
+
+## Pricing Model
+- Energy requirement: 65,000 energy per USDT transaction (no buffer)
+- Live energy pricing: ~65 SUN per energy unit (market-based)
+- Service markup: 5% for competitive pricing
+- All prices fetched from Binance API and calculated in real-time
 
 ## Authentication
 Most endpoints require JWT authentication. After login, include the token in:
@@ -360,6 +367,8 @@ Most endpoints require JWT authentication. After login, include the token in:
     { name: 'Transactions', description: 'Transactions & history' },
     { name: 'System', description: 'System info & health' },
     { name: 'Admin', description: 'Admin dashboard & management' },
+    { name: 'Pricing', description: 'Live pricing and cost calculations' },
+    { name: 'Validation', description: 'TRON address validation and verification' },
   ],
 };
 

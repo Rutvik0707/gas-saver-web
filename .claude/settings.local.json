@@ -32,7 +32,12 @@
       "Bash(npm run livecoins:*)",
       "Bash(cp:*)",
       "WebFetch(domain:developers.tron.network)",
-      "Bash(true)"
+      "Bash(true)",
+      "Bash(find:*)",
+      "Bash(DATABASE_URL=\"postgresql://gassaverBETAdb:gasSaverBETA2026@gassaver-beta-db.cxy06y2aw9cy.ap-south-1.rds.amazonaws.com:5432/tronBeta?schema=public\" npx prisma migrate dev --name init)",
+      "Bash(DATABASE_URL=\"postgresql://gassaverBETAdb:gasSaverBETA2026@gassaver-beta-db.cxy06y2aw9cy.ap-south-1.rds.amazonaws.com:5432/tronBeta?schema=public\" npm run seed:admin)",
+      "Bash(NODE_ENV=production node -r dotenv/config scripts/seed-admin.js dotenv_config_path=.env.production)",
+      "Bash(NODE_ENV=production ts-node -r dotenv/config scripts/seed-admin.ts dotenv_config_path=.env.production)"
     ],
     "deny": []
   }
