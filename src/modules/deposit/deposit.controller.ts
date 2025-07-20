@@ -1231,4 +1231,123 @@ export class DepositController {
       throw error;
     }
   }
+
+  /**
+   * @swagger
+   * /deposits/{id}/cancel:
+   *   post:
+   *     tags:
+   *       - Deposits
+   *     summary: Cancel a pending deposit
+   *     description: |
+   *       Cancel a pending deposit and release the assigned address back to the pool.
+   *       Users can only cancel their own deposits. Only deposits with PENDING status can be cancelled.
+   *     security:
+   *       - bearerAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *           example: "clp1234567890abcdef"
+   *         description: Unique deposit identifier
+   *     requestBody:
+   *       required: false
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               reason:
+   *                 type: string
+   *                 example: "Changed my mind"
+   *                 description: Optional reason for cancellation
+   *     responses:
+   *       200:
+   *         description: Deposit cancelled successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 message:
+   *                   type: string
+   *                   example: "Deposit cancelled successfully"
+   *                 data:
+   *                   $ref: '#/components/schemas/DepositResponse'
+   *                 timestamp:
+   *                   type: string
+   *                   format: date-time
+   *       400:
+   *         description: Invalid request or deposit cannot be cancelled
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   *             examples:
+   *               wrong_status:
+   *                 summary: Wrong deposit status
+   *                 value:
+   *                   success: false
+   *                   message: "Cannot cancel deposit with status CONFIRMED. Only PENDING deposits can be cancelled."
+   *                   timestamp: "2024-01-01T00:00:00.000Z"
+   *               not_owner:
+   *                 summary: Not deposit owner
+   *                 value:
+   *                   success: false
+   *                   message: "You can only cancel your own deposits"
+   *                   timestamp: "2024-01-01T00:00:00.000Z"
+   *       401:
+   *         description: Unauthorized
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   *       404:
+   *         description: Deposit not found
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   *       500:
+   *         description: Internal server error
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   */
+  async cancelDeposit(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        throw new ValidationException('User not authenticated');
+      }
+
+      const { id } = req.params;
+      const { reason } = req.body;
+      
+      const cancelledDeposit = await this.depositService.cancelDeposit(
+        id,
+        req.user.id,
+        false, // not admin
+        reason
+      );
+      
+      res.json(
+        apiUtils.success('Deposit cancelled successfully', cancelledDeposit)
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('Cancel deposit failed', {
+          error: error.message,
+          depositId: req.params.id,
+          userId: req.user?.id,
+        });
+      }
+      throw error;
+    }
+  }
 }

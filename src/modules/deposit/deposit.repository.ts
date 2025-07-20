@@ -196,6 +196,25 @@ export class DepositRepository {
   }
 
   /**
+   * Cancel a deposit
+   */
+  async cancelDeposit(
+    id: string, 
+    cancelledBy: string, 
+    cancellationReason?: string
+  ): Promise<Deposit> {
+    return prisma.deposit.update({
+      where: { id },
+      data: {
+        status: DepositStatus.CANCELLED,
+        cancelledAt: new Date(),
+        cancelledBy,
+        cancellationReason,
+      },
+    });
+  }
+
+  /**
    * Generic find many with options
    */
   async findMany(options: {
@@ -241,6 +260,25 @@ export class DepositRepository {
       _sum: {
         amountUsdt: true,
       },
+    });
+  }
+
+  /**
+   * Cancel a deposit
+   */
+  async cancelDeposit(
+    depositId: string, 
+    cancelledBy: string, 
+    cancellationReason?: string
+  ): Promise<Deposit> {
+    return prisma.deposit.update({
+      where: { id: depositId },
+      data: {
+        status: DepositStatus.CANCELLED,
+        cancelledAt: new Date(),
+        cancelledBy,
+        cancellationReason
+      }
     });
   }
 }

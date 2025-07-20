@@ -26,6 +26,7 @@ export function createDepositRoutes(depositController: DepositController): Route
   router.post('/initiate', depositController.initiateDeposit.bind(depositController));
   router.get('/pending', depositController.getPendingDeposits.bind(depositController));
   router.get('/:id/status', depositController.getDepositStatus.bind(depositController));
+  router.post('/:id/cancel', depositController.cancelDeposit.bind(depositController));
   
   // Existing protected routes
   router.get('/my-deposits', depositController.getUserDeposits.bind(depositController));

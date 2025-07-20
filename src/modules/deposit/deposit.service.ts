@@ -1,6 +1,6 @@
 import { config, logger, tronWeb } from '../../config';
 import { userService } from '../user';
-import { NotFoundException, ValidationException } from '../../shared/exceptions';
+import { NotFoundException, ValidationException, ForbiddenException } from '../../shared/exceptions';
 import { DepositRepository } from './deposit.repository';
 import { addressPoolService } from '../../services/address-pool.service';
 import { referenceService } from '../../services/reference.service';
@@ -91,7 +91,9 @@ export class DepositService {
         userId,
         amount,
       });
-      throw new ValidationException('Failed to initiate deposit');
+      // Pass through the original error message if available
+      const errorMessage = error instanceof Error ? error.message : 'Failed to initiate deposit';
+      throw new ValidationException(errorMessage);
     }
   }
 
@@ -329,6 +331,72 @@ export class DepositService {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
+  }
+
+  /**
+   * Cancel a deposit and release its address
+   */
+  async cancelDeposit(
+    depositId: string,
+    userId: string,
+    isAdmin: boolean = false,
+    cancellationReason?: string
+  ): Promise<Deposit> {
+    // Find the deposit
+    const deposit = await this.depositRepository.findById(depositId);
+    if (!deposit) {
+      throw new NotFoundException('Deposit', depositId);
+    }
+
+    // Check permissions: user can only cancel their own deposits
+    if (!isAdmin && deposit.userId !== userId) {
+      throw new ForbiddenException('You can only cancel your own deposits');
+    }
+
+    // Only allow cancellation of PENDING deposits
+    if (deposit.status !== DepositStatus.PENDING) {
+      throw new ValidationException(`Cannot cancel deposit with status: ${deposit.status}`);
+    }
+
+    // Check if deposit hasn't expired yet
+    if (deposit.expiresAt < new Date()) {
+      throw new ValidationException('Cannot cancel expired deposit');
+    }
+
+    // Cancel the deposit
+    const cancelledDeposit = await this.depositRepository.cancelDeposit(
+      depositId,
+      isAdmin ? `admin:${userId}` : userId,
+      cancellationReason
+    );
+
+    // Release the assigned address if present
+    if (deposit.assignedAddressId) {
+      try {
+        await addressPoolService.releaseAddressById(deposit.assignedAddressId);
+        logger.info('Released address from cancelled deposit', {
+          depositId,
+          addressId: deposit.assignedAddressId,
+          address: deposit.assignedAddress
+        });
+      } catch (error) {
+        logger.error('Failed to release address for cancelled deposit', {
+          depositId,
+          addressId: deposit.assignedAddressId,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    }
+
+    logger.info('Deposit cancelled', {
+      depositId,
+      userId: deposit.userId,
+      cancelledBy: isAdmin ? `admin:${userId}` : userId,
+      assignedAddress: deposit.assignedAddress,
+      cancellationReason
+    });
+
+    return cancelledDeposit;
   }
 
   /**
@@ -616,6 +684,79 @@ export class DepositService {
         error: error instanceof Error ? error.message : 'Unknown error',
         userId,
       });
+    }
+  }
+
+  /**
+   * Cancel a deposit
+   */
+  async cancelDeposit(
+    depositId: string, 
+    cancelledBy: string, 
+    cancellationReason?: string,
+    isAdmin: boolean = false
+  ): Promise<DepositResponse> {
+    try {
+      // Get the deposit
+      const deposit = await this.depositRepository.findById(depositId);
+      if (!deposit) {
+        throw new NotFoundException('Deposit', depositId);
+      }
+
+      // Check if deposit can be cancelled
+      if (deposit.status !== DepositStatus.PENDING) {
+        throw new ValidationException(
+          `Cannot cancel deposit with status ${deposit.status}. Only PENDING deposits can be cancelled.`
+        );
+      }
+
+      // For non-admin users, verify ownership
+      if (!isAdmin && deposit.userId !== cancelledBy) {
+        throw new ValidationException('You can only cancel your own deposits');
+      }
+
+      // Release the assigned address back to the pool
+      if (deposit.assignedAddressId && deposit.assignedAddress) {
+        try {
+          await addressPoolService.releaseAddressById(deposit.assignedAddressId);
+          logger.info('Released address due to deposit cancellation', {
+            depositId,
+            addressId: deposit.assignedAddressId,
+            address: deposit.assignedAddress,
+          });
+        } catch (error) {
+          logger.error('Failed to release address during cancellation', {
+            error: error instanceof Error ? error.message : 'Unknown error',
+            depositId,
+            addressId: deposit.assignedAddressId,
+          });
+          // Continue with cancellation even if address release fails
+        }
+      }
+
+      // Cancel the deposit
+      const cancelledDeposit = await this.depositRepository.cancelDeposit(
+        depositId,
+        cancelledBy,
+        cancellationReason
+      );
+
+      logger.info('Deposit cancelled successfully', {
+        depositId,
+        userId: deposit.userId,
+        cancelledBy,
+        cancellationReason,
+        isAdmin,
+      });
+
+      return this.formatDepositResponse(cancelledDeposit);
+    } catch (error) {
+      logger.error('Failed to cancel deposit', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        depositId,
+        cancelledBy,
+      });
+      throw error;
     }
   }
 

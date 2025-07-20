@@ -96,6 +96,10 @@ export class AddressPoolService {
         error: error instanceof Error ? error.message : 'Unknown error',
         depositId
       });
+      // Preserve the original error message
+      if (error instanceof Error) {
+        throw error;
+      }
       throw new Error('Failed to assign address to deposit');
     }
   }
@@ -140,6 +144,22 @@ export class AddressPoolService {
         error: error instanceof Error ? error.message : 'Unknown error'
       });
       return 0;
+    }
+  }
+
+  /**
+   * Release a specific address by ID (used for deposit cancellation)
+   */
+  async releaseAddressById(addressId: string): Promise<void> {
+    try {
+      await this.addressPoolRepository.releaseAddress(addressId);
+      logger.info(`🔓 Address released by ID`, { addressId });
+    } catch (error) {
+      logger.error('Failed to release address by ID', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        addressId
+      });
+      throw new Error('Failed to release address');
     }
   }
 

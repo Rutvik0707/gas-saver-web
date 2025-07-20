@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { adminController } from './admin.controller';
+import { adminDepositController } from './admin-deposit.controller';
 import { validationMiddleware } from '../../middleware';
 import { 
   adminAuth,
@@ -388,7 +389,7 @@ router.delete('/users/:id', ...adminAuth(requireDeleteUsers), adminController.de
  *         name: status
  *         schema:
  *           type: string
- *           enum: [PENDING, CONFIRMED, PROCESSED, FAILED, EXPIRED]
+ *           enum: [PENDING, CONFIRMED, PROCESSED, FAILED, EXPIRED, CANCELLED]
  *       - in: query
  *         name: userId
  *         schema:
@@ -431,7 +432,7 @@ router.get('/deposits', ...adminAuth(requireViewDeposits, validationMiddleware(D
  *             properties:
  *               status:
  *                 type: string
- *                 enum: [PENDING, CONFIRMED, PROCESSED, FAILED, EXPIRED]
+ *                 enum: [PENDING, CONFIRMED, PROCESSED, FAILED, EXPIRED, CANCELLED]
  *     responses:
  *       200:
  *         description: Deposit updated successfully
@@ -443,6 +444,48 @@ router.get('/deposits', ...adminAuth(requireViewDeposits, validationMiddleware(D
  *         description: Insufficient permissions
  */
 router.put('/deposits/:id', ...adminAuth(requireEditDeposits), adminController.updateDeposit);
+
+/**
+ * @swagger
+ * /admin/deposits/{id}/cancel:
+ *   post:
+ *     tags: [Admin]
+ *     summary: Cancel deposit
+ *     description: Cancel a pending deposit with reason (Admin only)
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - reason
+ *             properties:
+ *               reason:
+ *                 type: string
+ *                 minLength: 5
+ *                 example: "User requested cancellation via support"
+ *     responses:
+ *       200:
+ *         description: Deposit cancelled successfully
+ *       400:
+ *         description: Invalid request or deposit cannot be cancelled
+ *       404:
+ *         description: Deposit not found
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Insufficient permissions
+ */
+router.post('/deposits/:id/cancel', ...adminAuth(requireEditDeposits), adminDepositController.cancelDeposit.bind(adminDepositController));
 
 // Transaction management routes
 /**
