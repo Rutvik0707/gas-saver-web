@@ -105,15 +105,27 @@ export class AddressPoolRepository {
     free: number;
     assigned: number;
     used: number;
+    inCooldown: number;
   }> {
-    const [total, free, assigned, used] = await Promise.all([
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    
+    const [total, free, assigned, used, inCooldown] = await Promise.all([
       prisma.addressPool.count(),
       prisma.addressPool.count({ where: { status: AddressStatus.FREE } }),
       prisma.addressPool.count({ where: { status: AddressStatus.ASSIGNED } }),
-      prisma.addressPool.count({ where: { status: AddressStatus.USED } })
+      prisma.addressPool.count({ where: { status: AddressStatus.USED } }),
+      // Count addresses in cooldown (USED but lastUsedAt > 1 hour ago)
+      prisma.addressPool.count({ 
+        where: { 
+          status: AddressStatus.USED,
+          lastUsedAt: {
+            gt: oneHourAgo
+          }
+        } 
+      })
     ]);
 
-    return { total, free, assigned, used };
+    return { total, free, assigned, used, inCooldown };
   }
 
   /**

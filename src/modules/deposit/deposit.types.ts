@@ -71,6 +71,7 @@ export interface PoolStats {
   free: number;
   assigned: number;
   used: number;
+  inCooldown: number;
   utilization: number;
   lowThreshold: boolean;
   expiringWithinHour: number;

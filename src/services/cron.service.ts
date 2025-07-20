@@ -79,6 +79,12 @@ export class CronService {
         logger.info(`📍 Released ${releasedCount} expired address assignments`);
       }
       
+      // Reset addresses that have cooled down (USED -> FREE after 1 hour)
+      const recycledCount = await addressPoolService.resetCooledDownAddresses();
+      if (recycledCount > 0) {
+        logger.info(`♻️ Recycled ${recycledCount} addresses back to FREE after cooldown`);
+      }
+      
       // Auto-replenish disabled - addresses are managed manually
       // await addressPoolService.autoReplenishPool();
       

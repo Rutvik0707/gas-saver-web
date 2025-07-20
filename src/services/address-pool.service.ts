@@ -144,6 +144,26 @@ export class AddressPoolService {
   }
 
   /**
+   * Reset cooled down addresses from USED back to FREE status
+   */
+  async resetCooledDownAddresses(): Promise<number> {
+    try {
+      const recycledCount = await this.addressPoolRepository.resetCooledDownAddresses();
+      
+      if (recycledCount > 0) {
+        logger.info(`♻️ Reset ${recycledCount} addresses from USED to FREE after cooldown`);
+      }
+      
+      return recycledCount;
+    } catch (error) {
+      logger.error('Failed to reset cooled down addresses', {
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      return 0;
+    }
+  }
+
+  /**
    * Mark address as USED after successful transaction
    */
   async markAddressAsUsed(address: string): Promise<void> {
@@ -186,6 +206,7 @@ export class AddressPoolService {
         free: stats.free,
         assigned: stats.assigned,
         used: stats.used,
+        inCooldown: stats.inCooldown,
         utilization,
         lowThreshold,
         expiringWithinHour,
