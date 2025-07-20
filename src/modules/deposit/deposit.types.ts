@@ -79,11 +79,15 @@ export interface PoolStats {
 
 export interface CreateAddressDto {
   address: string;
-  privateKeyEncrypted: string;
+  privateKeyEncrypted?: string;
 }
 
 export interface GenerateAddressesDto {
   count: number;
+}
+
+export interface AddExternalAddressesDto {
+  addresses: string[];
 }
 
 // Transaction detection types (simplified for address-based system)

@@ -17,6 +17,7 @@ export function createDepositRoutes(depositController: DepositController): Route
   // Address pool admin endpoints (should be secured in production)
   router.get('/address-pool/stats', depositController.getAddressPoolStats.bind(depositController));
   router.post('/address-pool/generate', depositController.generateAddresses.bind(depositController));
+  router.post('/address-pool/add-external', depositController.addExternalAddresses.bind(depositController));
   
   // Protected routes
   router.use(authMiddleware);

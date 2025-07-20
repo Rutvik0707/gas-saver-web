@@ -1114,4 +1114,121 @@ export class DepositController {
       throw error;
     }
   }
+
+  /**
+   * @swagger
+   * /deposits/address-pool/add-external:
+   *   post:
+   *     tags:
+   *       - Deposits
+   *     summary: Add external addresses to the pool
+   *     description: |
+   *       Add externally managed TRON addresses to the address pool without private keys.
+   *       These addresses will be monitored for USDT deposits but cannot be used for withdrawals.
+   *       This is an admin endpoint for adding pre-existing addresses to the system.
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - addresses
+   *             properties:
+   *               addresses:
+   *                 type: array
+   *                 items:
+   *                   type: string
+   *                   pattern: ^T[A-Za-z1-9]{33}$
+   *                 minItems: 1
+   *                 maxItems: 100
+   *                 example: ["TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", "TN3W4H6rK2ce4vX9YnFQHwKENnHjoxb3m9"]
+   *                 description: Array of valid TRON addresses (mainnet or testnet based on current mode)
+   *     responses:
+   *       200:
+   *         description: Addresses added successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 message:
+   *                   type: string
+   *                   example: "5 external addresses added successfully"
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     added:
+   *                       type: array
+   *                       items:
+   *                         type: string
+   *                       description: Addresses that were added
+   *                     skipped:
+   *                       type: array
+   *                       items:
+   *                         type: string
+   *                       description: Addresses that already existed
+   *       400:
+   *         description: Invalid request data or invalid addresses
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: false
+   *                 message:
+   *                   type: string
+   *                   example: "Invalid TRON address: xyz123"
+   *       500:
+   *         description: Internal server error
+   */
+  async addExternalAddresses(req: Request, res: Response): Promise<void> {
+    try {
+      const { addresses } = req.body as { addresses: string[] };
+      
+      if (!addresses || !Array.isArray(addresses) || addresses.length === 0) {
+        res.status(400).json(
+          apiUtils.error('Addresses must be a non-empty array')
+        );
+        return;
+      }
+
+      if (addresses.length > 100) {
+        res.status(400).json(
+          apiUtils.error('Maximum 100 addresses can be added at once')
+        );
+        return;
+      }
+
+      const { addressPoolService } = await import('../../services/address-pool.service');
+      await addressPoolService.addExternalAddresses(addresses);
+      
+      res.json(
+        apiUtils.success(`${addresses.length} external addresses processed successfully`, {
+          totalProvided: addresses.length
+        })
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('Add external addresses failed', { 
+          error: error.message,
+          addressCount: req.body.addresses?.length || 0
+        });
+        
+        // If it's a validation error, return 400
+        if (error.message.includes('Invalid TRON address')) {
+          res.status(400).json(
+            apiUtils.error(error.message)
+          );
+          return;
+        }
+      }
+      throw error;
+    }
+  }
 }

@@ -10,7 +10,7 @@ export class AddressPoolRepository {
     await prisma.addressPool.createMany({
       data: addresses.map(addr => ({
         address: addr.address,
-        privateKeyEncrypted: addr.privateKeyEncrypted,
+        privateKeyEncrypted: addr.privateKeyEncrypted || null,
         status: AddressStatus.FREE
       }))
     });
@@ -215,6 +215,19 @@ export class AddressPoolRepository {
         status: AddressStatus.USED,
         lastUsedAt: {
           lte: oneHourAgo
+        }
+      }
+    });
+  }
+
+  /**
+   * Find addresses by list
+   */
+  async findAddressesByList(addresses: string[]): Promise<AddressPool[]> {
+    return prisma.addressPool.findMany({
+      where: {
+        address: {
+          in: addresses
         }
       }
     });

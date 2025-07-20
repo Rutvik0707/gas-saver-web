@@ -79,8 +79,8 @@ export class CronService {
         logger.info(`📍 Released ${releasedCount} expired address assignments`);
       }
       
-      // Auto-replenish pool if needed
-      await addressPoolService.autoReplenishPool();
+      // Auto-replenish disabled - addresses are managed manually
+      // await addressPoolService.autoReplenishPool();
       
       logger.debug('📍 Address pool maintenance completed');
     } catch (error) {

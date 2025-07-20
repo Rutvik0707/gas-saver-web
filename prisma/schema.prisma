@@ -66,7 +66,7 @@ model Deposit {
 model AddressPool {
   id                    String      @id @default(cuid())
   address               String      @unique
-  privateKeyEncrypted   String      @map("private_key_encrypted")
+  privateKeyEncrypted   String?     @map("private_key_encrypted")
   status                AddressStatus @default(FREE)
   assignedToDepositId   String?     @map("assigned_to_deposit_id")
   assignedAt            DateTime?   @map("assigned_at")

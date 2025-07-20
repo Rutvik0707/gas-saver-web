@@ -31,7 +31,7 @@ export class AddressPoolService {
         
         addresses.push({
           address: account.address.base58,
-          privateKeyEncrypted
+          privateKeyEncrypted: privateKeyEncrypted || undefined
         });
         
         // Log progress every 10 addresses
@@ -62,20 +62,12 @@ export class AddressPoolService {
       const freeAddress = await this.addressPoolRepository.findFreeAddress();
       
       if (!freeAddress) {
-        // Try to auto-generate more addresses if pool is empty
-        logger.warn('No free addresses available, generating more...');
-        await this.generateAddressBatch(50);
-        
-        const newFreeAddress = await this.addressPoolRepository.findFreeAddress();
-        if (!newFreeAddress) {
-          throw new Error('No addresses available in pool');
-        }
+        // No auto-generation - addresses are managed manually
+        logger.error('No free addresses available in pool');
+        throw new Error('Something is wrong at the moment please try again after few mins');
       }
 
-      const address = freeAddress || await this.addressPoolRepository.findFreeAddress();
-      if (!address) {
-        throw new Error('Failed to find free address after generation');
-      }
+      const address = freeAddress;
 
       // Set 3-hour expiration
       const expiresAt = new Date(Date.now() + 3 * 60 * 60 * 1000);
@@ -207,29 +199,6 @@ export class AddressPoolService {
     }
   }
 
-  /**
-   * Auto-generate more addresses when pool is low
-   */
-  async autoReplenishPool(): Promise<void> {
-    try {
-      const stats = await this.getPoolStatistics();
-      
-      if (stats.free < 50) {
-        const generateCount = Math.max(100, stats.total * 0.2); // Generate 20% more or minimum 100
-        
-        logger.info(`🔄 Auto-replenishing address pool`, {
-          currentFree: stats.free,
-          generateCount
-        });
-        
-        await this.generateAddressBatch(Math.floor(generateCount));
-      }
-    } catch (error) {
-      logger.error('Failed to auto-replenish pool', {
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-    }
-  }
 
   /**
    * Get all assigned addresses for transaction monitoring
@@ -261,9 +230,62 @@ export class AddressPoolService {
   }
 
   /**
+   * Add external addresses without private keys
+   * Used for addresses managed externally
+   */
+  async addExternalAddresses(addresses: string[]): Promise<void> {
+    try {
+      logger.info(`📍 Adding ${addresses.length} external addresses to pool...`);
+      
+      // Validate all addresses
+      const tronWeb = new TronWeb({
+        fullHost: 'https://api.trongrid.io'
+      });
+      
+      for (const address of addresses) {
+        if (!tronWeb.isAddress(address)) {
+          throw new Error(`Invalid TRON address: ${address}`);
+        }
+      }
+      
+      // Check for duplicates in the pool
+      const existingAddresses = await this.addressPoolRepository.findAddressesByList(addresses);
+      const existingAddressSet = new Set(existingAddresses.map(a => a.address));
+      
+      const newAddresses = addresses.filter(addr => !existingAddressSet.has(addr));
+      
+      if (newAddresses.length === 0) {
+        logger.warn('All addresses already exist in the pool');
+        return;
+      }
+      
+      // Add new addresses without private keys
+      const addressDtos: CreateAddressDto[] = newAddresses.map(address => ({
+        address,
+        privateKeyEncrypted: undefined
+      }));
+      
+      await this.addressPoolRepository.createAddressBatch(addressDtos);
+      
+      logger.info(`✅ Successfully added ${newAddresses.length} external addresses`, {
+        added: newAddresses,
+        skipped: addresses.filter(addr => existingAddressSet.has(addr))
+      });
+    } catch (error) {
+      logger.error('Failed to add external addresses', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        addressCount: addresses.length
+      });
+      throw new Error('Failed to add external addresses: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    }
+  }
+
+  /**
    * Encrypt private key using AES-256
    */
-  private encryptPrivateKey(privateKey: string): string {
+  private encryptPrivateKey(privateKey: string | null): string | null {
+    if (!privateKey) return null;
+    
     try {
       const algorithm = 'aes-256-cbc';
       const key = createHash('sha256').update(process.env.ENCRYPTION_SECRET || 'default-secret').digest();
@@ -285,7 +307,9 @@ export class AddressPoolService {
   /**
    * Decrypt private key (for fund recovery only)
    */
-  private decryptPrivateKey(encryptedPrivateKey: string): string {
+  private decryptPrivateKey(encryptedPrivateKey: string | null): string | null {
+    if (!encryptedPrivateKey) return null;
+    
     try {
       const algorithm = 'aes-256-cbc';
       const key = createHash('sha256').update(process.env.ENCRYPTION_SECRET || 'default-secret').digest();

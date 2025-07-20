@@ -18,6 +18,8 @@
     "lint:fix": "eslint . --ext .ts --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "migrate": "prisma migrate dev",
+    "migrate:deploy": "ts-node scripts/run-migration.ts",
+    "migrate:deploy:prod": "NODE_ENV=production ts-node scripts/run-migration.ts",
     "migrate:reset": "prisma migrate reset",
     "generate": "prisma generate",
     "seed": "ts-node prisma/seed.ts",
@@ -28,6 +30,8 @@
     "test-env": "ts-node scripts/test-environment.ts",
     "test-env:dev": "cross-env NODE_ENV=development ts-node scripts/test-environment.ts",
     "test-env:prod": "cross-env NODE_ENV=production ts-node scripts/test-environment.ts",
+    "clear-address-pool": "ts-node scripts/clear-address-pool.ts",
+    "add-mainnet-addresses": "ts-node scripts/add-mainnet-addresses.ts",
     "test-energy": "ts-node scripts/test-energy-calculations.ts",
     "test-energy:dev": "cross-env NODE_ENV=development ts-node scripts/test-energy-calculations.ts",
     "test-energy:prod": "cross-env NODE_ENV=production ts-node scripts/test-energy-calculations.ts"
