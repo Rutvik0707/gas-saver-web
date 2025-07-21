@@ -12,7 +12,7 @@ import {
   USDTTransferEvent,
   InitiateDepositDto,
 } from './deposit.types';
-import { DepositStatus } from '@prisma/client';
+import { Deposit, DepositStatus } from '@prisma/client';
 
 export class DepositService {
   constructor(private depositRepository: DepositRepository) {}
@@ -22,9 +22,49 @@ export class DepositService {
    */
   async initiateDeposit(
     userId: string, 
-    amount: number
+    dto: InitiateDepositDto
   ): Promise<DepositInitiationResponse> {
     try {
+      const { amount, tronAddress } = dto;
+
+      // Determine the energy recipient address
+      let energyRecipientAddress: string | undefined = tronAddress;
+
+      // Validate TRON address if provided
+      if (tronAddress && !tronWeb.isAddress(tronAddress)) {
+        throw new ValidationException('Invalid TRON address format');
+      }
+
+      // If no TRON address provided in request, check user's profile
+      if (!energyRecipientAddress) {
+        const user = await userService.getUserById(userId);
+        if (user.tronAddress) {
+          energyRecipientAddress = user.tronAddress;
+          logger.info('Using user profile TRON address for deposit', {
+            userId,
+            tronAddress: energyRecipientAddress
+          });
+        }
+      }
+
+      // Ensure we have a valid TRON address for energy delegation
+      if (!energyRecipientAddress) {
+        logger.error('Deposit initiation failed - no TRON address available', {
+          userId,
+          hasRequestAddress: !!tronAddress,
+          hasProfileAddress: false,
+        });
+        throw new ValidationException(
+          'A TRON address is required to receive energy. Please provide a TRON address in your request or update your profile with a TRON address.'
+        );
+      }
+
+      logger.info('TRON address validated for deposit', {
+        userId,
+        energyRecipientAddress,
+        source: tronAddress ? 'request' : 'profile',
+      });
+
       // Set 3-hour expiration for address assignment
       const expiresAt = new Date(Date.now() + 3 * 60 * 60 * 1000);
       
@@ -33,6 +73,7 @@ export class DepositService {
         userId,
         expectedAmount: amount,
         expiresAt,
+        energyRecipientAddress,
         // Temporary address - will be updated after assignment
         assignedAddress: 'PENDING'
       });
@@ -75,6 +116,7 @@ export class DepositService {
       return {
         depositId: deposit.id,
         assignedAddress: addressAssignment.address,
+        energyRecipientAddress,
         qrCodeBase64,
         expectedAmount: amount.toString(),
         expiresAt,
@@ -82,14 +124,14 @@ export class DepositService {
         energyInfo: {
           estimatedEnergy,
           energyInTRX,
-          description: `You will receive ${estimatedEnergy.toLocaleString()} energy (≈ ${energyInTRX.toFixed(6)} TRX) for ${amount} USDT`
+          description: `You will receive ${estimatedEnergy.toLocaleString()} energy (≈ ${energyInTRX.toFixed(6)} TRX) for ${amount} USDT to address: ${energyRecipientAddress}`
         }
       };
     } catch (error) {
       logger.error('Failed to initiate deposit', {
         error: error instanceof Error ? error.message : 'Unknown error',
         userId,
-        amount,
+        amount: dto.amount,
       });
       // Pass through the original error message if available
       const errorMessage = error instanceof Error ? error.message : 'Failed to initiate deposit';
@@ -128,6 +170,7 @@ export class DepositService {
     return {
       depositId: deposit.id,
       assignedAddress: deposit.assignedAddress,
+      energyRecipientAddress: deposit.energyRecipientAddress || undefined,
       status: deposit.status,
       txHash: deposit.txHash || undefined,
       confirmations: confirmations || undefined,
@@ -136,6 +179,9 @@ export class DepositService {
       expiresAt: deposit.expiresAt,
       timeRemaining,
       nextStatusCheck,
+      warning: !deposit.energyRecipientAddress && deposit.status === DepositStatus.CONFIRMED 
+        ? 'No TRON address set for energy delivery. Energy transfer will be skipped.' 
+        : undefined,
     };
   }
 
@@ -192,15 +238,29 @@ export class DepositService {
                 // Perfect match - address maps directly to deposit
                 const amount = Number(tx.value) / Math.pow(10, 6); // Convert from raw USDT value
                 
-                logger.info(`✅ Transaction matched to deposit: ${tx.transaction_id.substring(0, 10)}... → ${deposit.id}`);
+                logger.info(`✅ Transaction matched to deposit: ${tx.transaction_id.substring(0, 10)}... → ${deposit.id}`, {
+                  depositId: deposit.id,
+                  amount,
+                  currentStatus: deposit.status,
+                  willUpdateTo: DepositStatus.CONFIRMED,
+                  energyRecipientAddress: deposit.energyRecipientAddress || 'not_set',
+                });
                 
                 // Update deposit with transaction details
-                await this.depositRepository.updateDepositTransaction(deposit.id, {
+                const updatedDeposit = await this.depositRepository.updateDepositTransaction(deposit.id, {
                   txHash: tx.transaction_id,
                   amountUsdt: amount,
                   blockNumber: BigInt(tx.block_number),
                   status: DepositStatus.CONFIRMED,
                   confirmed: true
+                });
+
+                logger.info('Deposit updated after transaction match', {
+                  depositId: deposit.id,
+                  newStatus: DepositStatus.CONFIRMED,
+                  confirmed: true,
+                  txHash: tx.transaction_id.substring(0, 10) + '...',
+                  shouldBeProcessedNext: true,
                 });
 
                 // Mark address as used
@@ -256,17 +316,38 @@ export class DepositService {
    * Process confirmed deposits (credit user accounts and transfer energy)
    */
   async processConfirmedDeposits(): Promise<void> {
+    logger.info('🔄 processConfirmedDeposits() called - checking for confirmed deposits...');
+    
     const confirmedDeposits = await this.depositRepository.findConfirmedButUnprocessed();
     
     if (confirmedDeposits.length === 0) {
-      logger.debug('No confirmed deposits to process');
+      logger.info('No confirmed deposits to process');
       return;
     }
 
-    logger.info(`💰 Processing ${confirmedDeposits.length} confirmed deposits`);
+    logger.info(`💰 Processing ${confirmedDeposits.length} confirmed deposits`, {
+      deposits: confirmedDeposits.map(d => ({
+        id: d.id,
+        userId: d.userId,
+        status: d.status,
+        processedAt: d.processedAt,
+        energyRecipientAddress: d.energyRecipientAddress || 'not_set',
+        amountUsdt: d.amountUsdt?.toString() || 'null',
+      }))
+    });
 
     for (const deposit of confirmedDeposits) {
       try {
+        logger.info('🎯 Starting to process individual deposit', {
+          depositId: deposit.id,
+          userId: deposit.userId,
+          amountUsdt: deposit.amountUsdt?.toString() || 'null',
+          energyRecipientAddress: deposit.energyRecipientAddress || 'not_set',
+          status: deposit.status,
+          confirmed: deposit.confirmed,
+          processedAt: deposit.processedAt,
+        });
+
         if (!deposit.amountUsdt) {
           logger.warn(`Skipping deposit ${deposit.id} - no amount detected`);
           continue;
@@ -276,19 +357,47 @@ export class DepositService {
         const creditsAmount = Number(deposit.amountUsdt);
         
         // Update user credits
+        logger.info('💳 Updating user credits...', {
+          depositId: deposit.id,
+          userId: deposit.userId,
+          creditsToAdd: creditsAmount,
+        });
         await userService.incrementUserCredits(deposit.userId, creditsAmount);
         
         // Mark deposit as processed
+        logger.info('✅ Marking deposit as processed...', {
+          depositId: deposit.id,
+        });
         await this.depositRepository.markAsProcessed(deposit.id);
         
-        logger.info(`Deposit processed successfully`, {
+        logger.info(`💰 Deposit credits added successfully`, {
           depositId: deposit.id,
           userId: deposit.userId,
           amount: creditsAmount,
+          energyRecipientAddress: deposit.energyRecipientAddress || 'not_set',
         });
         
-        // Trigger energy transfer to user's wallet
-        await this.initiateEnergyTransfer(deposit.userId, creditsAmount);
+        // Trigger energy transfer to user's wallet or deposit-specific address
+        logger.info('⚡ Initiating energy transfer...', {
+          depositId: deposit.id,
+          userId: deposit.userId,
+          creditsAmount,
+          energyRecipientAddress: deposit.energyRecipientAddress || 'not_set',
+        });
+        
+        try {
+          await this.initiateEnergyTransfer(deposit.userId, creditsAmount, deposit.id);
+          logger.info('⚡ Energy transfer completed successfully', {
+            depositId: deposit.id,
+          });
+        } catch (energyError) {
+          logger.error('⚡ Energy transfer failed but deposit was processed', {
+            depositId: deposit.id,
+            error: energyError instanceof Error ? energyError.message : 'Unknown error',
+          });
+          // Don't throw - deposit was already processed successfully
+          // Energy transfer failure is tracked separately
+        }
         
       } catch (error) {
         logger.error(`Failed to process deposit ${deposit.id}`, {
@@ -333,71 +442,6 @@ export class DepositService {
     }
   }
 
-  /**
-   * Cancel a deposit and release its address
-   */
-  async cancelDeposit(
-    depositId: string,
-    userId: string,
-    isAdmin: boolean = false,
-    cancellationReason?: string
-  ): Promise<Deposit> {
-    // Find the deposit
-    const deposit = await this.depositRepository.findById(depositId);
-    if (!deposit) {
-      throw new NotFoundException('Deposit', depositId);
-    }
-
-    // Check permissions: user can only cancel their own deposits
-    if (!isAdmin && deposit.userId !== userId) {
-      throw new ForbiddenException('You can only cancel your own deposits');
-    }
-
-    // Only allow cancellation of PENDING deposits
-    if (deposit.status !== DepositStatus.PENDING) {
-      throw new ValidationException(`Cannot cancel deposit with status: ${deposit.status}`);
-    }
-
-    // Check if deposit hasn't expired yet
-    if (deposit.expiresAt < new Date()) {
-      throw new ValidationException('Cannot cancel expired deposit');
-    }
-
-    // Cancel the deposit
-    const cancelledDeposit = await this.depositRepository.cancelDeposit(
-      depositId,
-      isAdmin ? `admin:${userId}` : userId,
-      cancellationReason
-    );
-
-    // Release the assigned address if present
-    if (deposit.assignedAddressId) {
-      try {
-        await addressPoolService.releaseAddressById(deposit.assignedAddressId);
-        logger.info('Released address from cancelled deposit', {
-          depositId,
-          addressId: deposit.assignedAddressId,
-          address: deposit.assignedAddress
-        });
-      } catch (error) {
-        logger.error('Failed to release address for cancelled deposit', {
-          depositId,
-          addressId: deposit.assignedAddressId,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        });
-      }
-    }
-
-    logger.info('Deposit cancelled', {
-      depositId,
-      userId: deposit.userId,
-      cancelledBy: isAdmin ? `admin:${userId}` : userId,
-      assignedAddress: deposit.assignedAddress,
-      cancellationReason
-    });
-
-    return cancelledDeposit;
-  }
 
   /**
    * Manually process a specific transaction by hash (for debugging/admin)
@@ -449,14 +493,14 @@ export class DepositService {
       // Mark address as used
       await addressPoolService.markAddressAsUsed(txDetails.to);
 
-      // Process the deposit (credit user and transfer energy)
-      await this.processConfirmedDeposits();
-
+      // Note: The deposit will be processed by the cron job
+      // We don't process all deposits here to avoid side effects
       logger.info('✅ Transaction processed successfully', {
         txHash,
         depositId: deposit.id,
         amount,
-        userId: deposit.userId
+        userId: deposit.userId,
+        note: 'Deposit will be processed by the cron job'
       });
       
       return true;
@@ -636,54 +680,227 @@ export class DepositService {
   }
 
   /**
-   * Initiate energy transfer to user's wallet
+   * Initiate energy transfer to user's wallet or deposit-specific address
    */
-  private async initiateEnergyTransfer(userId: string, usdtAmount: number): Promise<void> {
+  private async initiateEnergyTransfer(userId: string, usdtAmount: number, depositId?: string): Promise<void> {
     try {
+      logger.info('🔋 Starting energy transfer process', {
+        userId,
+        usdtAmount,
+        depositId,
+      });
+
       // Get user details
       const user = await userService.getUserById(userId);
+      logger.info('👤 Retrieved user details', {
+        userId,
+        hasUserTronAddress: !!user.tronAddress,
+      });
       
       // Import energy service
       const { energyService } = await import('../../services/energy.service');
       
-      // Check if user has a TRON address for energy delegation
-      if (user.tronAddress) {
-        // Delegate energy based on USDT amount
-        const txHash = await energyService.delegateEnergyToUser(
-          user.tronAddress,
-          userId,
-          1, // Legacy amount parameter (not used when usdtAmount is provided)
-          usdtAmount // Pass USDT amount for proper energy calculation
-        );
-        
-        if (txHash) {
-          logger.info('Energy transfer completed successfully', {
-            userId,
-            userTronAddress: user.tronAddress,
-            txHash,
-            usdtAmount,
+      // Determine the target TRON address for energy delegation
+      let targetAddress: string | null = null;
+      let addressSource: string = 'none';
+      
+      // If depositId is provided, check for deposit-specific TRON address
+      if (depositId) {
+        const deposit = await this.depositRepository.findById(depositId);
+        if (deposit?.energyRecipientAddress) {
+          targetAddress = deposit.energyRecipientAddress;
+          addressSource = 'deposit';
+          logger.info('📍 Using deposit-specific TRON address for energy transfer', {
+            depositId,
+            targetAddress,
+            energyRecipientAddress: deposit.energyRecipientAddress,
           });
         } else {
-          logger.warn('Energy transfer failed', {
-            userId,
-            userTronAddress: user.tronAddress,
-            usdtAmount,
+          logger.warn('⚠️ Deposit found but no energyRecipientAddress set', {
+            depositId,
+            deposit: {
+              id: deposit?.id,
+              userId: deposit?.userId,
+              status: deposit?.status,
+              energyRecipientAddress: deposit?.energyRecipientAddress,
+            }
           });
         }
-      } else {
-        // User doesn't have a TRON address yet
-        logger.info('Energy transfer skipped - user has no TRON address', {
+      }
+      
+      // Fall back to user's profile TRON address if no deposit-specific address
+      if (!targetAddress && user.tronAddress) {
+        targetAddress = user.tronAddress;
+        addressSource = 'user_profile';
+        logger.info('👤 Using user profile TRON address for energy transfer', {
           userId,
+          targetAddress,
+          userTronAddress: user.tronAddress,
+        });
+      }
+      
+      // Check if we have a valid TRON address for energy delegation
+      if (targetAddress) {
+        logger.info('🎯 Target address determined, initiating energy delegation', {
+          targetAddress,
+          addressSource,
           usdtAmount,
         });
+        
+        // Update deposit to track energy transfer attempt
+        if (depositId) {
+          await this.depositRepository.updateEnergyTransferStatus(depositId, {
+            energyTransferStatus: 'IN_PROGRESS',
+            energyTransferAttempts: { increment: 1 },
+          });
+        }
+        
+        try {
+          // Delegate energy based on USDT amount
+          const txHash = await energyService.delegateEnergyToUser(
+            targetAddress,
+            userId,
+            1, // Legacy amount parameter (not used when usdtAmount is provided)
+            usdtAmount // Pass USDT amount for proper energy calculation
+          );
+          
+          if (txHash) {
+            logger.info('✅ Energy transfer completed successfully', {
+              userId,
+              targetAddress,
+              addressSource,
+              txHash,
+              usdtAmount,
+              depositId,
+            });
+            
+            // Update deposit with successful energy transfer
+            if (depositId) {
+              await this.depositRepository.updateEnergyTransferStatus(depositId, {
+                energyTransferStatus: 'COMPLETED',
+                energyTransferTxHash: txHash,
+                energyTransferredAt: new Date(),
+                energyTransferError: null,
+              });
+            }
+          } else {
+            const errorMsg = 'Energy transfer failed - no transaction hash returned';
+            logger.warn('⚠️ ' + errorMsg, {
+              userId,
+              targetAddress,
+              addressSource,
+              usdtAmount,
+              depositId,
+            });
+            
+            // Update deposit with failed energy transfer
+            if (depositId) {
+              await this.depositRepository.updateEnergyTransferStatus(depositId, {
+                energyTransferStatus: 'FAILED',
+                energyTransferError: errorMsg,
+              });
+            }
+          }
+        } catch (energyError) {
+          const errorMsg = energyError instanceof Error ? energyError.message : 'Unknown error';
+          
+          // Update deposit with failed energy transfer
+          if (depositId) {
+            await this.depositRepository.updateEnergyTransferStatus(depositId, {
+              energyTransferStatus: 'FAILED',
+              energyTransferError: errorMsg,
+            });
+          }
+          
+          throw energyError; // Re-throw to be handled by caller
+        }
+      } else {
+        // No TRON address available
+        const errorMsg = 'No TRON address available for energy transfer';
+        logger.error('❌ Energy transfer skipped - ' + errorMsg, {
+          userId,
+          usdtAmount,
+          depositId,
+          userProfileAddress: user.tronAddress || 'not_set',
+          hasDepositAddress: depositId ? 'checked' : 'not_checked',
+          addressSource,
+        });
+        
+        // Update deposit with no address error
+        if (depositId) {
+          await this.depositRepository.updateEnergyTransferStatus(depositId, {
+            energyTransferStatus: 'NO_ADDRESS',
+            energyTransferError: errorMsg,
+          });
+        }
+        
         // TODO: Consider notifying user to add TRON address to receive energy
       }
       
     } catch (error) {
-      logger.error('Failed to initiate energy transfer', {
+      logger.error('❌ Failed to initiate energy transfer', {
         error: error instanceof Error ? error.message : 'Unknown error',
+        errorStack: error instanceof Error ? error.stack : undefined,
+        userId,
+        usdtAmount,
+        depositId,
+      });
+      // Re-throw to ensure the deposit processing knows about the failure
+      throw error;
+    }
+  }
+
+  /**
+   * Update energy recipient address for a pending deposit
+   */
+  async updateEnergyRecipientAddress(
+    depositId: string,
+    userId: string,
+    tronAddress: string
+  ): Promise<DepositResponse> {
+    try {
+      // Find the deposit
+      const deposit = await this.depositRepository.findById(depositId);
+      if (!deposit) {
+        throw new NotFoundException('Deposit', depositId);
+      }
+
+      // Verify ownership
+      if (deposit.userId !== userId) {
+        throw new ValidationException('You can only update your own deposits');
+      }
+
+      // Check if deposit is still pending
+      if (deposit.status !== DepositStatus.PENDING && deposit.status !== DepositStatus.CONFIRMED) {
+        throw new ValidationException('Can only update address for pending or confirmed deposits');
+      }
+
+      // Validate TRON address
+      if (!tronWeb.isAddress(tronAddress)) {
+        throw new ValidationException('Invalid TRON address format');
+      }
+
+      // Update the energy recipient address
+      const updatedDeposit = await this.depositRepository.updateEnergyRecipientAddress(
+        depositId,
+        tronAddress
+      );
+
+      logger.info('Energy recipient address updated', {
+        depositId,
+        userId,
+        newAddress: tronAddress,
+        status: deposit.status,
+      });
+
+      return this.formatDepositResponse(updatedDeposit);
+    } catch (error) {
+      logger.error('Failed to update energy recipient address', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        depositId,
         userId,
       });
+      throw error;
     }
   }
 
@@ -691,10 +908,10 @@ export class DepositService {
    * Cancel a deposit
    */
   async cancelDeposit(
-    depositId: string, 
-    cancelledBy: string, 
-    cancellationReason?: string,
-    isAdmin: boolean = false
+    depositId: string,
+    userId: string,
+    isAdmin: boolean = false,
+    cancellationReason?: string
   ): Promise<DepositResponse> {
     try {
       // Get the deposit
@@ -711,8 +928,8 @@ export class DepositService {
       }
 
       // For non-admin users, verify ownership
-      if (!isAdmin && deposit.userId !== cancelledBy) {
-        throw new ValidationException('You can only cancel your own deposits');
+      if (!isAdmin && deposit.userId !== userId) {
+        throw new ForbiddenException('You can only cancel your own deposits');
       }
 
       // Release the assigned address back to the pool
@@ -737,14 +954,14 @@ export class DepositService {
       // Cancel the deposit
       const cancelledDeposit = await this.depositRepository.cancelDeposit(
         depositId,
-        cancelledBy,
+        isAdmin ? `admin:${userId}` : userId,
         cancellationReason
       );
 
       logger.info('Deposit cancelled successfully', {
         depositId,
         userId: deposit.userId,
-        cancelledBy,
+        cancelledBy: isAdmin ? `admin:${userId}` : userId,
         cancellationReason,
         isAdmin,
       });
@@ -754,7 +971,7 @@ export class DepositService {
       logger.error('Failed to cancel deposit', {
         error: error instanceof Error ? error.message : 'Unknown error',
         depositId,
-        cancelledBy,
+        userId,
       });
       throw error;
     }

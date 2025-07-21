@@ -16,6 +16,8 @@ import { feedbackRoutes } from './modules/feedback';
 import { energyRoutes } from './modules/energy';
 import { pricingRoutes } from './modules/pricing';
 import { validationRoutes } from './modules/validation';
+import { tronAddressRoutes } from './modules/tron-address';
+import { createSystemStatusRoutes } from './modules/admin/system-status.routes';
 
 
 export function createApp(): express.Application {
@@ -142,6 +144,8 @@ export function createApp(): express.Application {
   apiRouter.use('/energy', energyRoutes);
   apiRouter.use('/pricing', pricingRoutes);
   apiRouter.use('/validation', validationRoutes);
+  apiRouter.use('/users/tron-addresses', tronAddressRoutes);
+  apiRouter.use('/system', createSystemStatusRoutes());
 
   // Mount API router
   app.use(`/api/${config.app.apiVersion}`, apiRouter);

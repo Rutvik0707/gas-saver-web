@@ -145,14 +145,29 @@ export class EnergyService {
       const requiredStakedSun = this.convertEnergyToSun(requiredEnergy);
       
       if (stakedBalance.stakedForEnergy < requiredStakedSun) {
-        const stakedTRX = tronUtils.fromSun(stakedBalance.stakedForEnergy);
-        const requiredTRX = tronUtils.fromSun(requiredStakedSun);
+        const stakedTRX = parseFloat(tronUtils.fromSun(stakedBalance.stakedForEnergy));
+        const requiredTRX = parseFloat(tronUtils.fromSun(requiredStakedSun));
+        const additionalTRXNeeded = requiredTRX - stakedTRX;
+        
         logger.error('Insufficient staked TRX for energy delegation', {
           stakedForEnergy: stakedTRX,
           requiredStaked: requiredTRX,
-          systemWallet: config.systemWallet.address
+          additionalNeeded: additionalTRXNeeded,
+          systemWallet: config.systemWallet.address,
+          energyAmount: requiredEnergy,
+          usdtAmount,
         });
-        throw new Error(`Insufficient staked TRX for delegation. Your wallet has energy but needs ${requiredTRX} TRX staked using Stake 2.0. Currently staked: ${stakedTRX} TRX`);
+        
+        const errorMessage = [
+          `Insufficient staked TRX for energy delegation.`,
+          `Required: ${requiredTRX.toFixed(2)} TRX`,
+          `Currently staked: ${stakedTRX.toFixed(2)} TRX`,
+          `Additional needed: ${additionalTRXNeeded.toFixed(2)} TRX`,
+          `System wallet: ${config.systemWallet.address}`,
+          `Please stake at least ${additionalTRXNeeded.toFixed(2)} more TRX for energy in the system wallet.`
+        ].join(' ');
+        
+        throw new Error(errorMessage);
       }
 
       // Convert energy to SUN for delegation
@@ -457,6 +472,98 @@ export class EnergyService {
       return {
         totalDelegated: 0,
         availableForDelegation: 0,
+      };
+    }
+  }
+
+  /**
+   * Check if system wallet is ready for energy delegation
+   * Returns detailed status and requirements
+   */
+  async checkSystemWalletReadiness(requiredUsdtAmount?: number): Promise<{
+    isReady: boolean;
+    totalEnergy: number;
+    availableEnergy: number;
+    stakedTRX: number;
+    requiredStakedTRX: number;
+    additionalStakeNeeded: number;
+    canProcessDeposits: number;
+    recommendations: string[];
+    errors: string[];
+  }> {
+    try {
+      const systemAddress = config.systemWallet.address;
+      const errors: string[] = [];
+      const recommendations: string[] = [];
+      
+      // Get energy status
+      const accountResources = await systemTronWeb.trx.getAccountResources(systemAddress);
+      const totalEnergy = accountResources.EnergyLimit || 0;
+      const usedEnergy = accountResources.EnergyUsed || 0;
+      const availableEnergy = Math.max(0, totalEnergy - usedEnergy);
+      
+      // Get staked balance
+      const stakedBalance = await this.getStakedBalance(systemAddress);
+      const stakedTRX = parseFloat(tronUtils.fromSun(stakedBalance.stakedForEnergy));
+      
+      // Calculate requirements for a typical deposit (or use provided amount)
+      const typicalUsdtAmount = requiredUsdtAmount || 20; // Default 20 USDT
+      const requiredEnergy = this.calculateRequiredEnergy(typicalUsdtAmount);
+      const requiredStakedSun = this.convertEnergyToSun(requiredEnergy);
+      const requiredStakedTRX = parseFloat(tronUtils.fromSun(requiredStakedSun));
+      
+      // Calculate how many deposits we can process with current stake
+      const canProcessDeposits = Math.floor(stakedTRX / requiredStakedTRX * typicalUsdtAmount);
+      
+      // Check if ready
+      const isReady = stakedBalance.stakedForEnergy >= requiredStakedSun;
+      const additionalStakeNeeded = Math.max(0, requiredStakedTRX - stakedTRX);
+      
+      if (!isReady) {
+        errors.push(`Insufficient staked TRX. Need ${requiredStakedTRX.toFixed(2)} TRX staked, have ${stakedTRX.toFixed(2)} TRX`);
+        recommendations.push(`Stake at least ${additionalStakeNeeded.toFixed(2)} more TRX for energy`);
+      }
+      
+      // Recommendations for optimal operation
+      if (stakedTRX < 100) {
+        recommendations.push('Consider staking at least 100 TRX for smoother operation');
+      }
+      
+      if (stakedTRX < 500) {
+        recommendations.push('Staking 500+ TRX would allow processing multiple deposits without issues');
+      }
+      
+      if (availableEnergy < requiredEnergy) {
+        errors.push(`Low available energy. Have ${availableEnergy}, need ${requiredEnergy} for ${typicalUsdtAmount} USDT`);
+        recommendations.push('Wait for energy to regenerate or stake more TRX');
+      }
+      
+      return {
+        isReady,
+        totalEnergy,
+        availableEnergy,
+        stakedTRX,
+        requiredStakedTRX,
+        additionalStakeNeeded,
+        canProcessDeposits,
+        recommendations,
+        errors,
+      };
+    } catch (error) {
+      logger.error('Failed to check system wallet readiness', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      
+      return {
+        isReady: false,
+        totalEnergy: 0,
+        availableEnergy: 0,
+        stakedTRX: 0,
+        requiredStakedTRX: 0,
+        additionalStakeNeeded: 0,
+        canProcessDeposits: 0,
+        recommendations: ['Unable to check system status'],
+        errors: ['Failed to check system wallet: ' + (error instanceof Error ? error.message : 'Unknown error')],
       };
     }
   }

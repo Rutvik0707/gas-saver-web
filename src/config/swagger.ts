@@ -356,6 +356,48 @@ Most endpoints require JWT authentication. After login, include the token in:
           },
         },
       },
+      TronAddressResponse: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            example: 'clp1234567890abcdef',
+            description: 'Unique identifier for the TRON address',
+          },
+          address: {
+            type: 'string',
+            pattern: '^T[A-Za-z1-9]{33}$',
+            example: 'TRX1234567890abcdefghijklmnopqrstuv',
+            description: 'The TRON address',
+          },
+          tag: {
+            type: 'string',
+            example: 'Main Wallet',
+            description: 'Optional label for the address',
+            nullable: true,
+          },
+          isVerified: {
+            type: 'boolean',
+            example: false,
+            description: 'Whether the address has been verified',
+          },
+          isPrimary: {
+            type: 'boolean',
+            example: true,
+            description: 'Whether this is the primary address for energy delegation',
+          },
+          createdAt: {
+            type: 'string',
+            format: 'date-time',
+            example: '2024-01-01T00:00:00.000Z',
+          },
+          updatedAt: {
+            type: 'string',
+            format: 'date-time',
+            example: '2024-01-01T00:00:00.000Z',
+          },
+        },
+      },
       // Add any other schemas you have...
     },
   },
@@ -363,6 +405,7 @@ Most endpoints require JWT authentication. After login, include the token in:
     { name: 'Authentication', description: 'User & admin auth' },
     { name: 'Feedback', description: 'User feedback operations' },
     { name: 'User Management', description: 'User profiles & updates' },
+    { name: 'User TRON Addresses', description: 'Manage multiple TRON addresses' },
     { name: 'Deposits', description: 'Deposit monitoring' },
     { name: 'Transactions', description: 'Transactions & history' },
     { name: 'System', description: 'System info & health' },

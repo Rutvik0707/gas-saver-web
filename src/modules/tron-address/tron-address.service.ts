@@ -1,0 +1,257 @@
+import { tronWeb, logger } from '../../config';
+import { TronAddressRepository } from './tron-address.repository';
+import { 
+  CreateTronAddressDto, 
+  UpdateTronAddressDto, 
+  TronAddressResponse, 
+  TronAddressListResponse,
+  formatTronAddressResponse 
+} from './tron-address.types';
+import { 
+  NotFoundException, 
+  ValidationException, 
+  ConflictException 
+} from '../../shared/exceptions';
+
+export class TronAddressService {
+  constructor(private tronAddressRepository: TronAddressRepository) {}
+
+  /**
+   * Add a new TRON address for a user
+   */
+  async addAddress(
+    userId: string, 
+    dto: CreateTronAddressDto
+  ): Promise<TronAddressResponse> {
+    try {
+      // Validate TRON address format
+      if (!tronWeb.isAddress(dto.address)) {
+        throw new ValidationException('Invalid TRON address format');
+      }
+
+      // Check if address already exists for this user
+      const existingAddress = await this.tronAddressRepository.findByAddressAndUserId(
+        dto.address, 
+        userId
+      );
+      
+      if (existingAddress) {
+        throw new ConflictException('This TRON address is already registered to your account');
+      }
+
+      // Check address limit (e.g., max 10 addresses per user)
+      const addressCount = await this.tronAddressRepository.countByUserId(userId);
+      if (addressCount >= 10) {
+        throw new ValidationException('You have reached the maximum limit of 10 TRON addresses');
+      }
+
+      // If this is the first address, make it primary by default
+      const isPrimary = dto.isPrimary !== undefined ? dto.isPrimary : addressCount === 0;
+
+      // Create the address
+      const address = await this.tronAddressRepository.create({
+        userId,
+        address: dto.address,
+        tag: dto.tag,
+        isPrimary,
+      });
+
+      logger.info('TRON address added', {
+        userId,
+        addressId: address.id,
+        address: dto.address,
+        isPrimary,
+      });
+
+      return formatTronAddressResponse(address);
+    } catch (error) {
+      logger.error('Failed to add TRON address', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        userId,
+        address: dto.address,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Get all TRON addresses for a user
+   */
+  async getUserAddresses(userId: string): Promise<TronAddressListResponse> {
+    try {
+      const addresses = await this.tronAddressRepository.findAllByUserId(userId);
+      const formattedAddresses = addresses.map(formatTronAddressResponse);
+      const primaryAddress = formattedAddresses.find(addr => addr.isPrimary) || null;
+
+      return {
+        addresses: formattedAddresses,
+        total: formattedAddresses.length,
+        primary: primaryAddress,
+      };
+    } catch (error) {
+      logger.error('Failed to get user TRON addresses', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        userId,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Get a specific TRON address by ID
+   */
+  async getAddressById(addressId: string, userId: string): Promise<TronAddressResponse> {
+    const address = await this.tronAddressRepository.findByIdAndUserId(addressId, userId);
+    
+    if (!address) {
+      throw new NotFoundException('TRON address', addressId);
+    }
+
+    return formatTronAddressResponse(address);
+  }
+
+  /**
+   * Update a TRON address
+   */
+  async updateAddress(
+    addressId: string, 
+    userId: string, 
+    dto: UpdateTronAddressDto
+  ): Promise<TronAddressResponse> {
+    try {
+      // Check if address exists
+      const existingAddress = await this.tronAddressRepository.findByIdAndUserId(
+        addressId, 
+        userId
+      );
+      
+      if (!existingAddress) {
+        throw new NotFoundException('TRON address', addressId);
+      }
+
+      // Update the address
+      const updatedAddress = await this.tronAddressRepository.update(
+        addressId,
+        userId,
+        dto
+      );
+
+      if (!updatedAddress) {
+        throw new Error('Failed to update TRON address');
+      }
+
+      logger.info('TRON address updated', {
+        userId,
+        addressId,
+        updates: dto,
+      });
+
+      return formatTronAddressResponse(updatedAddress);
+    } catch (error) {
+      logger.error('Failed to update TRON address', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        userId,
+        addressId,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a TRON address
+   */
+  async deleteAddress(addressId: string, userId: string): Promise<void> {
+    try {
+      // Check if address exists
+      const address = await this.tronAddressRepository.findByIdAndUserId(addressId, userId);
+      if (!address) {
+        throw new NotFoundException('TRON address', addressId);
+      }
+
+      // Don't allow deletion of the last address
+      const addressCount = await this.tronAddressRepository.countByUserId(userId);
+      if (addressCount <= 1) {
+        throw new ValidationException('Cannot delete your last TRON address');
+      }
+
+      // If deleting primary address, make another one primary
+      if (address.isPrimary && addressCount > 1) {
+        const otherAddresses = await this.tronAddressRepository.findAllByUserId(userId);
+        const nextPrimary = otherAddresses.find(addr => addr.id !== addressId);
+        if (nextPrimary) {
+          await this.tronAddressRepository.update(nextPrimary.id, userId, { isPrimary: true });
+        }
+      }
+
+      // Delete the address
+      const deleted = await this.tronAddressRepository.delete(addressId, userId);
+      
+      if (!deleted) {
+        throw new Error('Failed to delete TRON address');
+      }
+
+      logger.info('TRON address deleted', {
+        userId,
+        addressId,
+        address: address.address,
+      });
+    } catch (error) {
+      logger.error('Failed to delete TRON address', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        userId,
+        addressId,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Set a TRON address as primary
+   */
+  async setPrimaryAddress(addressId: string, userId: string): Promise<TronAddressResponse> {
+    try {
+      const address = await this.tronAddressRepository.findByIdAndUserId(addressId, userId);
+      
+      if (!address) {
+        throw new NotFoundException('TRON address', addressId);
+      }
+
+      if (address.isPrimary) {
+        return formatTronAddressResponse(address);
+      }
+
+      const updatedAddress = await this.tronAddressRepository.update(
+        addressId,
+        userId,
+        { isPrimary: true }
+      );
+
+      if (!updatedAddress) {
+        throw new Error('Failed to set primary address');
+      }
+
+      logger.info('Primary TRON address updated', {
+        userId,
+        addressId,
+        address: address.address,
+      });
+
+      return formatTronAddressResponse(updatedAddress);
+    } catch (error) {
+      logger.error('Failed to set primary TRON address', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        userId,
+        addressId,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Get the primary TRON address for a user
+   */
+  async getPrimaryAddress(userId: string): Promise<TronAddressResponse | null> {
+    const primaryAddress = await this.tronAddressRepository.findPrimaryByUserId(userId);
+    return primaryAddress ? formatTronAddressResponse(primaryAddress) : null;
+  }
+}

@@ -299,11 +299,15 @@ export class DepositController {
   async checkDeposits(req: Request, res: Response): Promise<void> {
     try {
       // This is a development/admin endpoint to manually trigger deposit checking
-      await this.depositService.detectAndMatchTransactions();
-      await this.depositService.processConfirmedDeposits();
+      // Note: Processing is handled by the cron job, not here
+      const results = await this.depositService.detectAndMatchTransactions();
       
       res.json(
-        apiUtils.success('Deposit check completed')
+        apiUtils.success('Deposit check completed', {
+          transactionsDetected: results.length,
+          matched: results.filter(r => r.matched).length,
+          unmatched: results.filter(r => !r.matched).length
+        })
       );
     } catch (error) {
       if (error instanceof Error) {
@@ -443,13 +447,14 @@ export class DepositController {
    *     summary: Initiate a new USDT deposit with QR code
    *     description: |
    *       Initiate a new USDT deposit transaction. This creates a pending deposit record,
-   *       generates a unique reference ID, and returns a QR code for easy scanning.
+   *       assigns a unique TRON address from the pool, and returns a QR code for easy scanning.
    *       
    *       **Features:**
-   *       - Unique memo/reference ID for transaction identification
+   *       - Unique TRON address assignment from address pool
    *       - QR code generation for easy wallet scanning
-   *       - Configurable expiration time (default 24 hours)
-   *       - Both QR code and plain text address provided
+   *       - 3-hour expiration time for address assignment
+   *       - Optional TRON address for energy delegation
+   *       - No memo required - just send USDT to the assigned address
    *     security:
    *       - bearerAuth: []
    *     requestBody:
@@ -466,13 +471,11 @@ export class DepositController {
    *                 minimum: 1
    *                 example: 100
    *                 description: Amount of USDT to deposit (minimum 1 USDT)
-   *               expirationHours:
-   *                 type: number
-   *                 minimum: 1
-   *                 maximum: 48
-   *                 default: 24
-   *                 example: 24
-   *                 description: Hours until deposit expires (default 24, max 48)
+   *               tronAddress:
+   *                 type: string
+   *                 example: "TRX1234567890abcdefghijklmnopqrstuv"
+   *                 pattern: "^T[A-Za-z1-9]{33}$"
+   *                 description: Optional TRON address where energy will be delegated after deposit confirmation
    *     responses:
    *       200:
    *         description: Deposit initiated successfully
@@ -494,63 +497,48 @@ export class DepositController {
    *                       type: string
    *                       example: "clp1234567890abcdef"
    *                       description: Unique deposit identifier
-   *                     referenceId:
+   *                     assignedAddress:
    *                       type: string
-   *                       example: "DEP_L8X9K2A1B7F3"
-   *                       description: Unique reference ID to include in transaction memo
-   *                     systemWalletAddress:
+   *                       example: "TQdcJgU4mKFo1RCFYbCZ3eHiEyPjqP2313"
+   *                       description: Unique TRON address assigned from pool - send USDT to this address
+   *                     energyRecipientAddress:
    *                       type: string
-   *                       example: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
-   *                       description: TRON wallet address to send USDT to
+   *                       example: "TRX1234567890abcdefghijklmnopqrstuv"
+   *                       description: TRON address where energy will be delegated (optional)
    *                     expectedAmount:
    *                       type: string
    *                       example: "100"
    *                       description: Exact amount of USDT to send
-   *                     qrCodes:
-   *                       type: object
-   *                       properties:
-   *                         simple:
-   *                           type: string
-   *                           example: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
-   *                           description: Simple QR code with address only (most compatible)
-   *                         tronlink:
-   *                           type: string
-   *                           example: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
-   *                           description: TronLink-optimized QR code with JSON format
-   *                         generic:
-   *                           type: string
-   *                           example: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
-   *                           description: Generic TRON URI format QR code
-   *                     qrCodeData:
+   *                     qrCodeBase64:
    *                       type: string
-   *                       example: "tron:TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t?amount=100&memo=DEP_L8X9K2A1B7F3"
-   *                       description: Raw TRON URI for manual copying
+   *                       example: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
+   *                       description: QR code containing the assigned address for easy scanning
    *                     expiresAt:
    *                       type: string
    *                       format: date-time
    *                       example: "2024-01-02T00:00:00.000Z"
    *                       description: When this deposit expires
    *                     instructions:
+   *                       type: array
+   *                       items:
+   *                         type: string
+   *                       example: ["Send exactly 100 USDT to TQdcJgU4mKFo1RCFYbCZ3eHiEyPjqP2313", "No memo required - just send to the address", "Complete within 3 hours before address expires"]
+   *                       description: Step-by-step instructions for completing the deposit
+   *                     energyInfo:
    *                       type: object
    *                       properties:
-   *                         general:
-   *                           type: array
-   *                           items:
-   *                             type: string
-   *                           example: ["Send exactly 100 USDT (TRC-20) to the address above", "IMPORTANT: Include memo/note: DEP_L8X9K2A1B7F3"]
-   *                           description: General instructions for all wallets
-   *                         tronlink:
-   *                           type: array
-   *                           items:
-   *                             type: string
-   *                           example: ["🔗 For TronLink Mobile App:", "1. Scan the 'TronLink QR Code' above"]
-   *                           description: Specific instructions for TronLink users
-   *                         other:
-   *                           type: array
-   *                           items:
-   *                             type: string
-   *                           example: ["📱 For Other Wallets (Trust, TokenPocket, Klever):", "1. Scan the 'Simple QR Code' to get the address"]
-   *                           description: Instructions for other wallet apps
+   *                         estimatedEnergy:
+   *                           type: number
+   *                           example: 65000
+   *                           description: Amount of energy to be delegated
+   *                         energyInTRX:
+   *                           type: number
+   *                           example: 13.5
+   *                           description: TRX equivalent value of the energy
+   *                         description:
+   *                           type: string
+   *                           example: "You will receive 65,000 energy (≈ 13.500000 TRX) for 100 USDT"
+   *                           description: Human-readable description of energy delegation
    *                 timestamp:
    *                   type: string
    *                   format: date-time
@@ -591,7 +579,7 @@ export class DepositController {
 
       const result = await this.depositService.initiateDeposit(
         req.user.id,
-        validatedData.amount
+        validatedData
       );
 
       res.json(
@@ -1234,6 +1222,89 @@ export class DepositController {
 
   /**
    * @swagger
+   * /deposits/process:
+   *   post:
+   *     tags:
+   *       - Deposits
+   *     summary: Manually process confirmed deposits (Development)
+   *     description: |
+   *       Manually trigger the processing of confirmed deposits. This will credit user accounts
+   *       and initiate energy transfers for all deposits that are confirmed but not yet processed.
+   *       
+   *       **⚠️ Development Only:** This endpoint should be secured or removed in production.
+   *       
+   *       **Use cases:**
+   *       - Testing energy transfer after changing deposit status from PROCESSED to CONFIRMED
+   *       - Forcing immediate processing of deposits instead of waiting for cron job
+   *       - Debugging deposit processing issues
+   *     responses:
+   *       200:
+   *         description: Deposit processing completed successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 message:
+   *                   type: string
+   *                   example: "Deposit processing completed"
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     processed:
+   *                       type: number
+   *                       example: 3
+   *                       description: Number of deposits processed
+   *                     message:
+   *                       type: string
+   *                       example: "3 deposits processed successfully"
+   *                 timestamp:
+   *                   type: string
+   *                   format: date-time
+   *       500:
+   *         description: Internal server error
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/ErrorResponse'
+   */
+  async processDeposits(req: Request, res: Response): Promise<void> {
+    try {
+      // Get confirmed but unprocessed deposits count first
+      const { prisma } = await import('../../config');
+      const { DepositStatus } = await import('@prisma/client');
+      
+      const confirmedDeposits = await prisma.deposit.count({
+        where: {
+          status: DepositStatus.CONFIRMED,
+          processedAt: null,
+        },
+      });
+
+      // Process the deposits
+      await this.depositService.processConfirmedDeposits();
+      
+      res.json(
+        apiUtils.success('Deposit processing completed', {
+          processed: confirmedDeposits,
+          message: confirmedDeposits > 0 
+            ? `${confirmedDeposits} deposits processed successfully`
+            : 'No confirmed deposits to process'
+        })
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('Manual deposit processing failed', { error: error.message });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @swagger
    * /deposits/{id}/cancel:
    *   post:
    *     tags:
@@ -1320,6 +1391,96 @@ export class DepositController {
    *             schema:
    *               $ref: '#/components/schemas/ErrorResponse'
    */
+  /**
+   * @swagger
+   * /deposits/{id}/energy-address:
+   *   put:
+   *     tags:
+   *       - Deposits
+   *     summary: Update energy recipient address
+   *     description: |
+   *       Update the TRON address where energy will be sent for a pending or confirmed deposit.
+   *       This is useful if you forgot to provide an address during deposit initiation.
+   *     security:
+   *       - bearerAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *         description: Deposit ID
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - tronAddress
+   *             properties:
+   *               tronAddress:
+   *                 type: string
+   *                 pattern: "^T[A-Za-z1-9]{33}$"
+   *                 example: "TRX1234567890abcdefghijklmnopqrstuv"
+   *                 description: Valid TRON address where energy will be sent
+   *     responses:
+   *       200:
+   *         description: Energy recipient address updated successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 message:
+   *                   type: string
+   *                   example: "Energy recipient address updated successfully"
+   *                 data:
+   *                   $ref: '#/components/schemas/DepositResponse'
+   *       400:
+   *         description: Invalid request or deposit status
+   *       401:
+   *         description: Unauthorized
+   *       404:
+   *         description: Deposit not found
+   */
+  async updateEnergyRecipientAddress(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        throw new ValidationException('User not authenticated');
+      }
+
+      const { id } = req.params;
+      const { tronAddress } = req.body;
+
+      if (!tronAddress) {
+        throw new ValidationException('TRON address is required');
+      }
+
+      const result = await this.depositService.updateEnergyRecipientAddress(
+        id,
+        req.user.id,
+        tronAddress
+      );
+
+      res.json(
+        apiUtils.success('Energy recipient address updated successfully', result)
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('Update energy recipient address failed', {
+          error: error.message,
+          depositId: req.params.id,
+          userId: req.user?.id,
+        });
+      }
+      throw error;
+    }
+  }
+
   async cancelDeposit(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       if (!req.user) {

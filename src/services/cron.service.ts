@@ -98,11 +98,40 @@ export class CronService {
 
   private async runDepositProcessor(): Promise<void> {
     try {
-      logger.debug('💰 Processing confirmed deposits...');
+      logger.info('💰 Running deposit processor - checking for confirmed deposits...');
+      
+      // Debug: Check all deposits in the system
+      const { prisma } = await import('../config');
+      const { DepositStatus } = await import('@prisma/client');
+      
+      const allDeposits = await prisma.deposit.findMany({
+        where: {
+          createdAt: {
+            gte: new Date(Date.now() - 24 * 60 * 60 * 1000) // Last 24 hours
+          }
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      });
+      
+      logger.info('[DEBUG] Recent deposits in system:', {
+        count: allDeposits.length,
+        deposits: allDeposits.map(d => ({
+          id: d.id,
+          status: d.status,
+          confirmed: d.confirmed,
+          processedAt: d.processedAt,
+          txHash: d.txHash?.substring(0, 10) + '...',
+          amountUsdt: d.amountUsdt?.toString(),
+          energyRecipientAddress: d.energyRecipientAddress || 'not_set',
+        }))
+      });
+      
       await depositService.processConfirmedDeposits();
     } catch (error) {
       logger.error('❌ Deposit processor failed', {
         error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
       });
     }
   }

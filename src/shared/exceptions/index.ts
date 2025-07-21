@@ -5,3 +5,4 @@ export { UnauthorizedException } from './unauthorized.exception';
 export { ConflictException } from './conflict.exception';
 export { BadRequestException } from './bad-request.exception';
 export { InternalServerException } from './internal-server.exception';
+export { ForbiddenException } from './forbidden.exception';

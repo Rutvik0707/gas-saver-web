@@ -1,4 +1,4 @@
-import { prisma } from '../../config';
+import { prisma, logger } from '../../config';
 import { Deposit, DepositStatus, Prisma } from '@prisma/client';
 
 export class DepositRepository {
@@ -10,6 +10,7 @@ export class DepositRepository {
     expectedAmount: number;
     expiresAt: Date;
     assignedAddress: string;
+    energyRecipientAddress?: string;
   }): Promise<Deposit> {
     return prisma.deposit.create({
       data: {
@@ -17,6 +18,7 @@ export class DepositRepository {
         expectedAmount: data.expectedAmount,
         expiresAt: data.expiresAt,
         assignedAddress: data.assignedAddress,
+        energyRecipientAddress: data.energyRecipientAddress,
         status: DepositStatus.PENDING,
         confirmed: false,
       },
@@ -119,13 +121,44 @@ export class DepositRepository {
    * Find confirmed but unprocessed deposits
    */
   async findConfirmedButUnprocessed(): Promise<Deposit[]> {
-    return prisma.deposit.findMany({
+    // First, let's see what deposits we have in different states
+    const allDeposits = await prisma.deposit.findMany({
+      where: {
+        OR: [
+          { status: DepositStatus.CONFIRMED },
+          { status: DepositStatus.PENDING, confirmed: true },
+        ]
+      },
+      include: {
+        user: true,
+      }
+    });
+    
+    logger.info(`[DEBUG] Checking deposits for processing`, {
+      totalFound: allDeposits.length,
+      deposits: allDeposits.map(d => ({
+        id: d.id,
+        userId: d.userId,
+        status: d.status,
+        confirmed: d.confirmed,
+        processedAt: d.processedAt,
+        amountUsdt: d.amountUsdt?.toString(),
+        txHash: d.txHash?.substring(0, 10) + '...',
+        energyRecipientAddress: d.energyRecipientAddress || 'not_set',
+      }))
+    });
+
+    // Get deposits that are confirmed but not yet processed
+    const result = await prisma.deposit.findMany({
       where: {
         status: DepositStatus.CONFIRMED,
-        confirmed: true,
+        processedAt: null,  // Not yet processed
       },
       orderBy: { createdAt: 'asc' },
     });
+
+    logger.info(`[DEBUG] Deposits ready for processing: ${result.length}`);
+    return result;
   }
 
   /**
@@ -154,6 +187,22 @@ export class DepositRepository {
         expiresAt: {
           lt: new Date(),
         },
+      },
+    });
+  }
+
+  /**
+   * Update energy recipient address
+   */
+  async updateEnergyRecipientAddress(
+    depositId: string,
+    tronAddress: string
+  ): Promise<Deposit> {
+    return prisma.deposit.update({
+      where: { id: depositId },
+      data: {
+        energyRecipientAddress: tronAddress,
+        updatedAt: new Date(),
       },
     });
   }
@@ -279,6 +328,47 @@ export class DepositRepository {
         cancelledBy,
         cancellationReason
       }
+    });
+  }
+
+  /**
+   * Update energy transfer status for a deposit
+   */
+  async updateEnergyTransferStatus(
+    depositId: string,
+    data: {
+      energyTransferStatus?: string;
+      energyTransferTxHash?: string;
+      energyTransferError?: string | null;
+      energyTransferredAt?: Date;
+      energyTransferAttempts?: { increment: number };
+    }
+  ): Promise<Deposit> {
+    const updateData: any = {};
+    
+    if (data.energyTransferStatus !== undefined) {
+      updateData.energyTransferStatus = data.energyTransferStatus;
+    }
+    
+    if (data.energyTransferTxHash !== undefined) {
+      updateData.energyTransferTxHash = data.energyTransferTxHash;
+    }
+    
+    if (data.energyTransferError !== undefined) {
+      updateData.energyTransferError = data.energyTransferError;
+    }
+    
+    if (data.energyTransferredAt !== undefined) {
+      updateData.energyTransferredAt = data.energyTransferredAt;
+    }
+    
+    if (data.energyTransferAttempts) {
+      updateData.energyTransferAttempts = data.energyTransferAttempts;
+    }
+    
+    return prisma.deposit.update({
+      where: { id: depositId },
+      data: updateData,
     });
   }
 }
