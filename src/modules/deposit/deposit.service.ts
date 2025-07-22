@@ -744,7 +744,8 @@ export class DepositService {
         logger.info('🎯 Target address determined, initiating energy delegation', {
           targetAddress,
           addressSource,
-          usdtAmount,
+          depositUsdtAmount: usdtAmount,
+          energyForUsdtTransfers: 1, // Delegating energy for 1 USDT transfer
         });
         
         // Update deposit to track energy transfer attempt
@@ -756,12 +757,12 @@ export class DepositService {
         }
         
         try {
-          // Delegate energy based on USDT amount
+          // Delegate energy for 1 USDT transfer (not the entire deposit amount)
           const txHash = await energyService.delegateEnergyToUser(
             targetAddress,
             userId,
             1, // Legacy amount parameter (not used when usdtAmount is provided)
-            usdtAmount // Pass USDT amount for proper energy calculation
+            1 // Always delegate energy for 1 USDT transfer only
           );
           
           if (txHash) {

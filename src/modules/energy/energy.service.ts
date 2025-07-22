@@ -4,6 +4,16 @@ import { EnergyTransferResponse, AvailableEnergyResponse, SystemWalletEnergyInfo
 import { BadRequestException, InternalServerException, BaseException } from '../../shared/exceptions';
 
 export class EnergyTransferService {
+  /**
+   * Transfer energy to a TRON address
+   * Note: The actual energy received may vary slightly from the requested amount
+   * due to TRON network dynamics. We use an approximate 10:1 TRX:Energy ratio.
+   * 
+   * @param tronAddress Target TRON address to receive energy
+   * @param energyAmount Approximate amount of energy to transfer
+   * @param userId User ID making the request
+   * @returns Transfer details including transaction hash
+   */
   async transferEnergy(
     tronAddress: string,
     energyAmount: number,
@@ -27,8 +37,8 @@ export class EnergyTransferService {
       }
 
       // Calculate TRX amount from energy amount
-      // Since 1 TRX ≈ 32,000 energy, we need to calculate the TRX equivalent
-      const trxAmount = energyAmount / 32000;
+      // Based on TronScan data: 1 TRX ≈ 10.17 energy (65,000 energy = 6,396 TRX)
+      const trxAmount = energyAmount / 10.17;
       
       // Delegate energy to the address
       const txHash = await energyService.delegateEnergyToUser(

@@ -31,7 +31,7 @@ import { energyTransferSchema } from './energy.types';
  *           type: integer
  *           minimum: 65000
  *           maximum: 150000
- *           description: Amount of energy to transfer (65,000 - 150,000)
+ *           description: Approximate amount of energy to transfer (65,000 - 150,000). Actual amount may vary slightly due to network conditions.
  *           example: 65000
  *     EnergyTransferResponse:
  *       type: object

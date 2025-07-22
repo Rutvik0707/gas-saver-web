@@ -36,9 +36,10 @@ export class EnergyService {
    * @returns TRX equivalent in SUN
    */
   convertEnergyToSun(energy: number): number {
-    // Energy price in SUN (1 energy = X sun)
-    const energyPriceSun = config.energy.priceSun;
-    return Math.floor(energy * energyPriceSun);
+    // Based on TronScan: 65,000 energy = 6,396 TRX
+    // This gives us 1 TRX = 10.17 energy, or 1 energy = 0.0983 TRX
+    const trxAmount = energy / 10.17;
+    return tronUtils.toSun(trxAmount);
   }
 
   /**
@@ -47,8 +48,9 @@ export class EnergyService {
    * @returns TRX equivalent
    */
   convertEnergyToTRX(energy: number): number {
-    const sunAmount = this.convertEnergyToSun(energy);
-    return parseFloat(tronUtils.fromSun(sunAmount));
+    // Based on TronScan: 65,000 energy = 6,396 TRX
+    // This gives us 1 TRX = 10.17 energy
+    return energy / 10.17;
   }
 
   /**
@@ -112,7 +114,7 @@ export class EnergyService {
       // Calculate required energy based on USDT amount if provided
       requiredEnergy = usdtAmount 
         ? this.calculateRequiredEnergy(usdtAmount)
-        : Math.floor(amount * 32000); // Default: 1 TRX ≈ 32,000 energy
+        : Math.floor(amount * 10.17); // Default: 1 TRX ≈ 10.17 energy (TronScan ratio)
       
       logger.info('Starting energy delegation', {
         userTronAddress,
@@ -127,11 +129,11 @@ export class EnergyService {
         throw new Error('Invalid user TRON address');
       }
 
-      // Check if system wallet has enough energy to delegate
-      const hasEnoughEnergy = await this.hasEnoughEnergyForDelegation(requiredEnergy);
+      // Get available energy for delegation
+      const availableEnergy = await this.getAvailableEnergyForDelegation();
       
-      if (!hasEnoughEnergy) {
-        const availableEnergy = await this.getAvailableEnergyForDelegation();
+      // Check if system wallet has enough energy to delegate
+      if (availableEnergy < requiredEnergy) {
         logger.error('Insufficient energy in system wallet', {
           available: availableEnergy,
           required: requiredEnergy,
@@ -140,50 +142,49 @@ export class EnergyService {
         throw new Error(`Insufficient energy for delegation. Required: ${requiredEnergy}, Available: ${availableEnergy}`);
       }
 
-      // Check if system wallet has enough staked TRX (Stake 2.0) to delegate
+      // Check if system wallet has staked TRX for energy
       const stakedBalance = await this.getStakedBalance(config.systemWallet.address);
-      const requiredStakedSun = this.convertEnergyToSun(requiredEnergy);
+      const stakedTRX = parseFloat(tronUtils.fromSun(stakedBalance.stakedForEnergy));
       
-      if (stakedBalance.stakedForEnergy < requiredStakedSun) {
-        const stakedTRX = parseFloat(tronUtils.fromSun(stakedBalance.stakedForEnergy));
-        const requiredTRX = parseFloat(tronUtils.fromSun(requiredStakedSun));
-        const additionalTRXNeeded = requiredTRX - stakedTRX;
-        
-        logger.error('Insufficient staked TRX for energy delegation', {
+      logger.info('Staking validation check', {
+        stakedTRX,
+        availableEnergy,
+        requiredEnergy,
+        systemWallet: config.systemWallet.address,
+      });
+      
+      // Only check if there's any TRX staked for energy
+      if (stakedBalance.stakedForEnergy === 0) {
+        logger.error('No TRX staked for energy', {
           stakedForEnergy: stakedTRX,
-          requiredStaked: requiredTRX,
-          additionalNeeded: additionalTRXNeeded,
           systemWallet: config.systemWallet.address,
-          energyAmount: requiredEnergy,
-          usdtAmount,
         });
         
-        const errorMessage = [
-          `Insufficient staked TRX for energy delegation.`,
-          `Required: ${requiredTRX.toFixed(2)} TRX`,
-          `Currently staked: ${stakedTRX.toFixed(2)} TRX`,
-          `Additional needed: ${additionalTRXNeeded.toFixed(2)} TRX`,
-          `System wallet: ${config.systemWallet.address}`,
-          `Please stake at least ${additionalTRXNeeded.toFixed(2)} more TRX for energy in the system wallet.`
-        ].join(' ');
-        
-        throw new Error(errorMessage);
+        throw new Error(`No TRX staked for energy in system wallet. Please stake TRX for energy to enable delegation. System wallet: ${config.systemWallet.address}`);
       }
+      
+      // The actual energy availability check is already done above
+      // We don't need to check staked amount vs required energy as they are different units
 
-      // Convert energy to SUN for delegation
-      const amountInSun = this.convertEnergyToSun(requiredEnergy);
-      const amountInTRX = this.convertEnergyToTRX(requiredEnergy);
+      // Log energy delegation details
+      logger.info('Energy delegation details', {
+        requiredEnergy,
+        availableEnergy,
+        stakedTRX,
+        systemWallet: config.systemWallet.address,
+        recipientAddress: userTronAddress,
+      });
 
       // Create transaction record
       const transaction = await prisma.transaction.create({
         data: {
           userId,
           type: TransactionType.ENERGY_TRANSFER,
-          amount: amountInTRX,
+          amount: requiredEnergy, // Store energy amount, not TRX
           toAddress: userTronAddress,
           fromAddress: config.systemWallet.address,
           status: TransactionStatus.PENDING,
-          description: `Energy delegation: ${requiredEnergy} energy (${amountInTRX.toFixed(6)} TRX equivalent)`,
+          description: `Energy delegation: ${requiredEnergy.toLocaleString()} energy units`,
         },
       });
 
@@ -204,7 +205,6 @@ export class EnergyService {
           userId,
           userTronAddress,
           energyAmount: requiredEnergy,
-          amountTRX: amountInTRX,
           txHash,
         });
 
@@ -238,57 +238,133 @@ export class EnergyService {
     // Real TRON energy delegation implementation
     // Prerequisites: System wallet must have staked TRX to generate energy
     
+    const systemWalletAddress = config.systemWallet.address;
+    
     try {
-      const systemWalletAddress = config.systemWallet.address;
       
-      // Convert energy to SUN for the delegation transaction
-      const amountInSun = this.convertEnergyToSun(energyAmount);
-      
+      // TRON's delegateResource expects the resource amount directly, not TRX value
+      // We pass the energy amount directly
       logger.info('Creating energy delegation transaction', {
         from: systemWalletAddress,
         to: userAddress,
         energyAmount,
-        amountInSun,
-        amountTRX: tronUtils.fromSun(amountInSun)
+        resourceType: 'ENERGY',
       });
 
       // Create resource delegation transaction
-      // Use TronWeb's built-in delegation methods
-      // IMPORTANT: delegateResource expects the amount in SUN (TRX), not energy units
-      // The recipient will receive energy proportional to the delegated TRX
-      const delegationTx = await (systemTronWeb as any).transactionBuilder.delegateResource(
-        amountInSun,         // Amount in SUN (TRX * 1,000,000)
-        userAddress,          // Recipient address  
-        'ENERGY',            // Resource type (ENERGY, not BANDWIDTH)
-        systemWalletAddress, // System wallet address (delegator)  
-        false                // Lock (false for unlocked delegation)
-      );
+      // IMPORTANT: In TRON's Stake 2.0, delegateResource expects:
+      // - amount: The amount in SUN of staked TRX to delegate
+      // - Based on TronScan data: 65,000 energy requires 6,396 TRX
+      // - This gives us a ratio of approximately 10.17 energy per TRX
+      const energyPerTrx = 10.17;
+      const trxAmount = energyAmount / energyPerTrx;
+      
+      // Round to 2 decimal places for TRX amount
+      const delegationTrxAmount = Math.round(trxAmount * 100) / 100;
+      
+      // Convert to SUN and ensure it's an integer
+      const delegationAmountSun = Math.floor(parseFloat(tronUtils.toSun(delegationTrxAmount)));
+      
+      logger.info('Delegation amounts calculated', {
+        requestedEnergy: energyAmount,
+        calculatedTrxAmount: delegationTrxAmount.toFixed(2),
+        delegationAmountSun,
+        estimatedEnergyReceived: Math.floor(delegationTrxAmount * energyPerTrx),
+        note: 'Using TronScan-based calculation: 1 TRX ≈ 10.17 energy',
+      });
+      
+      // Check if system wallet has enough STAKED TRX (not balance)
+      const stakedBalance = await this.getStakedBalance(systemWalletAddress);
+      const stakedTrx = parseFloat(tronUtils.fromSun(stakedBalance.stakedForEnergy));
+      
+      if (stakedTrx < delegationTrxAmount) {
+        throw new Error(`Insufficient staked TRX for delegation. Required: ${delegationTrxAmount.toFixed(2)} TRX, Staked: ${stakedTrx.toFixed(2)} TRX`);
+      }
+      
+      // Build delegation transaction with correct parameter order
+      let delegationTx;
+      try {
+        delegationTx = await (systemTronWeb as any).transactionBuilder.delegateResource(
+          delegationAmountSun, // Amount in SUN to delegate - FIRST parameter
+          userAddress,         // Recipient address - SECOND parameter
+          'ENERGY',           // Resource type - THIRD parameter
+          systemWalletAddress, // Owner address (delegator) - FOURTH parameter
+          false               // Lock (false for unlocked delegation) - FIFTH parameter
+        );
+        
+        logger.info('Delegation transaction built successfully', {
+          txId: delegationTx.txID,
+          rawDataHex: delegationTx.raw_data_hex
+        });
+      } catch (buildError) {
+        logger.error('Failed to build delegation transaction', {
+          error: buildError,
+          errorMessage: buildError instanceof Error ? buildError.message : 'Unknown error',
+          errorStack: buildError instanceof Error ? buildError.stack : undefined,
+          parameters: {
+            amountSun: delegationAmountSun,
+            receiver: userAddress,
+            resource: 'ENERGY',
+            owner: systemWalletAddress,
+            lock: false
+          }
+        });
+        throw new Error(`Failed to build delegation transaction: ${buildError instanceof Error ? buildError.message : 'Unknown error'}`);
+      }
 
       // Sign the transaction
-      const signedTx = await (systemTronWeb as any).trx.sign(delegationTx);
+      let signedTx;
+      try {
+        signedTx = await (systemTronWeb as any).trx.sign(delegationTx);
+        logger.info('Transaction signed successfully');
+      } catch (signError) {
+        logger.error('Failed to sign delegation transaction', {
+          error: signError,
+          errorMessage: signError instanceof Error ? signError.message : 'Unknown error'
+        });
+        throw new Error(`Failed to sign transaction: ${signError instanceof Error ? signError.message : 'Unknown error'}`);
+      }
       
       // Broadcast the transaction
-      const broadcastResult = await (systemTronWeb as any).trx.sendRawTransaction(signedTx);
-
-      if (broadcastResult.result) {
-        logger.info('Energy delegated to user wallet', {
-          userAddress,
-          txHash: broadcastResult.txid,
-          energyAmount,
-          systemWallet: systemWalletAddress
+      let broadcastResult;
+      try {
+        broadcastResult = await (systemTronWeb as any).trx.sendRawTransaction(signedTx);
+        
+        if (broadcastResult.result) {
+          logger.info('Energy delegated to user wallet', {
+            userAddress,
+            txHash: broadcastResult.txid,
+            requestedEnergy: energyAmount,
+            delegatedTrx: parseFloat(tronUtils.fromSun(delegationAmountSun)).toFixed(2),
+            actualEnergy: energyAmount,
+            systemWallet: systemWalletAddress,
+            note: 'Using TronScan ratio: 10.17 energy per TRX'
+          });
+          return broadcastResult.txid;
+        } else {
+          logger.error('Broadcast failed', {
+            result: broadcastResult,
+            code: broadcastResult.code,
+            message: broadcastResult.message
+          });
+          throw new Error(`Energy delegation failed: ${broadcastResult.message || broadcastResult.code || 'Unknown broadcast error'}`);
+        }
+      } catch (broadcastError) {
+        logger.error('Failed to broadcast delegation transaction', {
+          error: broadcastError,
+          errorMessage: broadcastError instanceof Error ? broadcastError.message : 'Unknown error'
         });
-        return broadcastResult.txid;
-      } else {
-        throw new Error(`Energy delegation failed: ${broadcastResult.message || 'Unknown error'}`);
+        throw broadcastError;
       }
 
     } catch (error) {
-      logger.error('Energy delegation failed', {
-        error: error instanceof Error ? error.message : 'Unknown error',
+      logger.error('Energy delegation failed - full error details', {
+        error: error,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        errorStack: error instanceof Error ? error.stack : undefined,
         userAddress,
         energyAmount,
-        amountInSun: this.convertEnergyToSun(energyAmount),
-        amountTRX: this.convertEnergyToTRX(energyAmount)
+        systemWallet: systemWalletAddress
       });
       
       throw error; // Re-throw the error instead of generating mock IDs
