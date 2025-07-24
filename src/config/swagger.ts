@@ -4,7 +4,7 @@ import { config } from './environment';
 const swaggerDefinition = {
   openapi: '3.0.0',
   info: {
-    title: 'TRON Energy Broker API',
+    title: 'Gas Saver API',
     version: '1.0.0',
     description: `
 A Node.js TypeScript API service that enables USDT (TRC-20) holders to convert their deposits into TRON ENERGY credits.
@@ -28,7 +28,7 @@ A Node.js TypeScript API service that enables USDT (TRC-20) holders to convert t
 Most endpoints require JWT authentication. After login, include the token in:
 \`Authorization: Bearer <your-jwt-token>\`
 
-**User Login:** \`/api/v1/users/login\`  
+**User Login:** \`/api/v1/users/login\`
 **Admin Login:** \`/api/v1/admin/login\`
 
 ⚠️ **Testnet Only:** Do not use real funds or mainnet addresses.

@@ -11,15 +11,15 @@ async function testEmailConfiguration() {
   console.log('📋 Environment Variables Check:');
   const requiredVars = [
     'EMAIL_HOST',
-    'EMAIL_PORT', 
+    'EMAIL_PORT',
     'EMAIL_USER',
     'EMAIL_PASSWORD',
     'EMAIL_FROM',
-    'FRONTEND_URL'
+    'FRONTEND_URL',
   ];
 
   let missingVars = [];
-  requiredVars.forEach(varName => {
+  requiredVars.forEach((varName) => {
     const value = process.env[varName];
     if (!value || value === 'your-email@gmail.com' || value === 'your-app-password') {
       console.log(`❌ ${varName}: ${value ? 'needs to be updated' : 'missing'}`);
@@ -32,7 +32,7 @@ async function testEmailConfiguration() {
   if (missingVars.length > 0) {
     console.log('\n🚨 CONFIGURATION ISSUE:');
     console.log('Please update these environment variables in your .env file:');
-    missingVars.forEach(varName => {
+    missingVars.forEach((varName) => {
       console.log(`- ${varName}`);
     });
     console.log('\n📧 For Gmail setup:');
@@ -44,7 +44,7 @@ async function testEmailConfiguration() {
 
   // Test SMTP connection
   console.log('\n🔌 Testing SMTP Connection...');
-  
+
   const transporter = nodemailer.createTransport({
     host: process.env.EMAIL_HOST,
     port: parseInt(process.env.EMAIL_PORT),
@@ -58,26 +58,25 @@ async function testEmailConfiguration() {
   try {
     await transporter.verify();
     console.log('✅ SMTP connection successful!');
-    
+
     // Test sending email
     console.log('\n📧 Testing email sending...');
     const testEmail = {
       from: `"${process.env.EMAIL_FROM_NAME}" <${process.env.EMAIL_FROM}>`,
       to: process.env.EMAIL_USER, // Send to self for testing
-      subject: 'Test Email - TRON Energy Broker',
+      subject: 'Test Email - Gas Saver',
       text: 'This is a test email to verify email functionality.',
-      html: '<p>This is a <strong>test email</strong> to verify email functionality.</p>'
+      html: '<p>This is a <strong>test email</strong> to verify email functionality.</p>',
     };
 
     const info = await transporter.sendMail(testEmail);
     console.log('✅ Test email sent successfully!');
     console.log(`📧 Message ID: ${info.messageId}`);
     console.log('📧 Check your email inbox to confirm delivery.');
-
   } catch (error) {
     console.log('❌ SMTP connection failed!');
     console.log('Error details:', error.message);
-    
+
     // Provide specific error guidance
     if (error.message.includes('Invalid login')) {
       console.log('\n💡 Solution: Check your email credentials');
@@ -102,13 +101,15 @@ function showExampleConfig() {
   console.log('EMAIL_USER=youremail@gmail.com');
   console.log('EMAIL_PASSWORD=your-16-char-app-password');
   console.log('EMAIL_FROM=youremail@gmail.com');
-  console.log('EMAIL_FROM_NAME=TRON Energy Broker');
+  console.log('EMAIL_FROM_NAME=Gas Saver');
   console.log('FRONTEND_URL=http://localhost:3000');
 }
 
 // Run the test
-testEmailConfiguration().then(() => {
-  showExampleConfig();
-}).catch(error => {
-  console.error('Test failed:', error);
-});
+testEmailConfiguration()
+  .then(() => {
+    showExampleConfig();
+  })
+  .catch((error) => {
+    console.error('Test failed:', error);
+  });

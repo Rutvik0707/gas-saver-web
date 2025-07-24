@@ -1,6 +1,6 @@
 # Deposit Cancellation Feature
 
-This document describes the deposit cancellation feature implementation in the TRON Energy Broker API.
+This document describes the deposit cancellation feature implementation in the Gas Saver API.
 
 ## Overview
 
@@ -105,7 +105,7 @@ npx prisma migrate dev
 Or manually apply the SQL migration:
 ```sql
 -- Add cancellation fields to deposits table
-ALTER TABLE "deposits" 
+ALTER TABLE "deposits"
 ADD COLUMN "cancelled_at" TIMESTAMP(3),
 ADD COLUMN "cancelled_by" TEXT,
 ADD COLUMN "cancellation_reason" TEXT;

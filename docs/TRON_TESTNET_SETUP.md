@@ -1,6 +1,6 @@
 # TRON Shasta Testnet Setup Guide
 
-This guide will help you set up the TRON Energy Broker API with the Shasta testnet for development and testing.
+This guide will help you set up the Gas Saver API with the Shasta testnet for development and testing.
 
 ## Overview
 

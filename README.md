@@ -1,4 +1,4 @@
-# TRON Energy Broker API
+# Gas Saver API
 
 A Node.js TypeScript API service that enables USDT (TRC-20) holders to convert their deposits into TRON ENERGY credits, eliminating the need to purchase TRX for network fees.
 
@@ -68,10 +68,10 @@ src/
    ```bash
    # Generate Prisma client
    npx prisma generate
-   
+
    # Run database migrations
    npx prisma migrate dev
-   
+
    # Seed test data
    npm run seed
    ```

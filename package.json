@@ -1,7 +1,7 @@
 {
   "name": "energy-broker-api",
   "version": "1.0.0",
-  "description": "TRON ENERGY Broker API - Convert USDT deposits to ENERGY credits",
+  "description": "Gas Saver API - Convert USDT deposits to ENERGY credits",
   "main": "dist/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a TRON ENERGY Broker API service built with Node.js and TypeScript that enables USDT (TRC-20) holders to convert their deposits into TRON ENERGY credits, eliminating the need to purchase TRX for network fees.
+This is a Gas Saver API service built with Node.js and TypeScript that enables USDT (TRC-20) holders to convert their deposits into TRON ENERGY credits, eliminating the need to purchase TRX for network fees.
 
 **Current Implementation Status:** ✅ **COMPLETED** - Address pool system with real energy delegation fully implemented
 
@@ -247,7 +247,7 @@ npm run test:coverage
 
 **Important Setup Steps:**
 1. Generate TRON keys: `npm run generate-keys`
-2. Copy `.env.example` to `.env` and configure all variables  
+2. Copy `.env.example` to `.env` and configure all variables
 3. Ensure JWT_SECRET is at least 32 characters long
 4. Set up PostgreSQL database and update DATABASE_URL
 5. Get test tokens from Shasta faucet: https://www.trongrid.io/shasta

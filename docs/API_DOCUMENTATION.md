@@ -2,7 +2,7 @@
 
 ## Overview
 
-The TRON Energy Broker API provides comprehensive Swagger/OpenAPI 3.0 documentation available at `/api-docs` when the server is running.
+The Gas Saver API provides comprehensive Swagger/OpenAPI 3.0 documentation available at `/api-docs` when the server is running.
 
 ## Accessing API Documentation
 

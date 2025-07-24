@@ -5,7 +5,6 @@ import rateLimit from 'express-rate-limit';
 import swaggerUi from 'swagger-ui-express';
 import 'express-async-errors';
 
-
 import { config, validateTronConnection, swaggerSpec } from './config';
 import { errorMiddleware } from './middleware';
 import { userRoutes } from './modules/user';
@@ -19,35 +18,45 @@ import { validationRoutes } from './modules/validation';
 import { tronAddressRoutes } from './modules/tron-address';
 import { createSystemStatusRoutes } from './modules/admin/system-status.routes';
 
-
 export function createApp(): express.Application {
   const app = express();
 
   // Global serialization fix for BigInt, Decimal, and Date
   const originalStringify = JSON.stringify;
-  JSON.stringify = function(value, replacer, space) {
-    return originalStringify(value, function(key, val) {
-      if (typeof val === 'bigint') {
-        return val.toString();
-      }
-      // Handle Prisma Decimal type
-      if (val && typeof val === 'object' && 'toString' in val && val.constructor.name === 'Decimal') {
-        return val.toString();
-      }
-      // Handle Date objects
-      if (val instanceof Date) {
-        return val.toISOString();
-      }
-      return typeof replacer === 'function' ? replacer(key, val) : val;
-    }, space);
+  JSON.stringify = function (value, replacer, space) {
+    return originalStringify(
+      value,
+      function (key, val) {
+        if (typeof val === 'bigint') {
+          return val.toString();
+        }
+        // Handle Prisma Decimal type
+        if (
+          val &&
+          typeof val === 'object' &&
+          'toString' in val &&
+          val.constructor.name === 'Decimal'
+        ) {
+          return val.toString();
+        }
+        // Handle Date objects
+        if (val instanceof Date) {
+          return val.toISOString();
+        }
+        return typeof replacer === 'function' ? replacer(key, val) : val;
+      },
+      space
+    );
   };
 
   // Security middleware
   app.use(helmet());
-  app.use(cors({
-    origin: process.env.CORS_ORIGIN || '*',
-    credentials: true,
-  }));
+  app.use(
+    cors({
+      origin: process.env.CORS_ORIGIN || '*',
+      credentials: true,
+    })
+  );
 
   // Rate limiting
   const limiter = rateLimit({
@@ -64,18 +73,22 @@ export function createApp(): express.Application {
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
   // Swagger documentation
-  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
-    customCss: '.swagger-ui .topbar { display: none }',
-    customSiteTitle: 'TRON Energy Broker API Documentation',
-    swaggerOptions: {
-      persistAuthorization: true,
-      displayRequestDuration: true,
-      docExpansion: 'list',
-      filter: true,
-      showExtensions: true,
-      showCommonExtensions: true,
-    },
-  }));
+  app.use(
+    '/api-docs',
+    swaggerUi.serve,
+    swaggerUi.setup(swaggerSpec, {
+      customCss: '.swagger-ui .topbar { display: none }',
+      customSiteTitle: 'Gas Saver API Documentation',
+      swaggerOptions: {
+        persistAuthorization: true,
+        displayRequestDuration: true,
+        docExpansion: 'list',
+        filter: true,
+        showExtensions: true,
+        showCommonExtensions: true,
+      },
+    })
+  );
 
   // Swagger JSON endpoint
   app.get('/api-docs.json', (req, res) => {
@@ -119,7 +132,7 @@ export function createApp(): express.Application {
    */
   app.get('/health', async (req, res) => {
     const tronConnected = await validateTronConnection();
-    
+
     res.json(
       apiUtils.success('Server is healthy', {
         status: 'ok',
@@ -134,7 +147,7 @@ export function createApp(): express.Application {
 
   // API routes
   const apiRouter = express.Router();
-  
+
   // Mount module routes
   apiRouter.use('/users', userRoutes);
   apiRouter.use('/auth', userRoutes); // Auth routes are part of user module
@@ -153,14 +166,14 @@ export function createApp(): express.Application {
   // Email verification redirect
   app.get('/verify-email', (req, res) => {
     // Redirect to the actual API endpoint
-    res.redirect(`/api/${config.app.apiVersion}/users/verify-email${req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : ''}`);
+    res.redirect(
+      `/api/${config.app.apiVersion}/users/verify-email${req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : ''}`
+    );
   });
 
   // 404 handler
   app.use('*', (req, res) => {
-    res.status(404).json(
-      apiUtils.error('Endpoint not found', `${req.method} ${req.originalUrl}`)
-    );
+    res.status(404).json(apiUtils.error('Endpoint not found', `${req.method} ${req.originalUrl}`));
   });
 
   // Global error handler (must be last)

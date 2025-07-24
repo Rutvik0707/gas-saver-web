@@ -26,17 +26,17 @@ export class EmailService {
   async sendPasswordResetEmail(email: string, resetToken: string, userName?: string): Promise<void> {
     try {
       const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}`;
-      
+
       const mailOptions = {
-        from: `"${process.env.EMAIL_FROM_NAME || 'TRON Energy Broker'}" <${process.env.EMAIL_FROM || process.env.EMAIL_USER}>`,
+        from: `"${process.env.EMAIL_FROM_NAME || 'Gas Saver'}" <${process.env.EMAIL_FROM || process.env.EMAIL_USER}>`,
         to: email,
-        subject: 'Password Reset Request - TRON Energy Broker',
+        subject: 'Password Reset Request - Gas Saver',
         html: this.getPasswordResetEmailTemplate(resetUrl, userName || email, resetToken),
         text: this.getPasswordResetEmailText(resetUrl, userName || email),
       };
 
       const info = await this.transporter.sendMail(mailOptions);
-      
+
       logger.info('Password reset email sent successfully', {
         messageId: info.messageId,
         email: email,
@@ -122,11 +122,11 @@ export class EmailService {
       };
 
       const info = await this.transporter.sendMail(mailOptions);
-      logger.info('OTP email sent', { 
-        email, 
+      logger.info('OTP email sent', {
+        email,
         messageId: info.messageId,
       });
-      
+
       return true;
     } catch (error) {
       logger.error('Failed to send OTP email', {
@@ -149,7 +149,7 @@ export class EmailService {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Password Reset - TRON Energy Broker</title>
+        <title>Password Reset - Gas Saver</title>
         <style>
             body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
             .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
@@ -164,23 +164,23 @@ export class EmailService {
     <body>
         <div class="header">
             <h1>🔐 Password Reset Request</h1>
-            <p>TRON Energy Broker</p>
+            <p>Gas Saver</p>
         </div>
-        
+
         <div class="content">
             <p>Hello <strong>${userName}</strong>,</p>
-            
-            <p>We received a request to reset your password for your TRON Energy Broker account. If you didn't make this request, you can ignore this email.</p>
-            
+
+            <p>We received a request to reset your password for your Gas Saver account. If you didn't make this request, you can ignore this email.</p>
+
             <p>To reset your password, click the button below:</p>
-            
+
             <div style="text-align: center;">
                 <a href="${resetUrl}" class="button">Reset My Password</a>
             </div>
-            
+
             <p>Or copy and paste this link into your browser:</p>
             <p style="word-break: break-all; color: #667eea;">${resetUrl}</p>
-            
+
             <div class="warning">
                 <strong>⚠️ Security Notice:</strong>
                 <ul>
@@ -189,15 +189,15 @@ export class EmailService {
                     <li>If you didn't request this reset, please ignore this email</li>
                 </ul>
             </div>
-            
+
             <p>For your security, here's your reset token:</p>
             <div class="token-box">${token}</div>
-            
+
             <p>If you're having trouble with the link above, you can manually enter this token on the password reset page.</p>
         </div>
-        
+
         <div class="footer">
-            <p>This email was sent from TRON Energy Broker</p>
+            <p>This email was sent from Gas Saver</p>
             <p>If you didn't request this email, please contact our support team.</p>
         </div>
     </body>
@@ -210,11 +210,11 @@ export class EmailService {
    */
   private getPasswordResetEmailText(resetUrl: string, userName: string): string {
     return `
-Password Reset Request - TRON Energy Broker
+Password Reset Request - Gas Saver
 
 Hello ${userName},
 
-We received a request to reset your password for your TRON Energy Broker account.
+We received a request to reset your password for your Gas Saver account.
 
 To reset your password, visit this link:
 ${resetUrl}
@@ -224,7 +224,7 @@ This link will expire in 1 hour and can only be used once.
 If you didn't request this password reset, you can ignore this email.
 
 ---
-TRON Energy Broker
+Gas Saver
     `;
   }
 }
@@ -272,11 +272,11 @@ TRON Energy Broker
       };
 
       const info = await this.transporter.sendMail(mailOptions);
-      logger.info('Verification email sent', { 
-        email, 
+      logger.info('Verification email sent', {
+        email,
         messageId: info.messageId,
       });
-      
+
       return true;
     } catch (error) {
       logger.error('Failed to send verification email', {
@@ -329,11 +329,11 @@ TRON Energy Broker
       };
 
       const info = await this.transporter.sendMail(mailOptions);
-      logger.info('Password reset email sent', { 
-        email, 
+      logger.info('Password reset email sent', {
+        email,
         messageId: info.messageId,
       });
-      
+
       return true;
     } catch (error) {
       logger.error('Failed to send password reset email', {
@@ -362,12 +362,12 @@ TRON Energy Broker
       };
 
       const info = await this.transporter.sendMail(mailOptions);
-      logger.info('Email sent', { 
-        to: options.to, 
+      logger.info('Email sent', {
+        to: options.to,
         subject: options.subject,
         messageId: info.messageId,
       });
-      
+
       return true;
     } catch (error) {
       logger.error('Failed to send email', {

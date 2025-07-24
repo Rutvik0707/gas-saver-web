@@ -1,6 +1,6 @@
 # Environment Setup Guide
 
-This guide explains how to set up and use the dual environment configuration for the TRON Energy Broker API.
+This guide explains how to set up and use the dual environment configuration for the Gas Saver API.
 
 ## Overview
 
