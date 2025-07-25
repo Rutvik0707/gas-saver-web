@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
 import swaggerUi from 'swagger-ui-express';
 import 'express-async-errors';
 
@@ -58,15 +57,8 @@ export function createApp(): express.Application {
     })
   );
 
-  // Rate limiting
-  const limiter = rateLimit({
-    windowMs: config.rateLimit.windowMs,
-    max: config.rateLimit.maxRequests,
-    message: apiUtils.error('Too many requests from this IP, please try again later.'),
-    standardHeaders: true,
-    legacyHeaders: false,
-  });
-  app.use(limiter);
+  // Note: Rate limiting is now applied selectively to specific routes
+  // See individual route files for rate limiting configuration
 
   // Body parsing middleware
   app.use(express.json({ limit: '10mb' }));

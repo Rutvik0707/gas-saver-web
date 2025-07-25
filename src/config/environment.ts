@@ -57,6 +57,7 @@ const envSchema = z.object({
   // Rate Limiting
   RATE_LIMIT_WINDOW_MS: z.string().transform(Number).default('900000'),
   RATE_LIMIT_MAX_REQUESTS: z.string().transform(Number).default('100'),
+  RATE_LIMIT_WHITELIST: z.string().optional().default(''),
 
   // Admin Settings
   DEFAULT_ADMIN_EMAIL: z.string().email().optional(),
@@ -122,6 +123,7 @@ export const config = {
   rateLimit: {
     windowMs: env.RATE_LIMIT_WINDOW_MS,
     maxRequests: env.RATE_LIMIT_MAX_REQUESTS,
+    whitelist: env.RATE_LIMIT_WHITELIST ? env.RATE_LIMIT_WHITELIST.split(',').map(ip => ip.trim()) : [],
   },
   admin: {
     defaultEmail: env.DEFAULT_ADMIN_EMAIL,

@@ -62,7 +62,8 @@
       "Bash(cd:*)",
       "Bash(cd:*)",
       "Bash(cd:*)",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(echo $NODE_ENV)"
     ],
     "deny": []
   }

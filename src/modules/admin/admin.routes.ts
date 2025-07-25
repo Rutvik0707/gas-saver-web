@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { adminController } from './admin.controller';
 import { adminDepositController } from './admin-deposit.controller';
 import { validationMiddleware } from '../../middleware';
+import { adminRateLimiter, authRateLimiter } from '../../config/rate-limiters';
 import { 
   adminAuth,
   requireSuperAdmin,
@@ -75,7 +76,7 @@ const router = Router();
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post('/login', validationMiddleware(LoginAdminDto), adminController.login);
+router.post('/login', authRateLimiter, validationMiddleware(LoginAdminDto), adminController.login);
 
 /**
  * @swagger
@@ -100,6 +101,9 @@ router.post('/login', validationMiddleware(LoginAdminDto), adminController.login
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
+// Apply admin rate limiter to all authenticated routes
+router.use(adminRateLimiter);
+
 router.get('/profile', ...adminAuth(requireAnyAdmin), adminController.profile);
 
 /**

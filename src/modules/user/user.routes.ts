@@ -1,16 +1,17 @@
 import { Router } from 'express';
 import { UserController } from './user.controller';
 import { authMiddleware } from '../../middleware/auth.middleware';
+import { authRateLimiter, authenticatedRateLimiter } from '../../config/rate-limiters';
 
 export function createUserRoutes(userController: UserController): Router {
   const router = Router();
 
   // Public routes - Registration flow
-  router.post('/register', userController.register.bind(userController));
-  router.post('/verify-registration-otp', userController.verifyRegistrationOtp.bind(userController));
+  router.post('/register', authRateLimiter, userController.register.bind(userController));
+  router.post('/verify-registration-otp', authRateLimiter, userController.verifyRegistrationOtp.bind(userController));
   
   // Public routes - Login
-  router.post('/login', userController.login.bind(userController));
+  router.post('/login', authRateLimiter, userController.login.bind(userController));
   // Commented out - OTP-based login not required, only password-based login is needed
   // router.post('/login-otp', userController.loginWithOtp.bind(userController));
   // router.post('/verify-otp-login', userController.verifyOtpLogin.bind(userController));
@@ -22,12 +23,13 @@ export function createUserRoutes(userController: UserController): Router {
   // router.get('/verify-email', userController.verifyEmail.bind(userController));
   
   // Password reset routes (public)
-  router.post('/forgot-password', userController.forgotPassword.bind(userController));
-  router.post('/verify-reset-otp', userController.verifyResetOtp.bind(userController));
-  router.post('/reset-password', userController.resetPassword.bind(userController));
+  router.post('/forgot-password', authRateLimiter, userController.forgotPassword.bind(userController));
+  router.post('/verify-reset-otp', authRateLimiter, userController.verifyResetOtp.bind(userController));
+  router.post('/reset-password', authRateLimiter, userController.resetPassword.bind(userController));
 
   // Protected routes
   router.use(authMiddleware);
+  router.use(authenticatedRateLimiter); // Apply authenticated rate limiter to all protected routes
   router.get('/profile', userController.getProfile.bind(userController));
   router.put('/profile', userController.updateProfile.bind(userController));
   router.get('/credits', userController.getCredits.bind(userController));
