@@ -13,9 +13,8 @@ datasource db {
 model User {
   id                      String    @id @default(cuid())
   email                   String    @unique
-  passwordHash            String    @map("password_hash")
-  tronAddress             String?   @unique @map("tron_address") // Made optional for account-verification
-  phoneNumber             String?   @unique @map("phone_number")
+  passwordHash            String?   @map("password_hash") // Made optional for OTP-first registration
+  phoneNumber             String    @unique @map("phone_number") // Made required for WhatsApp
   isPhoneVerified         Boolean   @default(false) @map("is_phone_verified")
   isEmailVerified         Boolean   @default(false) @map("is_email_verified")
   otpCode                 String?   @map("otp_code")

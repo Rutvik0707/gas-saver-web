@@ -14,10 +14,11 @@ export class OtpService {
   }
 
   /**
-   * Calculate OTP expiry time (10 minutes from now)
+   * Calculate OTP expiry time
+   * @param minutes - Number of minutes until expiry (default: 10)
    */
-  calculateOTPExpiry(): Date {
-    return new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+  calculateOTPExpiry(minutes: number = 10): Date {
+    return new Date(Date.now() + minutes * 60 * 1000);
   }
 
   /**

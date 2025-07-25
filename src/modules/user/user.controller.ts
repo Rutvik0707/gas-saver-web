@@ -1,12 +1,15 @@
 import { Request, Response } from 'express';
 import { UserService } from './user.service';
 import { 
-  createUserSchema, 
+  createUserSchema,
+  setPasswordSchema,
+  verifyRegistrationOtpSchema,
   loginUserSchema,
   loginWithOtpSchema,
   verifyOtpLoginSchema,
   updateUserSchema, 
-  forgotPasswordSchema, 
+  forgotPasswordSchema,
+  verifyResetOtpSchema,
   resetPasswordSchema, 
   changePasswordSchema,
   verifyOtpSchema, 
@@ -28,7 +31,7 @@ export class UserController {
    *     tags:
    *       - Authentication
    *     summary: Register a new user
-   *     description: Register a new user with email, password, and phone number. TRON address is optional.
+   *     description: Register a new user with email, phone number, and password. OTPs will be sent to both email and WhatsApp for verification.
    *     requestBody:
    *       required: true
    *       content:
@@ -37,28 +40,25 @@ export class UserController {
    *             type: object
    *             required:
    *               - email
-   *               - password
    *               - phoneNumber
+   *               - password
    *             properties:
    *               email:
    *                 type: string
    *                 format: email
    *                 example: user@example.com
+   *               phoneNumber:
+   *                 type: string
+   *                 example: +919876543210
+   *                 description: WhatsApp phone number with country code
    *               password:
    *                 type: string
    *                 minLength: 8
    *                 example: SecurePass123!
-   *               phoneNumber:
-   *                 type: string
-   *                 example: +919876543210
-   *               tronAddress:
-   *                 type: string
-   *                 pattern: '^T[A-Za-z1-9]{33}$'
-   *                 example: TXYZabcdefghijklmnopqrstuvwxyz123456
-   *                 description: Optional TRON wallet address
+   *                 description: Password must be at least 8 characters
    *     responses:
    *       201:
-   *         description: User successfully registered
+   *         description: User successfully registered, OTPs sent
    *         content:
    *           application/json:
    *             schema:
@@ -69,25 +69,28 @@ export class UserController {
    *                   example: true
    *                 message:
    *                   type: string
-   *                   example: User registered successfully
+   *                   example: OTPs have been sent to your email and WhatsApp. Please verify both to continue.
    *                 data:
    *                   type: object
    *                   properties:
-   *                     id:
-   *                       type: string
-   *                     email:
-   *                       type: string
-   *                     phoneNumber:
-   *                       type: string
-   *                     tronAddress:
-   *                       type: string
-   *                       nullable: true
-   *                     isEmailVerified:
-   *                       type: boolean
-   *                     isPhoneVerified:
-   *                       type: boolean
-   *                     credits:
-   *                       type: string
+   *                     user:
+   *                       type: object
+   *                       properties:
+   *                         id:
+   *                           type: string
+   *                         email:
+   *                           type: string
+   *                         phoneNumber:
+   *                           type: string
+   *                         isEmailVerified:
+   *                           type: boolean
+   *                           example: false
+   *                         isPhoneVerified:
+   *                           type: boolean
+   *                           example: false
+   *                         hasPassword:
+   *                           type: boolean
+   *                           example: true
    *       400:
    *         description: Validation error
    *       409:
@@ -99,10 +102,10 @@ export class UserController {
       
       logger.info('User registration attempt', { email: validatedData.email });
       
-      const user = await this.userService.createUser(validatedData);
+      const result = await this.userService.createUser(validatedData);
       
       res.status(201).json(
-        apiUtils.success('User registered successfully. Please verify your email and phone number.', user)
+        apiUtils.success(result.message, result)
       );
     } catch (error) {
       if (error instanceof Error) {
@@ -114,193 +117,12 @@ export class UserController {
 
   /**
    * @swagger
-   * /users/login:
+   * /users/verify-registration-otp:
    *   post:
    *     tags:
    *       - Authentication
-   *     summary: Request OTP for login
-   *     description: Request OTP to be sent to user's email and phone number
-   *     requestBody:
-   *       required: true
-   *       content:
-   *         application/json:
-   *           schema:
-   *             type: object
-   *             required:
-   *               - identifier
-   *             properties:
-   *               identifier:
-   *                 type: string
-   *                 description: Email address or phone number
-   *                 example: user@example.com or +919876543210
-   *     responses:
-   *       200:
-   *         description: OTP sent successfully
-   *         content:
-   *           application/json:
-   *             schema:
-   *               type: object
-   *               properties:
-   *                 success:
-   *                   type: boolean
-   *                   example: true
-   *                 message:
-   *                   type: string
-   *                   example: OTP has been sent to your registered email and phone number
-   *       404:
-   *         description: User not found
-   *       401:
-   *         description: User account is deactivated
-   */
-  async login(req: Request, res: Response): Promise<void> {
-    try {
-      const validatedData = loginWithOtpSchema.parse(req.body);
-      
-      logger.info('OTP login request', { identifier: validatedData.identifier });
-      
-      const result = await this.userService.loginWithOtp(validatedData);
-      
-      res.json(
-        apiUtils.success(result.message)
-      );
-    } catch (error) {
-      if (error instanceof Error) {
-        logger.error('OTP login request failed', { error: error.message });
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * @swagger
-   * /users/verify-otp:
-   *   post:
-   *     tags:
-   *       - Authentication
-   *     summary: Verify OTP
-   *     description: Verify the OTP sent to the user's phone number
-   *     requestBody:
-   *       required: true
-   *       content:
-   *         application/json:
-   *           schema:
-   *             type: object
-   *             required:
-   *               - email
-   *               - otp
-   *             properties:
-   *               email:
-   *                 type: string
-   *                 format: email
-   *                 example: user@example.com
-   *               otp:
-   *                 type: string
-   *                 pattern: '^[0-9]{6}$'
-   *                 example: "123456"
-   *     responses:
-   *       200:
-   *         description: OTP verified successfully
-   *       400:
-   *         description: Invalid or expired OTP
-   */
-  async verifyOtp(req: Request, res: Response): Promise<void> {
-    try {
-      const validatedData = verifyOtpSchema.parse(req.body);
-      
-      const user = await this.userService.verifyOTP(validatedData.email, validatedData.otp);
-      
-      res.json(
-        apiUtils.success('Phone number verified successfully', user)
-      );
-    } catch (error) {
-      if (error instanceof Error) {
-        logger.error('OTP verification failed', { error: error.message });
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * @swagger
-   * /users/verify-otp-login:
-   *   post:
-   *     tags:
-   *       - Authentication
-   *     summary: Verify OTP for login
-   *     description: Verify the OTP and receive access token
-   *     requestBody:
-   *       required: true
-   *       content:
-   *         application/json:
-   *           schema:
-   *             type: object
-   *             required:
-   *               - identifier
-   *               - otp
-   *             properties:
-   *               identifier:
-   *                 type: string
-   *                 description: Email address or phone number used for login
-   *                 example: user@example.com or +919876543210
-   *               otp:
-   *                 type: string
-   *                 pattern: '^[0-9]{6}$'
-   *                 example: "123456"
-   *     responses:
-   *       200:
-   *         description: OTP verified successfully, returns access token
-   *         content:
-   *           application/json:
-   *             schema:
-   *               type: object
-   *               properties:
-   *                 success:
-   *                   type: boolean
-   *                   example: true
-   *                 message:
-   *                   type: string
-   *                   example: Login successful
-   *                 data:
-   *                   type: object
-   *                   properties:
-   *                     user:
-   *                       type: object
-   *                     token:
-   *                       type: string
-   *                     expiresIn:
-   *                       type: string
-   *       400:
-   *         description: Invalid or expired OTP
-   *       404:
-   *         description: User not found
-   */
-  async verifyOtpLogin(req: Request, res: Response): Promise<void> {
-    try {
-      const validatedData = verifyOtpLoginSchema.parse(req.body);
-      
-      logger.info('OTP login verification attempt', { identifier: validatedData.identifier });
-      
-      const result = await this.userService.verifyOtpLogin(validatedData);
-      
-      res.json(
-        apiUtils.success('Login successful', result)
-      );
-    } catch (error) {
-      if (error instanceof Error) {
-        logger.error('OTP login verification failed', { error: error.message });
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * @swagger
-   * /users/resend-otp:
-   *   post:
-   *     tags:
-   *       - Authentication
-   *     summary: Resend OTP
-   *     description: Resend OTP to the user's phone number
+   *     summary: Verify registration OTPs
+   *     description: Verify both email and WhatsApp OTPs to complete registration. Returns JWT token on success.
    *     requestBody:
    *       required: true
    *       content:
@@ -310,6 +132,8 @@ export class UserController {
    *             required:
    *               - email
    *               - phoneNumber
+   *               - emailOtp
+   *               - phoneOtp
    *             properties:
    *               email:
    *                 type: string
@@ -318,66 +142,440 @@ export class UserController {
    *               phoneNumber:
    *                 type: string
    *                 example: +919876543210
+   *               emailOtp:
+   *                 type: string
+   *                 pattern: ^[0-9]{6}$
+   *                 example: "123456"
+   *                 description: 6-digit OTP sent to email
+   *               phoneOtp:
+   *                 type: string
+   *                 pattern: ^[0-9]{6}$
+   *                 example: "654321"
+   *                 description: 6-digit OTP sent to WhatsApp
    *     responses:
    *       200:
-   *         description: OTP resent successfully
+   *         description: OTPs verified successfully, user logged in
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 message:
+   *                   type: string
+   *                   example: Verification successful!
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     user:
+   *                       $ref: '#/components/schemas/UserResponse'
+   *                     token:
+   *                       type: string
+   *                       description: JWT authentication token
+   *                     expiresIn:
+   *                       type: string
+   *                       example: 24h
    *       400:
-   *         description: Validation error
+   *         description: Invalid or expired OTPs
+   *       404:
+   *         description: User not found
    */
-  async resendOtp(req: Request, res: Response): Promise<void> {
+  async verifyRegistrationOtp(req: Request, res: Response): Promise<void> {
     try {
-      const validatedData = resendOtpSchema.parse(req.body);
+      const validatedData = verifyRegistrationOtpSchema.parse(req.body);
       
-      await this.userService.resendOTP(validatedData.email, validatedData.phoneNumber);
+      const result = await this.userService.verifyRegistrationOtp(validatedData);
       
-      res.json(
-        apiUtils.success('OTP resent successfully')
-      );
+      res.json(apiUtils.success('Verification successful!', result));
     } catch (error) {
       if (error instanceof Error) {
-        logger.error('Resend OTP failed', { error: error.message });
+        logger.error('Registration OTP verification failed', { error: error.message });
       }
       throw error;
     }
   }
 
+  // Commented out - Password is now set during registration
+  // /**
+  //  * @swagger
+  //  * /users/set-password:
+  //  *   post:
+  //  *     tags:
+  //  *       - Authentication
+  //  *     summary: Set password after OTP verification
+  //  *     description: Set password for the user after successful OTP verification
+  //  *     requestBody:
+  //  *       required: true
+  //  *       content:
+  //  *         application/json:
+  //  *           schema:
+  //  *             type: object
+  //  *             required:
+  //  *               - userId
+  //  *               - password
+  //  *             properties:
+  //  *               userId:
+  //  *                 type: string
+  //  *               password:
+  //  *                 type: string
+  //  *                 minLength: 8
+  //  *     responses:
+  //  *       200:
+  //  *         description: Password set successfully, JWT token returned
+  //  */
+  // async setPassword(req: Request, res: Response): Promise<void> {
+  //   try {
+  //     const validatedData = setPasswordSchema.parse(req.body);
+  //     
+  //     const result = await this.userService.setPassword(validatedData);
+  //     
+  //     res.json(apiUtils.success('Password set successfully', result));
+  //   } catch (error) {
+  //     if (error instanceof Error) {
+  //       logger.error('Set password failed', { error: error.message });
+  //     }
+  //     throw error;
+  //   }
+  // }
+
   /**
    * @swagger
-   * /users/verify-email:
-   *   get:
+   * /users/login:
+   *   post:
    *     tags:
    *       - Authentication
-   *     summary: Verify email address
-   *     description: Verify user's email address using the token sent via email
-   *     parameters:
-   *       - in: query
-   *         name: token
-   *         required: true
-   *         schema:
-   *           type: string
-   *         description: Email verification token
+   *     summary: Login with email/phone and password
+   *     description: Login using email or phone number and password
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - identifier
+   *               - password
+   *             properties:
+   *               identifier:
+   *                 type: string
+   *                 description: Email address or phone number
+   *                 example: user@example.com
+   *               password:
+   *                 type: string
+   *                 example: SecurePass123!
    *     responses:
    *       200:
-   *         description: Email verified successfully
-   *       400:
-   *         description: Invalid or expired token
+   *         description: Login successful
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     user:
+   *                       $ref: '#/components/schemas/UserResponse'
+   *                     token:
+   *                       type: string
+   *                     expiresIn:
+   *                       type: string
+   *       401:
+   *         description: Invalid credentials
    */
-  async verifyEmail(req: Request, res: Response): Promise<void> {
+  async login(req: Request, res: Response): Promise<void> {
     try {
-      const validatedData = verifyEmailSchema.parse(req.query);
+      const validatedData = loginUserSchema.parse(req.body);
       
-      const user = await this.userService.verifyEmailToken(validatedData.token);
+      logger.info('Login attempt', { identifier: validatedData.identifier });
       
-      res.json(
-        apiUtils.success('Email verified successfully', user)
-      );
+      const result = await this.userService.loginUser(validatedData);
+      
+      res.json(apiUtils.success('Login successful', result));
     } catch (error) {
       if (error instanceof Error) {
-        logger.error('Email verification failed', { error: error.message });
+        logger.error('Login failed', { error: error.message });
       }
       throw error;
     }
   }
+
+  // Commented out - OTP-based login not required, only password-based login is needed
+  // /**
+  //  * @swagger
+  //  * /users/login-otp:
+  //  *   post:
+  //  *     tags:
+  //  *       - Authentication
+  //  *     summary: Request OTP for login
+  //  *     description: Request OTP to be sent to user's email and phone number
+  //  *     requestBody:
+  //  *       required: true
+  //  *       content:
+  //  *         application/json:
+  //  *           schema:
+  //  *             type: object
+  //  *             required:
+  //  *               - identifier
+  //  *             properties:
+  //  *               identifier:
+  //  *                 type: string
+  //  *                 description: Email address or phone number
+  //  *                 example: user@example.com or +919876543210
+  //  *     responses:
+  //  *       200:
+  //  *         description: OTP sent successfully
+  //  *         content:
+  //  *           application/json:
+  //  *             schema:
+  //  *               type: object
+  //  *               properties:
+  //  *                 success:
+  //  *                   type: boolean
+  //  *                   example: true
+  //  *                 message:
+  //  *                   type: string
+  //  *                   example: OTP has been sent to your registered email and phone number
+  //  *       404:
+  //  *         description: User not found
+  //  *       401:
+  //  *         description: User account is deactivated
+  //  */
+  // async loginWithOtp(req: Request, res: Response): Promise<void> {
+  //   try {
+  //     const validatedData = loginWithOtpSchema.parse(req.body);
+  //     
+  //     logger.info('OTP login request', { identifier: validatedData.identifier });
+  //     
+  //     const result = await this.userService.loginWithOtp(validatedData);
+  //     
+  //     res.json(
+  //       apiUtils.success(result.message)
+  //     );
+  //   } catch (error) {
+  //     if (error instanceof Error) {
+  //       logger.error('OTP login request failed', { error: error.message });
+  //     }
+  //     throw error;
+  //   }
+  // }
+
+  // Commented out - Replaced by dual OTP verification in verify-registration-otp
+  // /**
+  //  * @swagger
+  //  * /users/verify-otp:
+  //  *   post:
+  //  *     tags:
+  //  *       - Authentication
+  //  *     summary: Verify OTP
+  //  *     description: Verify the OTP sent to the user's phone number
+  //  *     requestBody:
+  //  *       required: true
+  //  *       content:
+  //  *         application/json:
+  //  *           schema:
+  //  *             type: object
+  //  *             required:
+  //  *               - email
+  //  *               - otp
+  //  *             properties:
+  //  *               email:
+  //  *                 type: string
+  //  *                 format: email
+  //  *                 example: user@example.com
+  //  *               otp:
+  //  *                 type: string
+  //  *                 pattern: '^[0-9]{6}$'
+  //  *                 example: "123456"
+  //  *     responses:
+  //  *       200:
+  //  *         description: OTP verified successfully
+  //  *       400:
+  //  *         description: Invalid or expired OTP
+  //  */
+  // async verifyOtp(req: Request, res: Response): Promise<void> {
+  //   try {
+  //     const validatedData = verifyOtpSchema.parse(req.body);
+  //     
+  //     const user = await this.userService.verifyOTP(validatedData.email, validatedData.otp);
+  //     
+  //     res.json(
+  //       apiUtils.success('Phone number verified successfully', user)
+  //     );
+  //   } catch (error) {
+  //     if (error instanceof Error) {
+  //       logger.error('OTP verification failed', { error: error.message });
+  //     }
+  //     throw error;
+  //   }
+  // }
+
+  // Commented out - OTP-based login not required, only password-based login is needed
+  // /**
+  //  * @swagger
+  //  * /users/verify-otp-login:
+  //  *   post:
+  //  *     tags:
+  //  *       - Authentication
+  //  *     summary: Verify OTP for login
+  //  *     description: Verify the OTP and receive access token
+  //  *     requestBody:
+  //  *       required: true
+  //  *       content:
+  //  *         application/json:
+  //  *           schema:
+  //  *             type: object
+  //  *             required:
+  //  *               - identifier
+  //  *               - otp
+  //  *             properties:
+  //  *               identifier:
+  //  *                 type: string
+  //  *                 description: Email address or phone number used for login
+  //  *                 example: user@example.com or +919876543210
+  //  *               otp:
+  //  *                 type: string
+  //  *                 pattern: '^[0-9]{6}$'
+  //  *                 example: "123456"
+  //  *     responses:
+  //  *       200:
+  //  *         description: OTP verified successfully, returns access token
+  //  *         content:
+  //  *           application/json:
+  //  *             schema:
+  //  *               type: object
+  //  *               properties:
+  //  *                 success:
+  //  *                   type: boolean
+  //  *                   example: true
+  //  *                 message:
+  //  *                   type: string
+  //  *                   example: Login successful
+  //  *                 data:
+  //  *                   type: object
+  //  *                   properties:
+  //  *                     user:
+  //  *                       type: object
+  //  *                     token:
+  //  *                       type: string
+  //  *                     expiresIn:
+  //  *                       type: string
+  //  *       400:
+  //  *         description: Invalid or expired OTP
+  //  *       404:
+  //  *         description: User not found
+  //  */
+  // async verifyOtpLogin(req: Request, res: Response): Promise<void> {
+  //   try {
+  //     const validatedData = verifyOtpLoginSchema.parse(req.body);
+  //     
+  //     logger.info('OTP login verification attempt', { identifier: validatedData.identifier });
+  //     
+  //     const result = await this.userService.verifyOtpLogin(validatedData);
+  //     
+  //     res.json(
+  //       apiUtils.success('Login successful', result)
+  //     );
+  //   } catch (error) {
+  //     if (error instanceof Error) {
+  //       logger.error('OTP login verification failed', { error: error.message });
+  //     }
+  //     throw error;
+  //   }
+  // }
+
+  // Commented out - Users should use the register endpoint again to get new OTPs
+  // /**
+  //  * @swagger
+  //  * /users/resend-otp:
+  //  *   post:
+  //  *     tags:
+  //  *       - Authentication
+  //  *     summary: Resend OTP
+  //  *     description: Resend OTP to the user's phone number
+  //  *     requestBody:
+  //  *       required: true
+  //  *       content:
+  //  *         application/json:
+  //  *           schema:
+  //  *             type: object
+  //  *             required:
+  //  *               - email
+  //  *               - phoneNumber
+  //  *             properties:
+  //  *               email:
+  //  *                 type: string
+  //  *                 format: email
+  //  *                 example: user@example.com
+  //  *               phoneNumber:
+  //  *                 type: string
+  //  *                 example: +919876543210
+  //  *     responses:
+  //  *       200:
+  //  *         description: OTP resent successfully
+  //  *       400:
+  //  *         description: Validation error
+  //  */
+  // async resendOtp(req: Request, res: Response): Promise<void> {
+  //   try {
+  //     const validatedData = resendOtpSchema.parse(req.body);
+  //     
+  //     await this.userService.resendOTP(validatedData.email, validatedData.phoneNumber);
+  //     
+  //     res.json(
+  //       apiUtils.success('OTP resent successfully')
+  //     );
+  //   } catch (error) {
+  //     if (error instanceof Error) {
+  //       logger.error('Resend OTP failed', { error: error.message });
+  //     }
+  //     throw error;
+  //   }
+  // }
+
+  // Commented out - Email verification is now done through OTP
+  // /**
+  //  * @swagger
+  //  * /users/verify-email:
+  //  *   get:
+  //  *     tags:
+  //  *       - Authentication
+  //  *     summary: Verify email address
+  //  *     description: Verify user's email address using the token sent via email
+  //  *     parameters:
+  //  *       - in: query
+  //  *         name: token
+  //  *         required: true
+  //  *         schema:
+  //  *           type: string
+  //  *         description: Email verification token
+  //  *     responses:
+  //  *       200:
+  //  *         description: Email verified successfully
+  //  *       400:
+  //  *         description: Invalid or expired token
+  //  */
+  // async verifyEmail(req: Request, res: Response): Promise<void> {
+  //   try {
+  //     const validatedData = verifyEmailSchema.parse(req.query);
+  //     
+  //     const user = await this.userService.verifyEmailToken(validatedData.token);
+  //     
+  //     res.json(
+  //       apiUtils.success('Email verified successfully', user)
+  //     );
+  //   } catch (error) {
+  //     if (error instanceof Error) {
+  //       logger.error('Email verification failed', { error: error.message });
+  //     }
+  //     throw error;
+  //   }
+  // }
 
   /**
    * @swagger
@@ -436,9 +634,6 @@ export class UserController {
    *                 format: email
    *               phoneNumber:
    *                 type: string
-   *               tronAddress:
-   *                 type: string
-   *                 pattern: '^T[A-Za-z1-9]{33}$'
    *     responses:
    *       200:
    *         description: Profile updated successfully
@@ -472,8 +667,8 @@ export class UserController {
    *   post:
    *     tags:
    *       - Authentication
-   *     summary: Request password reset
-   *     description: Send a password reset link to the user's email
+   *     summary: Request password reset OTP
+   *     description: Send a password reset OTP to the user's email or WhatsApp
    *     requestBody:
    *       required: true
    *       content:
@@ -481,15 +676,15 @@ export class UserController {
    *           schema:
    *             type: object
    *             required:
-   *               - email
+   *               - identifier
    *             properties:
-   *               email:
+   *               identifier:
    *                 type: string
-   *                 format: email
+   *                 description: Email address or phone number
    *                 example: user@example.com
    *     responses:
    *       200:
-   *         description: Password reset email sent
+   *         description: Password reset OTP sent
    *       400:
    *         description: Validation error
    */
@@ -497,14 +692,57 @@ export class UserController {
     try {
       const validatedData = forgotPasswordSchema.parse(req.body);
       
-      await this.userService.forgotPassword(validatedData.email);
+      const result = await this.userService.forgotPassword(validatedData);
       
-      res.json(
-        apiUtils.success('If the email exists, a password reset link has been sent')
-      );
+      res.json(apiUtils.success(result.message));
     } catch (error) {
       if (error instanceof Error) {
         logger.error('Forgot password failed', { error: error.message });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @swagger
+   * /users/verify-reset-otp:
+   *   post:
+   *     tags:
+   *       - Authentication
+   *     summary: Verify password reset OTP
+   *     description: Verify the OTP sent for password reset
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - identifier
+   *               - otp
+   *             properties:
+   *               identifier:
+   *                 type: string
+   *                 description: Email address or phone number
+   *               otp:
+   *                 type: string
+   *                 length: 6
+   *     responses:
+   *       200:
+   *         description: OTP verified successfully
+   *       400:
+   *         description: Invalid or expired OTP
+   */
+  async verifyResetOtp(req: Request, res: Response): Promise<void> {
+    try {
+      const validatedData = verifyResetOtpSchema.parse(req.body);
+      
+      const result = await this.userService.verifyResetOtp(validatedData);
+      
+      res.json(apiUtils.success(result.message, result));
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('Reset OTP verification failed', { error: error.message });
       }
       throw error;
     }
@@ -517,7 +755,7 @@ export class UserController {
    *     tags:
    *       - Authentication
    *     summary: Reset password
-   *     description: Reset user password using the token received via email
+   *     description: Reset user password using verified OTP
    *     requestBody:
    *       required: true
    *       content:
@@ -525,12 +763,18 @@ export class UserController {
    *           schema:
    *             type: object
    *             required:
-   *               - token
+   *               - identifier
+   *               - otp
    *               - newPassword
    *             properties:
-   *               token:
+   *               identifier:
    *                 type: string
-   *                 example: reset-token-here
+   *                 description: Email address or phone number
+   *                 example: user@example.com
+   *               otp:
+   *                 type: string
+   *                 length: 6
+   *                 example: "123456"
    *               newPassword:
    *                 type: string
    *                 minLength: 8
@@ -539,17 +783,15 @@ export class UserController {
    *       200:
    *         description: Password reset successfully
    *       400:
-   *         description: Invalid or expired token
+   *         description: Invalid or expired OTP
    */
   async resetPassword(req: Request, res: Response): Promise<void> {
     try {
       const validatedData = resetPasswordSchema.parse(req.body);
       
-      await this.userService.resetPassword(validatedData.token, validatedData.newPassword);
+      const result = await this.userService.resetPassword(validatedData);
       
-      res.json(
-        apiUtils.success('Password reset successfully')
-      );
+      res.json(apiUtils.success(result.message));
     } catch (error) {
       if (error instanceof Error) {
         logger.error('Reset password failed', { error: error.message });
@@ -599,11 +841,7 @@ export class UserController {
 
       const validatedData = changePasswordSchema.parse(req.body);
       
-      await this.userService.changePassword(
-        req.user.id,
-        validatedData.currentPassword,
-        validatedData.newPassword
-      );
+      await this.userService.changePassword(req.user.id, validatedData);
       
       res.json(
         apiUtils.success('Password changed successfully')

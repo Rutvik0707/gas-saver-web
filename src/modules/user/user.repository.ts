@@ -10,7 +10,6 @@ interface CreateUserData extends Omit<CreateUserDto, 'password'> {
 export class UserRepository {
   async create(userData: CreateUserDto & { 
     passwordHash: string, 
-    tronAddress?: string,
     verificationToken?: string, 
     verificationTokenExpiry?: Date, 
     otpCode?: string, 
@@ -22,7 +21,6 @@ export class UserRepository {
         email: data.email,
         phoneNumber: data.phoneNumber,
         passwordHash: data.passwordHash,
-        tronAddress: data.tronAddress || null,
         verificationToken: data.verificationToken,
         verificationTokenExpiry: data.verificationTokenExpiry,
         otpCode: data.otpCode,
@@ -63,17 +61,11 @@ async findByPhoneNumber(phoneNumber: string): Promise<User | null> {
     });
   }
   
-  async findByVerificationToken(token: string): Promise<User | null> {
-    return prisma.user.findFirst({
-      where: { verificationToken: token },
-    });
-  }
-  
-  async setVerified(id: string): Promise<User> {
+  async verifyEmail(id: string): Promise<User> {
     return prisma.user.update({
       where: { id },
       data: { 
-        isVerified: true,
+        isEmailVerified: true,
         verificationToken: null,
         verificationTokenExpiry: null
       },
@@ -123,17 +115,6 @@ async updateCredits(id: string, credits: number): Promise<User> {
     });
   }
   
-async verifyEmail(id: string): Promise<User> {
-    return prisma.user.update({
-      where: { id },
-      data: { 
-        isEmailVerified: true,
-        verificationToken: null,
-        verificationTokenExpiry: null
-      },
-    });
-  }
-  
   async verifyPhone(id: string): Promise<User> {
     return prisma.user.update({
       where: { id },
@@ -155,7 +136,7 @@ async setVerificationToken(id: string, token: string, expiry: Date): Promise<Use
     });
   }
   
-  async setOtpCode(id: string, otp: string, expiry: Date): Promise<User> {
+  async setOtpCode(id: string, otp: string | null, expiry: Date | null): Promise<User> {
     return prisma.user.update({
       where: { id },
       data: { 
@@ -181,6 +162,28 @@ async setVerificationToken(id: string, token: string, expiry: Date): Promise<Use
       data: { 
         resetToken: null,
         resetTokenExpiry: null
+      },
+    });
+  }
+
+  async verifyEmailAndPhone(id: string): Promise<User> {
+    return prisma.user.update({
+      where: { id },
+      data: {
+        isEmailVerified: true,
+        isPhoneVerified: true,
+        otpCode: null,
+        otpExpiry: null,
+      },
+    });
+  }
+
+  async clearOtpCode(id: string): Promise<User> {
+    return prisma.user.update({
+      where: { id },
+      data: {
+        otpCode: null,
+        otpExpiry: null,
       },
     });
   }
@@ -215,38 +218,7 @@ async setVerificationToken(id: string, token: string, expiry: Date): Promise<Use
     });
   }
 
-  // Password reset methods
-  async updateResetToken(id: string, resetToken: string, expiresAt: Date): Promise<User> {
-    return prisma.user.update({
-      where: { id },
-      data: {
-        resetToken,
-        resetTokenExpiresAt: expiresAt,
-      },
-    });
-  }
-
-  async findByResetToken(resetToken: string): Promise<User | null> {
-    return prisma.user.findFirst({
-      where: {
-        resetToken,
-        resetTokenExpiresAt: {
-          gt: new Date(), // Token must not be expired
-        },
-        isActive: true, // User must be active
-      },
-    });
-  }
-
-  async clearResetToken(id: string): Promise<User> {
-    return prisma.user.update({
-      where: { id },
-      data: {
-        resetToken: null,
-        resetTokenExpiresAt: null,
-      },
-    });
-  }
+  // Password reset methods (removed duplicates)
 
   async updatePassword(id: string, passwordHash: string): Promise<User> {
     return prisma.user.update({
