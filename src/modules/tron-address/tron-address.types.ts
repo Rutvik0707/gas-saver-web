@@ -25,6 +25,13 @@ export type CreateTronAddressDto = z.infer<typeof createTronAddressSchema>;
 export type UpdateTronAddressDto = z.infer<typeof updateTronAddressSchema>;
 
 // Response types
+export interface TransactionStats {
+  totalTransactions: number;
+  completedTransactions: number;
+  pendingTransactions: number;
+  totalEnergyReceived: string;
+}
+
 export interface TronAddressResponse {
   id: string;
   address: string;
@@ -33,6 +40,7 @@ export interface TronAddressResponse {
   isPrimary: boolean;
   createdAt: Date;
   updatedAt: Date;
+  transactionStats?: TransactionStats;
 }
 
 export interface TronAddressListResponse {
@@ -42,7 +50,10 @@ export interface TronAddressListResponse {
 }
 
 // Utility function to format response
-export function formatTronAddressResponse(address: UserTronAddress): TronAddressResponse {
+export function formatTronAddressResponse(
+  address: UserTronAddress, 
+  transactionStats?: TransactionStats
+): TronAddressResponse {
   return {
     id: address.id,
     address: address.address,
@@ -51,5 +62,6 @@ export function formatTronAddressResponse(address: UserTronAddress): TronAddress
     isPrimary: address.isPrimary,
     createdAt: address.createdAt,
     updatedAt: address.updatedAt,
+    transactionStats,
   };
 }

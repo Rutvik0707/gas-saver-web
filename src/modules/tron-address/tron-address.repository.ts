@@ -1,5 +1,6 @@
 import { prisma } from '../../config';
-import { UserTronAddress, Prisma } from '@prisma/client';
+import { UserTronAddress, Prisma, TransactionType, TransactionStatus } from '@prisma/client';
+import { TransactionStats } from './tron-address.types';
 
 export class TronAddressRepository {
   /**
@@ -159,5 +160,104 @@ export class TronAddressRepository {
         isPrimary: false,
       },
     });
+  }
+
+  /**
+   * Get transaction statistics for a TRON address
+   */
+  async getTransactionStats(address: string): Promise<TransactionStats> {
+    // Get all transactions where this address is the recipient
+    const transactions = await prisma.transaction.findMany({
+      where: {
+        toAddress: address,
+        type: TransactionType.ENERGY_TRANSFER,
+      },
+      select: {
+        status: true,
+        amount: true,
+      },
+    });
+
+    // Calculate statistics
+    const stats = transactions.reduce(
+      (acc, tx) => {
+        acc.totalTransactions++;
+        
+        if (tx.status === TransactionStatus.COMPLETED) {
+          acc.completedTransactions++;
+          // Add to total energy (amount is stored as Decimal)
+          acc.totalEnergyReceived = acc.totalEnergyReceived.add(tx.amount);
+        } else if (tx.status === TransactionStatus.PENDING) {
+          acc.pendingTransactions++;
+        }
+        
+        return acc;
+      },
+      {
+        totalTransactions: 0,
+        completedTransactions: 0,
+        pendingTransactions: 0,
+        totalEnergyReceived: new Prisma.Decimal(0),
+      }
+    );
+
+    return {
+      totalTransactions: stats.totalTransactions,
+      completedTransactions: stats.completedTransactions,
+      pendingTransactions: stats.pendingTransactions,
+      totalEnergyReceived: stats.totalEnergyReceived.toString(),
+    };
+  }
+
+  /**
+   * Get transaction statistics for multiple addresses
+   */
+  async getTransactionStatsForAddresses(addresses: string[]): Promise<Map<string, TransactionStats>> {
+    if (addresses.length === 0) {
+      return new Map();
+    }
+
+    // Get all transactions for all addresses in one query
+    const transactions = await prisma.transaction.groupBy({
+      by: ['toAddress', 'status'],
+      where: {
+        toAddress: { in: addresses },
+        type: TransactionType.ENERGY_TRANSFER,
+      },
+      _count: true,
+      _sum: {
+        amount: true,
+      },
+    });
+
+    // Build stats map
+    const statsMap = new Map<string, TransactionStats>();
+    
+    // Initialize all addresses with zero stats
+    addresses.forEach(address => {
+      statsMap.set(address, {
+        totalTransactions: 0,
+        completedTransactions: 0,
+        pendingTransactions: 0,
+        totalEnergyReceived: '0',
+      });
+    });
+
+    // Populate stats from grouped results
+    transactions.forEach(group => {
+      const stats = statsMap.get(group.toAddress!)!;
+      stats.totalTransactions += group._count;
+      
+      if (group.status === TransactionStatus.COMPLETED) {
+        stats.completedTransactions += group._count;
+        const currentEnergy = new Prisma.Decimal(stats.totalEnergyReceived);
+        const additionalEnergy = group._sum.amount || new Prisma.Decimal(0);
+        stats.totalEnergyReceived = currentEnergy.add(additionalEnergy).toString();
+      } else if (group.status === TransactionStatus.PENDING) {
+        stats.pendingTransactions += group._count;
+      }
+    });
+
+    return statsMap;
   }
 }

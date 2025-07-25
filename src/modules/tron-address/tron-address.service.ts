@@ -63,7 +63,10 @@ export class TronAddressService {
         isPrimary,
       });
 
-      return formatTronAddressResponse(address);
+      // Get transaction stats for the newly added address (will be empty initially)
+      const stats = await this.tronAddressRepository.getTransactionStats(address.address);
+      
+      return formatTronAddressResponse(address, stats);
     } catch (error) {
       logger.error('Failed to add TRON address', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -80,7 +83,22 @@ export class TronAddressService {
   async getUserAddresses(userId: string): Promise<TronAddressListResponse> {
     try {
       const addresses = await this.tronAddressRepository.findAllByUserId(userId);
-      const formattedAddresses = addresses.map(formatTronAddressResponse);
+      
+      // Get transaction stats for all addresses in one batch
+      const addressStrings = addresses.map(addr => addr.address);
+      const statsMap = await this.tronAddressRepository.getTransactionStatsForAddresses(addressStrings);
+      
+      // Format addresses with their stats
+      const formattedAddresses = addresses.map(addr => {
+        const stats = statsMap.get(addr.address) || {
+          totalTransactions: 0,
+          completedTransactions: 0,
+          pendingTransactions: 0,
+          totalEnergyReceived: '0',
+        };
+        return formatTronAddressResponse(addr, stats);
+      });
+      
       const primaryAddress = formattedAddresses.find(addr => addr.isPrimary) || null;
 
       return {
@@ -107,7 +125,10 @@ export class TronAddressService {
       throw new NotFoundException('TRON address', addressId);
     }
 
-    return formatTronAddressResponse(address);
+    // Get transaction stats for this address
+    const stats = await this.tronAddressRepository.getTransactionStats(address.address);
+    
+    return formatTronAddressResponse(address, stats);
   }
 
   /**
@@ -146,7 +167,10 @@ export class TronAddressService {
         updates: dto,
       });
 
-      return formatTronAddressResponse(updatedAddress);
+      // Get transaction stats for the updated address
+      const stats = await this.tronAddressRepository.getTransactionStats(updatedAddress.address);
+      
+      return formatTronAddressResponse(updatedAddress, stats);
     } catch (error) {
       logger.error('Failed to update TRON address', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -217,7 +241,9 @@ export class TronAddressService {
       }
 
       if (address.isPrimary) {
-        return formatTronAddressResponse(address);
+        // Get transaction stats even if already primary
+        const stats = await this.tronAddressRepository.getTransactionStats(address.address);
+        return formatTronAddressResponse(address, stats);
       }
 
       const updatedAddress = await this.tronAddressRepository.update(
@@ -236,7 +262,10 @@ export class TronAddressService {
         address: address.address,
       });
 
-      return formatTronAddressResponse(updatedAddress);
+      // Get transaction stats for the primary address
+      const stats = await this.tronAddressRepository.getTransactionStats(updatedAddress.address);
+      
+      return formatTronAddressResponse(updatedAddress, stats);
     } catch (error) {
       logger.error('Failed to set primary TRON address', {
         error: error instanceof Error ? error.message : 'Unknown error',

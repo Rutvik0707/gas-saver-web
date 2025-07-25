@@ -396,6 +396,32 @@ Most endpoints require JWT authentication. After login, include the token in:
             format: 'date-time',
             example: '2024-01-01T00:00:00.000Z',
           },
+          transactionStats: {
+            type: 'object',
+            description: 'Transaction statistics for this address',
+            properties: {
+              totalTransactions: {
+                type: 'number',
+                example: 15,
+                description: 'Total number of energy transfers to this address',
+              },
+              completedTransactions: {
+                type: 'number',
+                example: 12,
+                description: 'Number of successfully completed transfers',
+              },
+              pendingTransactions: {
+                type: 'number',
+                example: 3,
+                description: 'Number of currently pending transfers',
+              },
+              totalEnergyReceived: {
+                type: 'string',
+                example: '250000',
+                description: 'Total amount of energy received by this address',
+              },
+            },
+          },
         },
       },
       // Add any other schemas you have...
