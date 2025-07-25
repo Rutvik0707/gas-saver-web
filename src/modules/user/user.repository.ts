@@ -226,7 +226,7 @@ async setVerificationToken(id: string, token: string, expiry: Date): Promise<Use
       data: {
         passwordHash,
         resetToken: null, // Clear reset token after password change
-        resetTokenExpiresAt: null,
+        resetTokenExpiry: null,
       },
     });
   }
