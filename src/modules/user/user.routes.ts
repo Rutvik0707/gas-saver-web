@@ -35,6 +35,7 @@ export function createUserRoutes(userController: UserController): Router {
   router.get('/credits', userController.getCredits.bind(userController));
   router.get('/deposits', userController.getDeposits.bind(userController));
   router.get('/transactions', userController.getTransactions.bind(userController));
+  router.get('/dashboard', userController.getDashboard.bind(userController));
   
   // Password management (protected)
   router.post('/change-password', userController.changePassword.bind(userController));

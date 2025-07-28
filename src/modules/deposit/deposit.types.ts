@@ -3,7 +3,11 @@ import { Deposit, DepositStatus } from '@prisma/client';
 
 // Zod validation schemas for address-based deposit system
 export const initiateDepositSchema = z.object({
-  amount: z.number().positive('Amount must be positive').min(1, 'Minimum deposit is 1 USDT'),
+  numberOfTransactions: z.number()
+    .int('Must be a whole number')
+    .positive('Must be positive')
+    .min(1, 'Minimum is 1 transaction')
+    .max(100, 'Maximum is 100 transactions per deposit'),
   tronAddress: z.string().optional().refine(
     (address) => !address || /^T[A-Za-z1-9]{33}$/.test(address),
     'Invalid TRON address format'
@@ -27,6 +31,7 @@ export interface DepositInitiationResponse {
   energyRecipientAddress?: string;  // Address where energy will be sent
   qrCodeBase64: string;        // Simple address QR code only
   expectedAmount: string;
+  numberOfTransactions: number; // Number of transactions requested
   expiresAt: Date;             // 3-hour expiration
   instructions: string[];      // Simple instructions, no memo required
   energyInfo: {
@@ -48,6 +53,7 @@ export interface DepositStatusResponse {
   expiresAt: Date;
   timeRemaining: number;
   nextStatusCheck: number;
+  warning?: string;
 }
 
 export interface DepositResponse {

@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { config, logger } from '../../config';
+import { config, logger, prisma } from '../../config';
 import { cryptoUtils } from '../../shared/utils';
 import {
   ValidationException,
@@ -280,6 +280,120 @@ export class AdminService {
     return requiredPermissions.every(permission => adminPermissions.includes(permission));
   }
 
+  // Manual energy transfer for deposits
+  async triggerEnergyTransfer(depositId: string, adminId: string): Promise<{
+    success: boolean;
+    txHash?: string;
+    energyAmount?: number;
+    error?: string;
+  }> {
+    try {
+      logger.info('Admin manually triggering energy transfer', {
+        depositId,
+        adminId,
+      });
+
+      // Get deposit details with user
+      const depositWithUser = await prisma.deposit.findUnique({
+        where: { id: depositId },
+        include: { 
+          user: true
+        },
+      });
+
+      if (!depositWithUser) {
+        throw new NotFoundException('Deposit', depositId);
+      }
+
+      if (depositWithUser.status !== 'PROCESSED') {
+        throw new ValidationException(`Cannot transfer energy for deposit with status: ${depositWithUser.status}`);
+      }
+
+      if (!depositWithUser.energyRecipientAddress && !depositWithUser.user.tronAddress) {
+        throw new ValidationException('No TRON address available for energy transfer');
+      }
+
+      // Get energy rate and calculate energy amount
+      const { energyRateService } = await import('../energy-rate');
+      const energyRate = await energyRateService.getCurrentRate();
+      const numberOfTransactions = depositWithUser.numberOfTransactions || 1;
+      // IMPORTANT: Always delegate energy for 1 transaction only
+      const energyToDelegate = energyRate.energyPerTransaction;
+      
+      const targetAddress = depositWithUser.energyRecipientAddress || depositWithUser.user.tronAddress!;
+
+      logger.info('Executing manual energy transfer', {
+        depositId,
+        targetAddress,
+        numberOfTransactions,
+        energyToDelegate,
+        note: 'Energy delegation is for 1 transaction worth regardless of numberOfTransactions',
+      });
+
+      // Use EnergyTransferService
+      const { EnergyTransferService } = await import('../energy/energy.service');
+      const energyTransferService = new EnergyTransferService();
+      
+      const result = await energyTransferService.transferEnergy(
+        targetAddress,
+        energyToDelegate,
+        depositWithUser.userId
+      );
+
+      // Update deposit with energy transfer info
+      await prisma.deposit.update({
+        where: { id: depositId },
+        data: {
+          energyTransferStatus: 'COMPLETED',
+          energyTransferTxHash: result.txHash,
+          energyTransferredAt: new Date(),
+          energyTransferError: null,
+        },
+      });
+
+      logger.info('Manual energy transfer successful', {
+        depositId,
+        txHash: result.txHash,
+        energyAmount: energyToDelegate,
+        adminId,
+      });
+
+      return {
+        success: true,
+        txHash: result.txHash,
+        energyAmount: energyToDelegate,
+      };
+    } catch (error) {
+      logger.error('Manual energy transfer failed', {
+        depositId,
+        adminId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+
+      // Update deposit with error
+      try {
+        await prisma.deposit.update({
+          where: { id: depositId },
+          data: {
+            energyTransferStatus: 'FAILED',
+            energyTransferError: error instanceof Error ? error.message : 'Unknown error',
+            energyTransferAttempts: { increment: 1 },
+          },
+        });
+      } catch (updateError) {
+        logger.error('Failed to update deposit with error', {
+          depositId,
+          error: updateError instanceof Error ? updateError.message : 'Unknown error',
+        });
+      }
+
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
   // Private methods
   private generateToken(admin: any): string {
     const payload = {
@@ -309,3 +423,6 @@ export class AdminService {
     };
   }
 }
+
+// Create singleton instance
+export const adminService = new AdminService(new AdminRepository());

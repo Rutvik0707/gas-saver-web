@@ -2,7 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import { config } from './environment';
 
 export const prisma = new PrismaClient({
-  log: config.app.nodeEnv === 'development' ? ['query', 'info', 'warn', 'error'] : ['error'],
+  log: config.app.nodeEnv === 'development' ? ['warn', 'error'] : ['error'],
   datasources: {
     db: {
       url: config.database.url,

@@ -27,6 +27,8 @@ import {
   ResetPasswordDto,
   ChangePasswordDto,
   VerifyOtpLoginDto,
+  UserDashboardResponse,
+  UserDashboardDeposit,
 } from './user.types';
 // import { tronUtils } from '../../config';
 
@@ -779,5 +781,92 @@ private formatUserResponse(user: any): UserResponse {
   private generateResetToken(): string {
     // Generate a cryptographically secure random token
     return randomBytes(32).toString('hex');
+  }
+
+  async getUserDeposits(userId: string, page: number = 1, limit: number = 10): Promise<{ deposits: any[], total: number }> {
+    const depositsData = await this.userRepository.getAllUserDeposits(userId, page, limit);
+    
+    // Convert all deposits data to be JSON-serializable
+    const convertTypes = (obj: any): any => {
+      if (obj === null || obj === undefined) {
+        return obj;
+      }
+      
+      if (typeof obj === 'bigint') {
+        return obj.toString();
+      }
+      
+      // Handle Prisma Decimal type
+      if (obj && typeof obj === 'object' && 'toString' in obj && obj.constructor.name === 'Decimal') {
+        return obj.toString();
+      }
+      
+      // Handle Date objects
+      if (obj instanceof Date) {
+        return obj.toISOString();
+      }
+      
+      if (Array.isArray(obj)) {
+        return obj.map(item => convertTypes(item));
+      }
+      
+      if (typeof obj === 'object') {
+        const converted: any = {};
+        for (const [key, value] of Object.entries(obj)) {
+          converted[key] = convertTypes(value);
+        }
+        return converted;
+      }
+      
+      return obj;
+    };
+    
+    return {
+      deposits: depositsData.deposits.map(deposit => convertTypes(deposit)),
+      total: depositsData.total
+    };
+  }
+
+  async getUserDashboard(userId: string, page: number = 1, limit: number = 10): Promise<UserDashboardResponse> {
+    // Get all dashboard data in parallel for performance
+    const [
+      transactionStats,
+      depositStats,
+      transactionsByAddress,
+      depositsData
+    ] = await Promise.all([
+      this.userRepository.getUserTransactionStats(userId),
+      this.userRepository.getUserDepositStats(userId),
+      this.userRepository.getTransactionsByTronAddress(userId),
+      this.userRepository.getAllUserDeposits(userId, page, limit)
+    ]);
+
+    // Format deposits for response
+    const formattedDeposits: UserDashboardDeposit[] = depositsData.deposits.map(deposit => ({
+      id: deposit.id,
+      assignedAddress: deposit.assignedAddress,
+      energyRecipientAddress: deposit.energyRecipientAddress,
+      numberOfTransactions: deposit.numberOfTransactions || 0,
+      calculatedUsdtAmount: deposit.calculatedUsdtAmount?.toString() || '0',
+      amountUsdt: deposit.amountUsdt?.toString() || null,
+      status: deposit.status,
+      txHash: deposit.txHash,
+      energyTransferStatus: deposit.energyTransferStatus,
+      createdAt: deposit.createdAt,
+      processedAt: deposit.processedAt,
+    }));
+
+    return {
+      transactionStats,
+      depositStats,
+      transactionsByAddress,
+      deposits: formattedDeposits,
+      pagination: {
+        page,
+        limit,
+        total: depositsData.total,
+        totalPages: Math.ceil(depositsData.total / limit),
+      },
+    };
   }
 }

@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { adminService } from './index';
+import { adminService } from './admin.service';
 import { validationMiddleware } from '../../middleware';
 import { apiUtils } from '../../shared/utils';
 import { 
@@ -159,6 +159,17 @@ export class AdminController {
     const activity = await adminService.getRecentActivity();
     
     res.json(apiUtils.success('Recent activity retrieved', activity));
+  }
+
+  // Manual energy transfer endpoint
+  async triggerEnergyTransfer(req: Request, res: Response): Promise<void> {
+    const { depositId } = req.params;
+    const adminReq = req as AuthenticatedAdminRequest;
+    const adminId = adminReq.admin!.id;
+    
+    const result = await adminService.triggerEnergyTransfer(depositId, adminId);
+    
+    res.json(apiUtils.success('Energy transfer triggered', result));
   }
 }
 

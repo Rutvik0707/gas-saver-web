@@ -125,3 +125,53 @@ export interface VerifyEmailResponse {
   success: boolean;
   message: string;
 }
+
+// User Dashboard Response Types
+export interface UserDashboardTransactionStats {
+  totalPurchased: number;      // Sum of numberOfTransactions from all deposits
+  totalCompleted: number;      // Deposits with energy transferred
+  totalPending: number;        // Deposits pending energy transfer (includes failed transfers)
+}
+
+export interface UserDashboardDepositStats {
+  totalInitiated: number;      // Total deposits created
+  totalCompleted: number;      // Status = PROCESSED
+  totalPending: number;        // Status = PENDING or CONFIRMED
+  totalFailed: number;         // Status = FAILED, EXPIRED, CANCELLED
+}
+
+export interface UserDashboardTransactionByAddress {
+  tronAddress: string;
+  addressTag?: string | null;
+  isPrimary: boolean;
+  totalTransactions: number;   // Sum of numberOfTransactions for this address
+  completedTransactions: number;
+  pendingTransactions: number;
+}
+
+export interface UserDashboardDeposit {
+  id: string;
+  assignedAddress: string;
+  energyRecipientAddress?: string | null;
+  numberOfTransactions: number;
+  calculatedUsdtAmount: string;
+  amountUsdt?: string | null;
+  status: string;
+  txHash?: string | null;
+  energyTransferStatus?: string | null;
+  createdAt: Date;
+  processedAt?: Date | null;
+}
+
+export interface UserDashboardResponse {
+  transactionStats: UserDashboardTransactionStats;
+  depositStats: UserDashboardDepositStats;
+  transactionsByAddress: UserDashboardTransactionByAddress[];
+  deposits: UserDashboardDeposit[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}

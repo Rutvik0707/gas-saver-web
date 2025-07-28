@@ -944,19 +944,16 @@ export class UserController {
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 10;
 
-      const userWithDeposits = await this.userService.getUserWithRelations(req.user.id);
-      
-      const deposits = userWithDeposits.deposits || [];
-      const paginatedDeposits = deposits.slice((page - 1) * limit, page * limit);
+      const result = await this.userService.getUserDeposits(req.user.id, page, limit);
 
       res.json(
         apiUtils.success('Deposits retrieved successfully', {
-          deposits: paginatedDeposits,
+          deposits: result.deposits,
           pagination: {
             page,
             limit,
-            total: deposits.length,
-            totalPages: Math.ceil(deposits.length / limit)
+            total: result.total,
+            totalPages: Math.ceil(result.total / limit)
           }
         })
       );
@@ -1026,6 +1023,161 @@ export class UserController {
     } catch (error) {
       if (error instanceof Error) {
         logger.error('Get transactions failed', { error: error.message, userId: req.user?.id });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @swagger
+   * /users/dashboard:
+   *   get:
+   *     tags:
+   *       - User Management
+   *     summary: Get user dashboard
+   *     description: Get comprehensive dashboard data including transaction stats, deposit stats, and transactions by address
+   *     security:
+   *       - bearerAuth: []
+   *     parameters:
+   *       - in: query
+   *         name: page
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           default: 1
+   *         description: Page number for deposits pagination
+   *       - in: query
+   *         name: limit
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 100
+   *           default: 10
+   *         description: Number of deposits per page
+   *     responses:
+   *       200:
+   *         description: Dashboard data retrieved successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     transactionStats:
+   *                       type: object
+   *                       properties:
+   *                         totalPurchased:
+   *                           type: number
+   *                           description: Total number of transactions purchased
+   *                         totalCompleted:
+   *                           type: number
+   *                           description: Transactions with completed energy transfer
+   *                         totalPending:
+   *                           type: number
+   *                           description: Transactions pending energy transfer (includes failed transfers)
+   *                     depositStats:
+   *                       type: object
+   *                       properties:
+   *                         totalInitiated:
+   *                           type: number
+   *                           description: Total deposits initiated
+   *                         totalCompleted:
+   *                           type: number
+   *                           description: Deposits with status PROCESSED
+   *                         totalPending:
+   *                           type: number
+   *                           description: Deposits with status PENDING or CONFIRMED
+   *                         totalFailed:
+   *                           type: number
+   *                           description: Deposits with status FAILED, EXPIRED, or CANCELLED
+   *                     transactionsByAddress:
+   *                       type: array
+   *                       items:
+   *                         type: object
+   *                         properties:
+   *                           tronAddress:
+   *                             type: string
+   *                           addressTag:
+   *                             type: string
+   *                             nullable: true
+   *                           isPrimary:
+   *                             type: boolean
+   *                           totalTransactions:
+   *                             type: number
+   *                           completedTransactions:
+   *                             type: number
+   *                           pendingTransactions:
+   *                             type: number
+   *                     deposits:
+   *                       type: array
+   *                       items:
+   *                         type: object
+   *                         properties:
+   *                           id:
+   *                             type: string
+   *                           assignedAddress:
+   *                             type: string
+   *                           energyRecipientAddress:
+   *                             type: string
+   *                             nullable: true
+   *                           numberOfTransactions:
+   *                             type: number
+   *                           calculatedUsdtAmount:
+   *                             type: string
+   *                           amountUsdt:
+   *                             type: string
+   *                             nullable: true
+   *                           status:
+   *                             type: string
+   *                           txHash:
+   *                             type: string
+   *                             nullable: true
+   *                           energyTransferStatus:
+   *                             type: string
+   *                             nullable: true
+   *                           createdAt:
+   *                             type: string
+   *                             format: date-time
+   *                           processedAt:
+   *                             type: string
+   *                             format: date-time
+   *                             nullable: true
+   *                     pagination:
+   *                       type: object
+   *                       properties:
+   *                         page:
+   *                           type: number
+   *                         limit:
+   *                           type: number
+   *                         total:
+   *                           type: number
+   *                         totalPages:
+   *                           type: number
+   *       401:
+   *         description: Unauthorized
+   */
+  async getDashboard(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user?.id) {
+        throw new ValidationException('User ID not found in request');
+      }
+
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 10;
+
+      const dashboardData = await this.userService.getUserDashboard(req.user.id, page, limit);
+      
+      res.json(
+        apiUtils.success('Dashboard data retrieved successfully', dashboardData)
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('Get dashboard failed', { error: error.message, userId: req.user?.id });
       }
       throw error;
     }

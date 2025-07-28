@@ -1,6 +1,7 @@
 import { logger, systemTronWeb, tronUtils, config } from '../config';
 import { prisma } from '../config/database';
 import { TransactionType, TransactionStatus } from '@prisma/client';
+import { energyRateService } from '../modules/energy-rate';
 
 export class EnergyService {
   private readonly ENERGY_AMOUNT_TRX = 1; // 1 TRX worth of energy per deposit (deprecated)
@@ -10,24 +11,45 @@ export class EnergyService {
    * @param usdtAmount Amount of USDT being transferred
    * @returns Required energy amount
    */
-  calculateRequiredEnergy(usdtAmount: number): number {
-    // Base energy for USDT transfer
-    const baseEnergy = config.energy.usdtTransferEnergyBase;
-    
-    // Add buffer for safety
-    const bufferMultiplier = 1 + config.energy.bufferPercentage;
-    const calculatedEnergy = Math.floor(baseEnergy * bufferMultiplier);
-    
-    // For larger amounts, we might need more energy due to contract complexity
-    // Add 10% more energy for every 1000 USDT
-    const amountMultiplier = 1 + (Math.floor(usdtAmount / 1000) * 0.1);
-    const adjustedEnergy = Math.floor(calculatedEnergy * amountMultiplier);
-    
-    // Apply min/max constraints
-    return Math.max(
-      config.energy.minDelegation,
-      Math.min(config.energy.maxDelegation, adjustedEnergy)
-    );
+  async calculateRequiredEnergy(usdtAmount: number): Promise<number> {
+    try {
+      // Get current rate from database
+      const currentRate = await energyRateService.getCurrentRate();
+      
+      // Base energy for USDT transfer
+      const baseEnergy = currentRate.energyPerTransaction;
+      
+      // Add buffer for safety
+      const bufferMultiplier = 1 + (currentRate.bufferPercentage / 100);
+      const calculatedEnergy = Math.floor(baseEnergy * bufferMultiplier);
+      
+      // For larger amounts, we might need more energy due to contract complexity
+      // Add 10% more energy for every 1000 USDT
+      const amountMultiplier = 1 + (Math.floor(usdtAmount / 1000) * 0.1);
+      const adjustedEnergy = Math.floor(calculatedEnergy * amountMultiplier);
+      
+      // Apply min/max constraints
+      return Math.max(
+        currentRate.minEnergy,
+        Math.min(currentRate.maxEnergy, adjustedEnergy)
+      );
+    } catch (error) {
+      logger.error('Failed to get energy rate from database, using config', {
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      
+      // Fallback to config values
+      const baseEnergy = config.energy.usdtTransferEnergyBase;
+      const bufferMultiplier = 1 + config.energy.bufferPercentage;
+      const calculatedEnergy = Math.floor(baseEnergy * bufferMultiplier);
+      const amountMultiplier = 1 + (Math.floor(usdtAmount / 1000) * 0.1);
+      const adjustedEnergy = Math.floor(calculatedEnergy * amountMultiplier);
+      
+      return Math.max(
+        config.energy.minDelegation,
+        Math.min(config.energy.maxDelegation, adjustedEnergy)
+      );
+    }
   }
 
   /**
@@ -113,8 +135,23 @@ export class EnergyService {
     try {
       // Calculate required energy based on USDT amount if provided
       requiredEnergy = usdtAmount 
-        ? this.calculateRequiredEnergy(usdtAmount)
+        ? await this.calculateRequiredEnergy(usdtAmount)
         : Math.floor(amount * 10.17); // Default: 1 TRX ≈ 10.17 energy (TronScan ratio)
+      
+      // Safety check: prevent excessive energy delegation
+      // Use configured max delegation from environment (default: 150,000 for mainnet support)
+      const maxEnergyDelegation = config.energy.maxDelegation;
+      if (requiredEnergy > maxEnergyDelegation) {
+        logger.error('Excessive energy delegation attempted', {
+          requiredEnergy,
+          maxAllowed: maxEnergyDelegation,
+          userId,
+          userTronAddress,
+          configuredMax: config.energy.maxDelegation,
+          note: 'Mainnet requires ~65,000 energy per USDT transaction',
+        });
+        throw new Error(`Energy delegation exceeds safety limit: ${requiredEnergy} > ${maxEnergyDelegation}`);
+      }
       
       logger.info('Starting energy delegation', {
         userTronAddress,
@@ -228,7 +265,7 @@ export class EnergyService {
         userTronAddress,
         userId,
         requiredEnergy,
-        usdtAmount,
+        usdtAmount: usdtAmount ?? 'not provided',
       });
       return null;
     }
@@ -244,11 +281,12 @@ export class EnergyService {
       
       // TRON's delegateResource expects the resource amount directly, not TRX value
       // We pass the energy amount directly
-      logger.info('Creating energy delegation transaction', {
+      logger.info('🔋 Creating energy delegation transaction', {
         from: systemWalletAddress,
         to: userAddress,
-        energyAmount,
+        requestedEnergyAmount: energyAmount,
         resourceType: 'ENERGY',
+        timestamp: new Date().toISOString(),
       });
 
       // Create resource delegation transaction
@@ -265,11 +303,14 @@ export class EnergyService {
       // Convert to SUN and ensure it's an integer
       const delegationAmountSun = Math.floor(parseFloat(tronUtils.toSun(delegationTrxAmount)));
       
-      logger.info('Delegation amounts calculated', {
-        requestedEnergy: energyAmount,
-        calculatedTrxAmount: delegationTrxAmount.toFixed(2),
-        delegationAmountSun,
-        estimatedEnergyReceived: Math.floor(delegationTrxAmount * energyPerTrx),
+      logger.info('📐 Delegation amounts calculated', {
+        step1_requestedEnergy: energyAmount,
+        step2_energyPerTrx: energyPerTrx,
+        step3_calculatedTrxAmount: trxAmount,
+        step4_roundedTrxAmount: delegationTrxAmount.toFixed(2),
+        step5_delegationAmountSun: delegationAmountSun,
+        step6_estimatedEnergyReceived: Math.floor(delegationTrxAmount * energyPerTrx),
+        calculation: `${energyAmount} energy ÷ ${energyPerTrx} = ${trxAmount} TRX → ${delegationTrxAmount.toFixed(2)} TRX → ${delegationAmountSun} SUN`,
         note: 'Using TronScan-based calculation: 1 TRX ≈ 10.17 energy',
       });
       
@@ -331,14 +372,22 @@ export class EnergyService {
         broadcastResult = await (systemTronWeb as any).trx.sendRawTransaction(signedTx);
         
         if (broadcastResult.result) {
-          logger.info('Energy delegated to user wallet', {
+          // Calculate estimated vs actual energy
+          const estimatedEnergy = Math.floor(delegationTrxAmount * energyPerTrx);
+          const discrepancyPercent = Math.abs((estimatedEnergy - energyAmount) / energyAmount * 100);
+          
+          logger.info('✅ Energy delegation transaction successful', {
             userAddress,
             txHash: broadcastResult.txid,
             requestedEnergy: energyAmount,
-            delegatedTrx: parseFloat(tronUtils.fromSun(delegationAmountSun)).toFixed(2),
-            actualEnergy: energyAmount,
+            delegatedTrxAmount: delegationTrxAmount.toFixed(2),
+            delegatedSunAmount: delegationAmountSun,
+            estimatedEnergyFromTrx: estimatedEnergy,
+            actualVsRequestedDiff: estimatedEnergy - energyAmount,
             systemWallet: systemWalletAddress,
-            note: 'Using TronScan ratio: 10.17 energy per TRX'
+            tronscanUrl: `https://shasta.tronscan.org/#/transaction/${broadcastResult.txid}`,
+            note: 'Using TronScan ratio: 10.17 energy per TRX',
+            warning: discrepancyPercent > 10 ? `Energy estimation off by ${discrepancyPercent.toFixed(1)}%` : undefined
           });
           return broadcastResult.txid;
         } else {

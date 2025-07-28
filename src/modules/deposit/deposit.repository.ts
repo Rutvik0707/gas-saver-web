@@ -8,6 +8,8 @@ export class DepositRepository {
   async createAddressBasedDeposit(data: {
     userId: string;
     expectedAmount: number;
+    numberOfTransactions?: number;
+    calculatedUsdtAmount?: number;
     expiresAt: Date;
     assignedAddress: string;
     energyRecipientAddress?: string;
@@ -16,6 +18,8 @@ export class DepositRepository {
       data: {
         userId: data.userId,
         expectedAmount: data.expectedAmount,
+        numberOfTransactions: data.numberOfTransactions,
+        calculatedUsdtAmount: data.calculatedUsdtAmount,
         expiresAt: data.expiresAt,
         assignedAddress: data.assignedAddress,
         energyRecipientAddress: data.energyRecipientAddress,
@@ -244,24 +248,6 @@ export class DepositRepository {
     });
   }
 
-  /**
-   * Cancel a deposit
-   */
-  async cancelDeposit(
-    id: string, 
-    cancelledBy: string, 
-    cancellationReason?: string
-  ): Promise<Deposit> {
-    return prisma.deposit.update({
-      where: { id },
-      data: {
-        status: DepositStatus.CANCELLED,
-        cancelledAt: new Date(),
-        cancelledBy,
-        cancellationReason,
-      },
-    });
-  }
 
   /**
    * Generic find many with options
@@ -312,24 +298,6 @@ export class DepositRepository {
     });
   }
 
-  /**
-   * Cancel a deposit
-   */
-  async cancelDeposit(
-    depositId: string, 
-    cancelledBy: string, 
-    cancellationReason?: string
-  ): Promise<Deposit> {
-    return prisma.deposit.update({
-      where: { id: depositId },
-      data: {
-        status: DepositStatus.CANCELLED,
-        cancelledAt: new Date(),
-        cancelledBy,
-        cancellationReason
-      }
-    });
-  }
 
   /**
    * Update energy transfer status for a deposit

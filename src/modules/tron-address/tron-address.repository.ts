@@ -260,4 +260,112 @@ export class TronAddressRepository {
 
     return statsMap;
   }
+
+  /**
+   * Get deposits where energy was transferred to user's addresses
+   */
+  async getAddressTransactions(
+    userId: string,
+    addresses: string[],
+    page: number = 1,
+    limit: number = 10
+  ): Promise<any[]> {
+    const skip = (page - 1) * limit;
+
+    // Get deposits where energy was sent to these addresses or by this user
+    const deposits = await prisma.deposit.findMany({
+      where: {
+        OR: [
+          // Deposits where energy was sent to user's addresses
+          {
+            energyRecipientAddress: {
+              in: addresses
+            },
+            status: {
+              in: ['CONFIRMED', 'PROCESSED']
+            }
+          },
+          // Deposits made by this user (to see their own deposits)
+          {
+            userId: userId,
+            energyRecipientAddress: {
+              not: null
+            },
+            status: {
+              in: ['CONFIRMED', 'PROCESSED']
+            }
+          }
+        ]
+      },
+      skip,
+      take: limit,
+      orderBy: {
+        processedAt: 'desc'
+      },
+      select: {
+        id: true,
+        energyRecipientAddress: true,
+        amountUsdt: true,
+        numberOfTransactions: true,
+        txHash: true,
+        energyTransferTxHash: true,
+        energyTransferStatus: true,
+        createdAt: true,
+        processedAt: true,
+      }
+    });
+
+    // Calculate energy amount based on number of transactions
+    const { energyService } = await import('../../services/energy.service');
+    const depositsWithEnergy = await Promise.all(
+      deposits.map(async (deposit) => {
+        let energyAmount = 0;
+        if (deposit.numberOfTransactions) {
+          // Calculate based on number of transactions
+          energyAmount = await energyService.calculateRequiredEnergy(
+            deposit.numberOfTransactions
+          );
+        }
+        
+        return {
+          ...deposit,
+          energyAmount
+        };
+      })
+    );
+
+    return depositsWithEnergy;
+  }
+
+  /**
+   * Get count of deposits for user's addresses
+   */
+  async getAddressTransactionCount(
+    userId: string,
+    addresses: string[]
+  ): Promise<number> {
+    return prisma.deposit.count({
+      where: {
+        OR: [
+          {
+            energyRecipientAddress: {
+              in: addresses
+            },
+            status: {
+              in: ['CONFIRMED', 'PROCESSED']
+            }
+          },
+          {
+            userId: userId,
+            energyRecipientAddress: {
+              not: null
+            },
+            status: {
+              in: ['CONFIRMED', 'PROCESSED']
+            }
+          }
+        ]
+      }
+    });
+  }
 }

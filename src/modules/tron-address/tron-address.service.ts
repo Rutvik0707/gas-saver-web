@@ -283,4 +283,87 @@ export class TronAddressService {
     const primaryAddress = await this.tronAddressRepository.findPrimaryByUserId(userId);
     return primaryAddress ? formatTronAddressResponse(primaryAddress) : null;
   }
+
+  /**
+   * Get transactions for all user's TRON addresses
+   */
+  async getAddressTransactions(
+    userId: string,
+    page: number = 1,
+    limit: number = 10
+  ): Promise<{
+    transactions: any[];
+    pagination: {
+      total: number;
+      page: number;
+      limit: number;
+      totalPages: number;
+    };
+  }> {
+    try {
+      // Get all user's TRON addresses
+      const userAddresses = await this.tronAddressRepository.findAllByUserId(userId);
+      const addressMap = new Map<string, { tag: string | null; isPrimary: boolean }>();
+      
+      userAddresses.forEach(addr => {
+        addressMap.set(addr.address, {
+          tag: addr.tag,
+          isPrimary: addr.isPrimary
+        });
+      });
+
+      // Get deposits where energy was sent to user's addresses
+      const transactions = await this.tronAddressRepository.getAddressTransactions(
+        userId,
+        Array.from(addressMap.keys()),
+        page,
+        limit
+      );
+
+      // Format transactions with address information
+      const formattedTransactions = transactions.map(tx => {
+        const addressInfo = addressMap.get(tx.energyRecipientAddress) || {
+          tag: 'Energy Recipient (Deposit)',
+          isPrimary: false
+        };
+
+        return {
+          id: tx.id,
+          tronAddress: tx.energyRecipientAddress,
+          addressTag: addressInfo.tag,
+          type: 'ENERGY_RECEIVED',
+          energyAmount: tx.energyAmount || 0,
+          usdtAmount: tx.amountUsdt?.toString() || '0',
+          numberOfTransactions: tx.numberOfTransactions || 1,
+          txHash: tx.txHash,
+          energyTxHash: tx.energyTransferTxHash,
+          status: tx.energyTransferStatus || 'PENDING',
+          createdAt: tx.createdAt,
+          processedAt: tx.processedAt,
+        };
+      });
+
+      // Get total count for pagination
+      const totalCount = await this.tronAddressRepository.getAddressTransactionCount(
+        userId,
+        Array.from(addressMap.keys())
+      );
+
+      return {
+        transactions: formattedTransactions,
+        pagination: {
+          total: totalCount,
+          page,
+          limit,
+          totalPages: Math.ceil(totalCount / limit),
+        },
+      };
+    } catch (error) {
+      logger.error('Failed to get address transactions', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        userId,
+      });
+      throw error;
+    }
+  }
 }

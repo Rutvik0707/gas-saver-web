@@ -212,6 +212,19 @@ export class AdminRepository {
     return Number(result._sum.amountUsdt || 0);
   }
 
+  async getTotalTransactionsPurchased(): Promise<number> {
+    const result = await this.prisma.deposit.aggregate({
+      _sum: { numberOfTransactions: true },
+      where: { 
+        status: { 
+          in: [DepositStatus.CONFIRMED, DepositStatus.PROCESSED] 
+        } 
+      },
+    });
+
+    return Number(result._sum.numberOfTransactions || 0);
+  }
+
   async getRecentDepositsCount(days: number = 7): Promise<number> {
     const since = new Date();
     since.setDate(since.getDate() - days);
@@ -411,6 +424,7 @@ export class AdminRepository {
       totalDeposits,
       depositsByStatus,
       totalDepositAmount,
+      totalTransactionsPurchased,
       recentDeposits,
       totalTransactions,
       transactionsByStatus,
@@ -424,6 +438,7 @@ export class AdminRepository {
       this.getDepositsCount(),
       this.getDepositsByStatus(),
       this.getTotalDepositAmount(),
+      this.getTotalTransactionsPurchased(),
       this.getRecentDepositsCount(),
       this.getTransactionsCount(),
       this.getTransactionsByStatus(),
@@ -444,6 +459,10 @@ export class AdminRepository {
       return acc;
     }, {} as any);
 
+    // Calculate completed transactions (confirmed + processed deposits)
+    const completedTransactions = (depositStats.confirmed || 0) + (depositStats.processed || 0);
+    const pendingTransactions = depositStats.pending || 0;
+
     return {
       users: {
         total: totalUsers,
@@ -460,6 +479,10 @@ export class AdminRepository {
         expired: depositStats.expired || 0,
         totalAmount: totalDepositAmount.toString(),
         recentDeposits,
+        // New transaction-focused stats
+        totalTransactionsPurchased,
+        completedTransactions,
+        pendingTransactions,
       },
       transactions: {
         total: totalTransactions,

@@ -59,6 +59,9 @@ model Deposit {
   energyTransferAttempts  Int           @default(0) @map("energy_transfer_attempts")
   energyTransferredAt     DateTime?     @map("energy_transferred_at")
   
+  numberOfTransactions  Int?        @map("number_of_transactions")
+  calculatedUsdtAmount  Decimal?    @db.Decimal(18, 6) @map("calculated_usdt_amount")
+  
   cancelledAt           DateTime?   @map("cancelled_at")
   cancelledBy           String?     @map("cancelled_by")
   cancellationReason    String?     @map("cancellation_reason")
@@ -190,4 +193,20 @@ model UserTronAddress {
   @@unique([userId, address])
   @@index([userId])
   @@map("user_tron_addresses")
+}
+
+model EnergyRate {
+  id                   String    @id @default(cuid())
+  energyPerTransaction Int       @map("energy_per_transaction") // Energy units per USDT transaction
+  bufferPercentage     Decimal   @map("buffer_percentage") @db.Decimal(5, 2) // Buffer % (e.g., 20.00)
+  minEnergy            Int       @map("min_energy") // Minimum energy delegation
+  maxEnergy            Int       @map("max_energy") // Maximum energy delegation
+  description          String?   // Optional description for this rate
+  updatedBy            String    @map("updated_by") // Admin ID who updated
+  isActive             Boolean   @default(true) @map("is_active")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+  
+  @@index([isActive, createdAt(sort: Desc)])
+  @@map("energy_rates")
 }

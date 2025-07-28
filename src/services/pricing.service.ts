@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { logger, config } from '../config';
 import { energyService } from './energy.service';
+import { energyRateService } from '../modules/energy-rate';
 
 interface PriceData {
   usdtPrice: number;
@@ -310,11 +311,14 @@ export class PricingService {
       // Get current prices
       const prices = await this.getPrices();
 
+      // Get current rate from database
+      const currentRate = await energyRateService.getCurrentRate();
+      
       // Base energy required for a USDT transaction
-      const baseEnergy = config.energy.usdtTransferEnergyBase;
+      const baseEnergy = currentRate.energyPerTransaction;
       
       // Calculate average energy per transaction (with buffer)
-      const energyPerTransaction = Math.floor(baseEnergy * (1 + config.energy.bufferPercentage));
+      const energyPerTransaction = Math.floor(baseEnergy * (1 + currentRate.bufferPercentage / 100));
 
       // Total energy needed
       const totalEnergyRequired = energyPerTransaction * numberOfTransactions;
@@ -418,9 +422,12 @@ export class PricingService {
       // Step 1: Get live market prices
       const prices = await this.getPrices();
       
+      // Get current rate from database
+      const currentRate = await energyRateService.getCurrentRate();
+      
       // Step 2: Calculate energy requirements
       // Using exact energy without buffer to match tr.energy pricing
-      const baseEnergy = config.energy.usdtTransferEnergyBase; // 65,000
+      const baseEnergy = currentRate.energyPerTransaction;
       const energyPerTransaction = baseEnergy; // No buffer for accurate pricing
       const totalEnergyRequired = energyPerTransaction * numberOfTransactions;
       

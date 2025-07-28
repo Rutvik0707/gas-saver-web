@@ -429,4 +429,141 @@ export class TronAddressController {
       throw error;
     }
   }
+
+  /**
+   * @swagger
+   * /users/tron-addresses/transactions:
+   *   get:
+   *     tags:
+   *       - User TRON Addresses
+   *     summary: Get transactions for all user's TRON addresses
+   *     description: |
+   *       Retrieve all transactions (deposits with energy transfers) for the user's TRON addresses.
+   *       This includes both addresses saved in the user's profile and addresses used as energy recipients in deposits.
+   *     security:
+   *       - bearerAuth: []
+   *     parameters:
+   *       - in: query
+   *         name: page
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           default: 1
+   *         description: Page number for pagination
+   *       - in: query
+   *         name: limit
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 100
+   *           default: 10
+   *         description: Number of items per page
+   *     responses:
+   *       200:
+   *         description: Transactions retrieved successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 message:
+   *                   type: string
+   *                   example: "Transactions retrieved successfully"
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     transactions:
+   *                       type: array
+   *                       items:
+   *                         type: object
+   *                         properties:
+   *                           id:
+   *                             type: string
+   *                             example: "dep_123456"
+   *                           tronAddress:
+   *                             type: string
+   *                             example: "TRX1234567890abcdefghijklmnopqrstuv"
+   *                           addressTag:
+   *                             type: string
+   *                             example: "Main Wallet"
+   *                           type:
+   *                             type: string
+   *                             enum: ["ENERGY_RECEIVED"]
+   *                             example: "ENERGY_RECEIVED"
+   *                           energyAmount:
+   *                             type: number
+   *                             example: 65000
+   *                           usdtAmount:
+   *                             type: string
+   *                             example: "10.50"
+   *                           numberOfTransactions:
+   *                             type: number
+   *                             example: 5
+   *                           txHash:
+   *                             type: string
+   *                             example: "abc123def456..."
+   *                           energyTxHash:
+   *                             type: string
+   *                             example: "xyz789uvw012..."
+   *                           status:
+   *                             type: string
+   *                             enum: ["PENDING", "COMPLETED", "FAILED"]
+   *                             example: "COMPLETED"
+   *                           createdAt:
+   *                             type: string
+   *                             format: date-time
+   *                             example: "2024-01-15T10:30:00Z"
+   *                           processedAt:
+   *                             type: string
+   *                             format: date-time
+   *                             example: "2024-01-15T10:31:00Z"
+   *                     pagination:
+   *                       type: object
+   *                       properties:
+   *                         total:
+   *                           type: number
+   *                           example: 25
+   *                         page:
+   *                           type: number
+   *                           example: 1
+   *                         limit:
+   *                           type: number
+   *                           example: 10
+   *                         totalPages:
+   *                           type: number
+   *                           example: 3
+   *       401:
+   *         description: Unauthorized
+   */
+  async getAddressTransactions(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        throw new ValidationException('User not authenticated');
+      }
+
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = Math.min(parseInt(req.query.limit as string) || 10, 100);
+
+      const result = await this.tronAddressService.getAddressTransactions(
+        req.user.id,
+        page,
+        limit
+      );
+
+      res.json(
+        apiUtils.success('Transactions retrieved successfully', result)
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('Get address transactions failed', {
+          error: error.message,
+          userId: req.user?.id,
+        });
+      }
+      throw error;
+    }
+  }
 }

@@ -464,13 +464,13 @@ export class DepositController {
    *           schema:
    *             type: object
    *             required:
-   *               - amount
+   *               - numberOfTransactions
    *             properties:
-   *               amount:
+   *               numberOfTransactions:
    *                 type: number
    *                 minimum: 1
-   *                 example: 100
-   *                 description: Amount of USDT to deposit (minimum 1 USDT)
+   *                 example: 50
+   *                 description: Number of USDT transactions needed (minimum 1)
    *               tronAddress:
    *                 type: string
    *                 example: "TRX1234567890abcdefghijklmnopqrstuv"
@@ -507,8 +507,12 @@ export class DepositController {
    *                       description: TRON address where energy will be delegated (optional)
    *                     expectedAmount:
    *                       type: string
-   *                       example: "100"
-   *                       description: Exact amount of USDT to send
+   *                       example: "56"
+   *                       description: Calculated USDT amount to send based on transactions
+   *                     numberOfTransactions:
+   *                       type: number
+   *                       example: 50
+   *                       description: Number of transactions requested
    *                     qrCodeBase64:
    *                       type: string
    *                       example: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
@@ -522,22 +526,22 @@ export class DepositController {
    *                       type: array
    *                       items:
    *                         type: string
-   *                       example: ["Send exactly 100 USDT to TQdcJgU4mKFo1RCFYbCZ3eHiEyPjqP2313", "No memo required - just send to the address", "Complete within 3 hours before address expires"]
+   *                       example: ["Send exactly 56 USDT to TQdcJgU4mKFo1RCFYbCZ3eHiEyPjqP2313", "No memo required - just send to the address", "Complete within 3 hours before address expires"]
    *                       description: Step-by-step instructions for completing the deposit
    *                     energyInfo:
    *                       type: object
    *                       properties:
    *                         estimatedEnergy:
    *                           type: number
-   *                           example: 65000
+   *                           example: 3250000
    *                           description: Amount of energy to be delegated
    *                         energyInTRX:
    *                           type: number
-   *                           example: 13.5
+   *                           example: 319.5
    *                           description: TRX equivalent value of the energy
    *                         description:
    *                           type: string
-   *                           example: "You will receive 65,000 energy (≈ 13.500000 TRX) for 100 USDT"
+   *                           example: "You will receive 3,250,000 energy (≈ 319.500000 TRX) for 50 transactions to address: TRX1234567890abcdefghijklmnopqrstuv"
    *                           description: Human-readable description of energy delegation
    *                 timestamp:
    *                   type: string
@@ -553,7 +557,7 @@ export class DepositController {
    *                 summary: Invalid deposit amount
    *                 value:
    *                   success: false
-   *                   message: "Amount must be positive"
+   *                   message: "Must be a whole number"
    *                   timestamp: "2024-01-01T00:00:00.000Z"
    *       401:
    *         description: Unauthorized

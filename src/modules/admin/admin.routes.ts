@@ -491,6 +491,52 @@ router.put('/deposits/:id', ...adminAuth(requireEditDeposits), adminController.u
  */
 router.post('/deposits/:id/cancel', ...adminAuth(requireEditDeposits), adminDepositController.cancelDeposit.bind(adminDepositController));
 
+/**
+ * @swagger
+ * /admin/deposits/{id}/trigger-energy-transfer:
+ *   post:
+ *     tags: [Admin]
+ *     summary: Manually trigger energy transfer
+ *     description: Manually trigger energy transfer for a processed deposit (Admin only)
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Deposit ID
+ *     responses:
+ *       200:
+ *         description: Energy transfer triggered successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 txHash:
+ *                   type: string
+ *                   description: Transaction hash if successful
+ *                 energyAmount:
+ *                   type: number
+ *                   description: Amount of energy transferred
+ *                 error:
+ *                   type: string
+ *                   description: Error message if failed
+ *       400:
+ *         description: Invalid request or deposit not in PROCESSED status
+ *       404:
+ *         description: Deposit not found
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Insufficient permissions
+ */
+router.post('/deposits/:depositId/trigger-energy-transfer', ...adminAuth(requireEditDeposits), adminController.triggerEnergyTransfer);
+
 // Transaction management routes
 /**
  * @swagger

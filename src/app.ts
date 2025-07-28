@@ -8,7 +8,7 @@ import { config, validateTronConnection, swaggerSpec } from './config';
 import { errorMiddleware } from './middleware';
 import { userRoutes } from './modules/user';
 import { depositRoutes } from './modules/deposit';
-import { adminRoutes } from './modules/admin';
+import { adminRoutes } from './modules/admin/admin.routes';
 import { apiUtils } from './shared/utils';
 import { feedbackRoutes } from './modules/feedback';
 import { energyRoutes } from './modules/energy';
@@ -16,6 +16,7 @@ import { pricingRoutes } from './modules/pricing';
 import { validationRoutes } from './modules/validation';
 import { tronAddressRoutes } from './modules/tron-address';
 import { createSystemStatusRoutes } from './modules/admin/system-status.routes';
+import { energyRateRoutes } from './modules/energy-rate';
 
 export function createApp(): express.Application {
   const app = express();
@@ -147,6 +148,7 @@ export function createApp(): express.Application {
   apiRouter.use('/admin', adminRoutes);
   apiRouter.use('/feedback', feedbackRoutes);
   apiRouter.use('/energy', energyRoutes);
+  apiRouter.use('/energy-rates', energyRateRoutes);
   apiRouter.use('/pricing', pricingRoutes);
   apiRouter.use('/validation', validationRoutes);
   apiRouter.use('/users/tron-addresses', tronAddressRoutes);

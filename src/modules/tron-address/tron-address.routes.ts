@@ -17,9 +17,10 @@ router.use(authMiddleware);
 // Routes
 router.post('/', tronAddressController.addAddress.bind(tronAddressController));
 router.get('/', tronAddressController.getUserAddresses.bind(tronAddressController));
+router.get('/transactions', tronAddressController.getAddressTransactions.bind(tronAddressController));
 router.get('/:addressId', tronAddressController.getAddress.bind(tronAddressController));
+router.put('/:addressId/set-primary', tronAddressController.setPrimaryAddress.bind(tronAddressController));
 router.put('/:addressId', tronAddressController.updateAddress.bind(tronAddressController));
 router.delete('/:addressId', tronAddressController.deleteAddress.bind(tronAddressController));
-router.put('/:addressId/set-primary', tronAddressController.setPrimaryAddress.bind(tronAddressController));
 
 export default router;

@@ -4,6 +4,9 @@ import { NotFoundException, ValidationException, ForbiddenException } from '../.
 import { DepositRepository } from './deposit.repository';
 import { addressPoolService } from '../../services/address-pool.service';
 import { referenceService } from '../../services/reference.service';
+import { tronAddressService } from '../tron-address';
+import { EnergyTransferService } from '../energy/energy.service';
+import { energyRateService } from '../energy-rate';
 import {
   DepositResponse,
   DepositInitiationResponse,
@@ -15,7 +18,11 @@ import {
 import { Deposit, DepositStatus } from '@prisma/client';
 
 export class DepositService {
-  constructor(private depositRepository: DepositRepository) {}
+  private energyTransferService: EnergyTransferService;
+  
+  constructor(private depositRepository: DepositRepository) {
+    this.energyTransferService = new EnergyTransferService();
+  }
 
   /**
    * Initiate a new deposit with unique address assignment
@@ -25,7 +32,7 @@ export class DepositService {
     dto: InitiateDepositDto
   ): Promise<DepositInitiationResponse> {
     try {
-      const { amount, tronAddress } = dto;
+      const { numberOfTransactions, tronAddress } = dto;
 
       // Determine the energy recipient address
       let energyRecipientAddress: string | undefined = tronAddress;
@@ -37,9 +44,10 @@ export class DepositService {
 
       // If no TRON address provided in request, check user's profile
       if (!energyRecipientAddress) {
-        const user = await userService.getUserById(userId);
-        if (user.tronAddress) {
-          energyRecipientAddress = user.tronAddress;
+        // Get user with tronAddress using getUserWithRelations
+        const userWithRelations = await userService.getUserWithRelations(userId);
+        if (userWithRelations.tronAddress) {
+          energyRecipientAddress = userWithRelations.tronAddress;
           logger.info('Using user profile TRON address for deposit', {
             userId,
             tronAddress: energyRecipientAddress
@@ -65,13 +73,33 @@ export class DepositService {
         source: tronAddress ? 'request' : 'profile',
       });
 
+      // Calculate USDT amount from number of transactions using pricing service
+      const { pricingService } = await import('../../services/pricing.service');
+      const transactionCost = await pricingService.getTransactionUSDTCost(numberOfTransactions);
+      const calculatedUsdtAmount = transactionCost.costInUSDT;
+
+      logger.info('💰 Deposit initiation - calculated USDT amount from transactions', {
+        userId,
+        numberOfTransactions,
+        calculatedUsdtAmount,
+        energyPerTransaction: 65,
+        totalEnergyPaidFor: 65 * numberOfTransactions,
+        actualEnergyToDelegate: 65,
+        energyRecipientAddress,
+        source: tronAddress ? 'user_provided' : energyRecipientAddress ? 'user_profile' : 'none',
+        note: 'User pays for multiple transactions worth of energy but receives 65 energy per deposit',
+        timestamp: transactionCost.timestamp
+      });
+
       // Set 3-hour expiration for address assignment
       const expiresAt = new Date(Date.now() + 3 * 60 * 60 * 1000);
       
       // Create deposit record first
       const deposit = await this.depositRepository.createAddressBasedDeposit({
         userId,
-        expectedAmount: amount,
+        expectedAmount: calculatedUsdtAmount,
+        numberOfTransactions,
+        calculatedUsdtAmount,
         expiresAt,
         energyRecipientAddress,
         // Temporary address - will be updated after assignment
@@ -88,26 +116,50 @@ export class DepositService {
         addressAssignment.address
       );
 
+      // Add the energy recipient address to user's TRON address list if provided in request
+      if (tronAddress) {
+        try {
+          await tronAddressService.addAddress(userId, {
+            address: tronAddress,
+            tag: 'Energy Recipient (Deposit)',
+            isPrimary: false
+          });
+          logger.info('Added TRON address to user address list', {
+            userId,
+            address: tronAddress,
+            source: 'deposit_initiation'
+          });
+        } catch (error) {
+          // Log but don't fail the deposit if address already exists or other non-critical error
+          logger.warn('Could not add TRON address to user list', {
+            userId,
+            address: tronAddress,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          });
+        }
+      }
+
       // Generate QR code for the assigned address
       const qrCodeBase64 = await referenceService.generateAddressQR(addressAssignment.address);
 
       // Generate instructions
       const instructions = referenceService.generateDepositInstructions(
-        amount,
+        calculatedUsdtAmount,
         addressAssignment.address,
         3
       );
 
       // Calculate energy information
       const { energyService } = await import('../../services/energy.service');
-      const estimatedEnergy = energyService.calculateRequiredEnergy(amount);
+      const estimatedEnergy = await energyService.calculateRequiredEnergy(calculatedUsdtAmount);
       const energyInTRX = energyService.convertEnergyToTRX(estimatedEnergy);
       
       logger.info('Deposit initiated successfully', {
         userId,
         depositId: deposit.id,
         assignedAddress: addressAssignment.address,
-        amount,
+        numberOfTransactions,
+        calculatedUsdtAmount,
         estimatedEnergy,
         energyInTRX,
         expiresAt: expiresAt.toISOString(),
@@ -118,20 +170,21 @@ export class DepositService {
         assignedAddress: addressAssignment.address,
         energyRecipientAddress,
         qrCodeBase64,
-        expectedAmount: amount.toString(),
+        expectedAmount: calculatedUsdtAmount.toString(),
+        numberOfTransactions,
         expiresAt,
         instructions,
         energyInfo: {
           estimatedEnergy,
           energyInTRX,
-          description: `You will receive ${estimatedEnergy.toLocaleString()} energy (≈ ${energyInTRX.toFixed(6)} TRX) for ${amount} USDT to address: ${energyRecipientAddress}`
+          description: `You will receive ${estimatedEnergy.toLocaleString()} energy (≈ ${energyInTRX.toFixed(6)} TRX) for ${numberOfTransactions} transactions to address: ${energyRecipientAddress}`
         }
       };
     } catch (error) {
       logger.error('Failed to initiate deposit', {
         error: error instanceof Error ? error.message : 'Unknown error',
         userId,
-        amount: dto.amount,
+        numberOfTransactions: dto.numberOfTransactions,
       });
       // Pass through the original error message if available
       const errorMessage = error instanceof Error ? error.message : 'Failed to initiate deposit';
@@ -333,6 +386,7 @@ export class DepositService {
         processedAt: d.processedAt,
         energyRecipientAddress: d.energyRecipientAddress || 'not_set',
         amountUsdt: d.amountUsdt?.toString() || 'null',
+        numberOfTransactions: d.numberOfTransactions || 'not_set',
       }))
     });
 
@@ -343,6 +397,7 @@ export class DepositService {
           userId: deposit.userId,
           amountUsdt: deposit.amountUsdt?.toString() || 'null',
           energyRecipientAddress: deposit.energyRecipientAddress || 'not_set',
+          numberOfTransactions: deposit.numberOfTransactions || 'not_set',
           status: deposit.status,
           confirmed: deposit.confirmed,
           processedAt: deposit.processedAt,
@@ -353,57 +408,68 @@ export class DepositService {
           continue;
         }
 
+        // Validate numberOfTransactions
+        const numberOfTransactions = deposit.numberOfTransactions || 1;
+        if (numberOfTransactions > 100) {
+          logger.error('Deposit has excessive numberOfTransactions', {
+            depositId: deposit.id,
+            numberOfTransactions,
+            maxAllowed: 100,
+          });
+          await this.depositRepository.markAsFailed(deposit.id);
+          continue;
+        }
+
         // Convert USDT amount to credits (1:1 ratio)
         const creditsAmount = Number(deposit.amountUsdt);
         
-        // Update user credits
-        logger.info('💳 Updating user credits...', {
-          depositId: deposit.id,
-          userId: deposit.userId,
-          creditsToAdd: creditsAmount,
-        });
-        await userService.incrementUserCredits(deposit.userId, creditsAmount);
+        // Use Prisma transaction to ensure atomicity
+        const { prisma } = await import('../../config');
         
-        // Mark deposit as processed
-        logger.info('✅ Marking deposit as processed...', {
-          depositId: deposit.id,
-        });
-        await this.depositRepository.markAsProcessed(deposit.id);
-        
-        logger.info(`💰 Deposit credits added successfully`, {
-          depositId: deposit.id,
-          userId: deposit.userId,
-          amount: creditsAmount,
-          energyRecipientAddress: deposit.energyRecipientAddress || 'not_set',
-        });
-        
-        // Trigger energy transfer to user's wallet or deposit-specific address
-        logger.info('⚡ Initiating energy transfer...', {
-          depositId: deposit.id,
-          userId: deposit.userId,
-          creditsAmount,
-          energyRecipientAddress: deposit.energyRecipientAddress || 'not_set',
-        });
-        
-        try {
-          await this.initiateEnergyTransfer(deposit.userId, creditsAmount, deposit.id);
-          logger.info('⚡ Energy transfer completed successfully', {
+        await prisma.$transaction(async (tx) => {
+          // 1. Update user credits
+          logger.info('💳 Updating user credits within transaction...', {
+            depositId: deposit.id,
+            userId: deposit.userId,
+            creditsToAdd: creditsAmount,
+          });
+          
+          await tx.user.update({
+            where: { id: deposit.userId },
+            data: {
+              credits: {
+                increment: creditsAmount
+              }
+            }
+          });
+          
+          // 2. Mark deposit as processed
+          logger.info('✅ Marking deposit as processed within transaction...', {
             depositId: deposit.id,
           });
-        } catch (energyError) {
-          logger.error('⚡ Energy transfer failed but deposit was processed', {
-            depositId: deposit.id,
-            error: energyError instanceof Error ? energyError.message : 'Unknown error',
+          
+          await tx.deposit.update({
+            where: { id: deposit.id },
+            data: {
+              status: 'PROCESSED',
+              processedAt: new Date(),
+            }
           });
-          // Don't throw - deposit was already processed successfully
-          // Energy transfer failure is tracked separately
-        }
+          
+          logger.info(`💰 Deposit processed successfully within transaction`, {
+            depositId: deposit.id,
+            userId: deposit.userId,
+            creditsAdded: creditsAmount,
+          });
+        });
         
       } catch (error) {
         logger.error(`Failed to process deposit ${deposit.id}`, {
           error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
         });
         
+        // Mark as failed if transaction fails
         await this.depositRepository.markAsFailed(deposit.id);
       }
     }
@@ -682,23 +748,51 @@ export class DepositService {
   /**
    * Initiate energy transfer to user's wallet or deposit-specific address
    */
-  private async initiateEnergyTransfer(userId: string, usdtAmount: number, depositId?: string): Promise<void> {
+  private async initiateEnergyTransfer(userId: string, numberOfTransactions: number, depositId?: string): Promise<void> {
     try {
       logger.info('🔋 Starting energy transfer process', {
         userId,
-        usdtAmount,
+        numberOfTransactions,
         depositId,
       });
 
-      // Get user details
-      const user = await userService.getUserById(userId);
+      // Get user details with tronAddress
+      const user = await userService.getUserWithRelations(userId);
       logger.info('👤 Retrieved user details', {
         userId,
         hasUserTronAddress: !!user.tronAddress,
       });
       
-      // Import energy service
-      const { energyService } = await import('../../services/energy.service');
+      // Get current energy rate configuration
+      const energyRate = await energyRateService.getCurrentRate();
+      
+      // IMPORTANT: We delegate energy for ONE transaction only, not multiplied by numberOfTransactions
+      // numberOfTransactions is only used for USDT pricing calculation, not energy delegation
+      const energyPerTransaction = energyRate.energyPerTransaction;
+      const energyToDelegate = energyPerTransaction; // Always delegate for 1 transaction
+      
+      // Safety check: Ensure we're not delegating excessive energy
+      // Use the configured maximum from environment (supports both testnet and mainnet)
+      const maxEnergyDelegation = config.energy.maxDelegation;
+      
+      if (energyToDelegate > maxEnergyDelegation) {
+        logger.error('Energy delegation exceeds configured maximum', {
+          energyToDelegate,
+          maxAllowed: maxEnergyDelegation,
+          energyPerTransaction,
+          environment: config.app.nodeEnv,
+        });
+        throw new Error(`Energy delegation exceeds maximum limit: ${energyToDelegate} > ${maxEnergyDelegation}`);
+      }
+      
+      logger.info('📊 Energy delegation configuration', {
+        numberOfTransactions,
+        energyPerTransaction,
+        energyToDelegate,
+        maxAllowed: maxEnergyDelegation,
+        environment: config.app.nodeEnv,
+        note: 'Energy delegation is always for 1 transaction worth, numberOfTransactions only affects USDT pricing',
+      });
       
       // Determine the target TRON address for energy delegation
       let targetAddress: string | null = null;
@@ -744,8 +838,8 @@ export class DepositService {
         logger.info('🎯 Target address determined, initiating energy delegation', {
           targetAddress,
           addressSource,
-          depositUsdtAmount: usdtAmount,
-          energyForUsdtTransfers: 1, // Delegating energy for 1 USDT transfer
+          numberOfTransactions,
+          energyForUsdtTransfers: numberOfTransactions, // Delegating energy for the specified number of transactions
         });
         
         // Update deposit to track energy transfer attempt
@@ -757,21 +851,21 @@ export class DepositService {
         }
         
         try {
-          // Delegate energy for 1 USDT transfer (not the entire deposit amount)
-          const txHash = await energyService.delegateEnergyToUser(
+          // Use the energy transfer service with exact energy amount
+          const transferResult = await this.energyTransferService.transferEnergy(
             targetAddress,
-            userId,
-            1, // Legacy amount parameter (not used when usdtAmount is provided)
-            1 // Always delegate energy for 1 USDT transfer only
+            energyToDelegate,
+            userId
           );
           
-          if (txHash) {
+          if (transferResult && transferResult.txHash) {
             logger.info('✅ Energy transfer completed successfully', {
               userId,
               targetAddress,
               addressSource,
-              txHash,
-              usdtAmount,
+              txHash: transferResult.txHash,
+              energyTransferred: transferResult.energyTransferred,
+              numberOfTransactions,
               depositId,
             });
             
@@ -779,7 +873,7 @@ export class DepositService {
             if (depositId) {
               await this.depositRepository.updateEnergyTransferStatus(depositId, {
                 energyTransferStatus: 'COMPLETED',
-                energyTransferTxHash: txHash,
+                energyTransferTxHash: transferResult.txHash,
                 energyTransferredAt: new Date(),
                 energyTransferError: null,
               });
@@ -790,7 +884,7 @@ export class DepositService {
               userId,
               targetAddress,
               addressSource,
-              usdtAmount,
+              numberOfTransactions,
               depositId,
             });
             
@@ -820,7 +914,7 @@ export class DepositService {
         const errorMsg = 'No TRON address available for energy transfer';
         logger.error('❌ Energy transfer skipped - ' + errorMsg, {
           userId,
-          usdtAmount,
+          numberOfTransactions,
           depositId,
           userProfileAddress: user.tronAddress || 'not_set',
           hasDepositAddress: depositId ? 'checked' : 'not_checked',
@@ -843,7 +937,7 @@ export class DepositService {
         error: error instanceof Error ? error.message : 'Unknown error',
         errorStack: error instanceof Error ? error.stack : undefined,
         userId,
-        usdtAmount,
+        numberOfTransactions,
         depositId,
       });
       // Re-throw to ensure the deposit processing knows about the failure

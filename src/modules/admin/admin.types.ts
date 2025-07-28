@@ -67,6 +67,10 @@ export interface DashboardStats {
     expired: number;
     totalAmount: string;
     recentDeposits: number;
+    // New transaction-focused stats
+    totalTransactionsPurchased: number;
+    completedTransactions: number;
+    pendingTransactions: number;
   };
   transactions: {
     total: number;

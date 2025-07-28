@@ -210,7 +210,8 @@ export class SystemStatusController {
       
       for (const deposit of failedDeposits) {
         try {
-          if (!deposit.amountUsdt) continue;
+          // Check if deposit has numberOfTransactions
+          const numberOfTransactions = deposit.numberOfTransactions || 1; // Default to 1 if not set
           
           // Reset status to allow retry
           await prisma.deposit.update({
@@ -218,10 +219,10 @@ export class SystemStatusController {
             data: { energyTransferStatus: 'PENDING' },
           });
           
-          // Retry energy transfer
+          // Retry energy transfer with numberOfTransactions
           await (depositService as any).initiateEnergyTransfer(
             deposit.userId,
-            Number(deposit.amountUsdt),
+            numberOfTransactions,
             deposit.id
           );
           
