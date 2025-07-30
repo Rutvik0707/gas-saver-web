@@ -5,6 +5,8 @@ import { energyRateService } from '../modules/energy-rate';
 
 export class EnergyService {
   private readonly ENERGY_AMOUNT_TRX = 1; // 1 TRX worth of energy per deposit (deprecated)
+  private energyRatioCache: { value: number; timestamp: number } | null = null;
+  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache
 
   /**
    * Calculate required energy for USDT transfer
@@ -292,13 +294,17 @@ export class EnergyService {
       // Create resource delegation transaction
       // IMPORTANT: In TRON's Stake 2.0, delegateResource expects:
       // - amount: The amount in SUN of staked TRX to delegate
-      // - Based on TronScan data: 65,000 energy requires 6,396 TRX
-      // - This gives us a ratio of approximately 10.17 energy per TRX
-      const energyPerTrx = 10.17;
+      // Get current energy per TRX ratio dynamically from network
+      const energyPerTrx = await this.getCachedEnergyPerTrx();
       const trxAmount = energyAmount / energyPerTrx;
       
-      // Round to 2 decimal places for TRX amount
-      const delegationTrxAmount = Math.round(trxAmount * 100) / 100;
+      // Use precise TRX amount for accurate delegation
+      // Add small buffer (2%) to ensure we meet the energy requirement
+      const bufferMultiplier = 1.02; // 2% buffer
+      const bufferedTrxAmount = trxAmount * bufferMultiplier;
+      
+      // Ensure minimum 1 TRX to meet TRON blockchain requirements
+      const delegationTrxAmount = Math.max(1, bufferedTrxAmount);
       
       // Convert to SUN and ensure it's an integer
       const delegationAmountSun = Math.floor(parseFloat(tronUtils.toSun(delegationTrxAmount)));
@@ -307,11 +313,12 @@ export class EnergyService {
         step1_requestedEnergy: energyAmount,
         step2_energyPerTrx: energyPerTrx,
         step3_calculatedTrxAmount: trxAmount,
-        step4_roundedTrxAmount: delegationTrxAmount.toFixed(2),
+        step4_delegationTrxAmount: delegationTrxAmount.toFixed(6),
+        step4b_withoutBuffer: trxAmount.toFixed(6),
         step5_delegationAmountSun: delegationAmountSun,
         step6_estimatedEnergyReceived: Math.floor(delegationTrxAmount * energyPerTrx),
-        calculation: `${energyAmount} energy ÷ ${energyPerTrx} = ${trxAmount} TRX → ${delegationTrxAmount.toFixed(2)} TRX → ${delegationAmountSun} SUN`,
-        note: 'Using TronScan-based calculation: 1 TRX ≈ 10.17 energy',
+        calculation: `${energyAmount} energy ÷ ${energyPerTrx.toFixed(2)} = ${trxAmount.toFixed(6)} TRX × 1.02 buffer = ${delegationTrxAmount.toFixed(6)} TRX → ${delegationAmountSun} SUN`,
+        note: `Using dynamic calculation: 1 TRX ≈ ${energyPerTrx.toFixed(2)} energy`,
       });
       
       // Check if system wallet has enough STAKED TRX (not balance)
@@ -380,13 +387,14 @@ export class EnergyService {
             userAddress,
             txHash: broadcastResult.txid,
             requestedEnergy: energyAmount,
-            delegatedTrxAmount: delegationTrxAmount.toFixed(2),
+            delegatedTrxAmount: delegationTrxAmount.toFixed(6),
             delegatedSunAmount: delegationAmountSun,
             estimatedEnergyFromTrx: estimatedEnergy,
             actualVsRequestedDiff: estimatedEnergy - energyAmount,
+            accuracyPercent: ((estimatedEnergy / energyAmount) * 100).toFixed(1),
             systemWallet: systemWalletAddress,
             tronscanUrl: `https://shasta.tronscan.org/#/transaction/${broadcastResult.txid}`,
-            note: 'Using TronScan ratio: 10.17 energy per TRX',
+            note: `Using dynamic ratio: ${energyPerTrx.toFixed(2)} energy per TRX`,
             warning: discrepancyPercent > 10 ? `Energy estimation off by ${discrepancyPercent.toFixed(1)}%` : undefined
           });
           return broadcastResult.txid;
@@ -690,6 +698,211 @@ export class EnergyService {
         recommendations: ['Unable to check system status'],
         errors: ['Failed to check system wallet: ' + (error instanceof Error ? error.message : 'Unknown error')],
       };
+    }
+  }
+
+  /**
+   * Get current energy per TRX ratio from the network
+   * This calculates the actual ratio based on staked TRX and resulting energy
+   */
+  async getCurrentEnergyPerTrx(): Promise<number> {
+    try {
+      const systemAddress = config.systemWallet.address;
+      
+      // Get account resources and account info
+      const accountResources = await systemTronWeb.trx.getAccountResources(systemAddress);
+      const account = await systemTronWeb.trx.getAccount(systemAddress);
+      
+      // Get total staked for energy (in SUN)
+      const stakedForEnergy = account.account_resource?.frozen_balance_for_energy?.frozen_balance || 0;
+      const stakedTrx = parseFloat(tronUtils.fromSun(stakedForEnergy));
+      
+      // Get total energy limit
+      const totalEnergy = accountResources.EnergyLimit || 0;
+      
+      // Calculate ratio (energy per TRX)
+      if (stakedTrx > 0 && totalEnergy > 0) {
+        const ratio = totalEnergy / stakedTrx;
+        logger.info('Calculated energy per TRX ratio', {
+          totalEnergy,
+          stakedTrx,
+          ratio: ratio.toFixed(2),
+          timestamp: new Date().toISOString()
+        });
+        return ratio;
+      }
+      
+      // Fallback to observed ratio if calculation fails
+      logger.warn('Could not calculate energy ratio, using fallback', {
+        totalEnergy,
+        stakedTrx
+      });
+      return 14.5; // Based on observed test results
+    } catch (error) {
+      logger.error('Failed to calculate energy ratio, using fallback', {
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      return 14.5; // Fallback ratio based on test results
+    }
+  }
+
+  /**
+   * Get cached energy per TRX ratio to avoid excessive API calls
+   */
+  async getCachedEnergyPerTrx(): Promise<number> {
+    const now = Date.now();
+    
+    // Check if cache is valid
+    if (this.energyRatioCache && (now - this.energyRatioCache.timestamp) < this.CACHE_TTL) {
+      logger.debug('Using cached energy ratio', {
+        value: this.energyRatioCache.value,
+        age: now - this.energyRatioCache.timestamp
+      });
+      return this.energyRatioCache.value;
+    }
+    
+    // Calculate new ratio and cache it
+    const ratio = await this.getCurrentEnergyPerTrx();
+    this.energyRatioCache = { value: ratio, timestamp: now };
+    
+    logger.info('Updated energy ratio cache', {
+      ratio: ratio.toFixed(2),
+      timestamp: new Date(now).toISOString()
+    });
+    
+    return ratio;
+  }
+
+  /**
+   * Transfer energy directly to a TRON address
+   * This is a simplified public method for direct energy transfers
+   * 
+   * @param tronAddress Target TRON address to receive energy
+   * @param energyAmount Amount of energy to transfer
+   * @param userId Optional user ID for tracking (if not provided, no database record is created)
+   * @returns Transaction hash and estimated actual energy transferred
+   * 
+   * @example
+   * ```typescript
+   * const result = await energyService.transferEnergyDirect(
+   *   'TXcPPgphPcNz1G8kgJgx9ztxtZ6GoJpJnu',
+   *   1000
+   * );
+   * console.log(`Transferred ~${result.actualEnergy} energy, tx: ${result.txHash}`);
+   * ```
+   */
+  async transferEnergyDirect(
+    tronAddress: string,
+    energyAmount: number,
+    userId?: string
+  ): Promise<{ txHash: string; actualEnergy: number; delegatedTrx: number }> {
+    try {
+      logger.info('Direct energy transfer initiated', {
+        tronAddress,
+        energyAmount,
+        userId: userId || 'anonymous',
+      });
+
+      // Validate inputs
+      if (!tronAddress || !tronUtils.isAddress(tronAddress)) {
+        throw new Error('Invalid TRON address');
+      }
+
+      if (!energyAmount || energyAmount < 10) {
+        throw new Error('Energy amount must be at least 10');
+      }
+
+      if (energyAmount > 150000) {
+        throw new Error('Energy amount cannot exceed 150,000');
+      }
+
+      // Check if system has enough energy
+      const hasEnoughEnergy = await this.hasEnoughEnergyForDelegation(energyAmount);
+      
+      if (!hasEnoughEnergy) {
+        const availableEnergy = await this.getAvailableEnergyForDelegation();
+        throw new Error(
+          `Insufficient energy in system wallet. Required: ${energyAmount}, Available: ${availableEnergy}`
+        );
+      }
+
+      // Create transaction record if userId is provided
+      let transactionId: string | undefined;
+      if (userId) {
+        const transaction = await prisma.transaction.create({
+          data: {
+            userId,
+            type: TransactionType.ENERGY_TRANSFER,
+            amount: energyAmount,
+            toAddress: tronAddress,
+            fromAddress: config.systemWallet.address,
+            status: TransactionStatus.PENDING,
+            description: `Direct energy transfer: ${energyAmount.toLocaleString()} energy units`,
+          },
+        });
+        transactionId = transaction.id;
+      }
+
+      try {
+        // Perform the actual energy delegation
+        const txHash = await this.delegateEnergyToAddress(tronAddress, energyAmount);
+
+        // Get the energy ratio to calculate actual energy
+        const energyPerTrx = await this.getCachedEnergyPerTrx();
+        const trxAmount = energyAmount / energyPerTrx;
+        const bufferedTrxAmount = trxAmount * 1.02; // 2% buffer
+        const finalTrxAmount = Math.max(1, bufferedTrxAmount);
+        const actualEnergy = Math.floor(finalTrxAmount * energyPerTrx);
+
+        // Update transaction if it was created
+        if (transactionId) {
+          await prisma.transaction.update({
+            where: { id: transactionId },
+            data: {
+              status: TransactionStatus.COMPLETED,
+              txHash,
+            },
+          });
+        }
+
+        logger.info('Direct energy transfer successful', {
+          tronAddress,
+          requestedEnergy: energyAmount,
+          actualEnergy,
+          delegatedTrx: finalTrxAmount,
+          txHash,
+          userId: userId || 'anonymous',
+        });
+
+        return {
+          txHash,
+          actualEnergy,
+          delegatedTrx: parseFloat(finalTrxAmount.toFixed(6)),
+        };
+
+      } catch (error) {
+        // Update transaction as failed if it was created
+        if (transactionId) {
+          await prisma.transaction.update({
+            where: { id: transactionId },
+            data: {
+              status: TransactionStatus.FAILED,
+              description: `Direct energy transfer failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            },
+          });
+        }
+        throw error;
+      }
+
+    } catch (error) {
+      logger.error('Direct energy transfer failed', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        tronAddress,
+        energyAmount,
+        userId: userId || 'anonymous',
+      });
+      
+      throw error;
     }
   }
 }

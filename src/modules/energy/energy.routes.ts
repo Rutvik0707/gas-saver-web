@@ -29,10 +29,10 @@ import { energyTransferSchema } from './energy.types';
  *           example: "TXYZabcdefghijklmnopqrstuvwxyz123456"
  *         energyAmount:
  *           type: integer
- *           minimum: 65000
+ *           minimum: 10
  *           maximum: 150000
- *           description: Approximate amount of energy to transfer (65,000 - 150,000). Actual amount may vary slightly due to network conditions.
- *           example: 65000
+ *           description: Approximate amount of energy to transfer (10 - 150,000). Minimum requires 1 TRX delegation. Actual amount may vary slightly due to network conditions.
+ *           example: 10000
  *     EnergyTransferResponse:
  *       type: object
  *       properties:

@@ -2,3 +2,4 @@
 export * from './email.service';
 export * from './pricing.service';
 export * from './validation.service';
+export { energyService } from './energy.service';

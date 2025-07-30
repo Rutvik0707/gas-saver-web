@@ -77,7 +77,7 @@ const envSchema = z.object({
   USDT_TRANSFER_ENERGY_BASE: z.string().transform(Number).default('65000'),
   ENERGY_BUFFER_PERCENTAGE: z.string().transform(Number).default('0.2'),
   ENERGY_PRICE_SUN: z.string().transform(Number).default('420'),
-  MIN_ENERGY_DELEGATION: z.string().transform(Number).default('65000'),
+  MIN_ENERGY_DELEGATION: z.string().transform(Number).default('1'),
   MAX_ENERGY_DELEGATION: z.string().transform(Number).default('150000'),
 
   // Pricing Configuration

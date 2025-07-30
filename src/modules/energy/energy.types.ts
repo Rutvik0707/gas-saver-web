@@ -10,7 +10,7 @@ export const energyTransferSchema = z.object({
   energyAmount: z.number()
     .int('Energy amount must be an integer')
     .positive('Energy amount must be positive')
-    .min(65000, 'Minimum energy amount is 65,000')
+    .min(10, 'Minimum energy amount is 10 (requires 1 TRX delegation)')
     .max(150000, 'Maximum energy amount is 150,000'),
 });
 
