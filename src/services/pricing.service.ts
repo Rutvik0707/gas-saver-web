@@ -43,13 +43,14 @@ export class PricingService {
    */
   private async calculateLiveEnergyPrice(trxPrice: number): Promise<number> {
     try {
-      // Based on tr.energy pricing:
-      // 20 transactions = 1,303,000 energy = 84.7 TRX
-      // 1,303,000 energy = 84,700,000 SUN
-      // Therefore: 1 energy = 84,700,000 / 1,303,000 = 65 SUN
+      // Based on adjusted pricing for 1:1 ratio (50 transactions = 50 USDT):
+      // 50 transactions = 3,250,000 energy
+      // Target: ~50 USDT = ~166.67 TRX (at $0.30/TRX)
+      // 166.67 TRX = 166,670,000 SUN
+      // Therefore: 1 energy = 166,670,000 / 3,250,000 = ~51.3 SUN
       
-      // Using fixed 65 SUN per energy to match tr.energy
-      const baseEnergyPriceSun = 65;
+      // Using fixed 47 SUN per energy for 1:1 transaction to USDT ratio
+      const baseEnergyPriceSun = 47;
       
       // Small market adjustment based on TRX price
       // If TRX > $0.30, slight premium; if < $0.30, slight discount
@@ -63,7 +64,7 @@ export class PricingService {
       });
       
       // Fallback to reasonable default
-      return 62; // ~4 TRX per 65,000 energy
+      return 47; // Adjusted for 1:1 transaction to USDT ratio
     }
   }
 
@@ -110,7 +111,7 @@ export class PricingService {
       return {
         usdtPrice: this.FALLBACK_USDT_PRICE,
         trxPrice: this.FALLBACK_TRX_PRICE,
-        energyPriceSun: 62, // Fallback: ~4 TRX per 65,000 energy
+        energyPriceSun: 47, // Fallback: Adjusted for 1:1 transaction to USDT ratio
         timestamp: new Date()
       };
     }
@@ -439,9 +440,9 @@ export class PricingService {
       // Step 4: Convert TRX to USDT using live rates
       const energyCostInUSDT = energyCostInTRX * prices.trxPrice / prices.usdtPrice;
       
-      // Step 5: Apply minimal service markup to stay competitive
-      // Using 5% markup to match market rates (tr.energy likely uses minimal markup)
-      const serviceMarkup = 1.05; // 5% markup
+      // Step 5: Apply no service markup for 1:1 pricing
+      // Removed markup to achieve 1 USDT per transaction pricing
+      const serviceMarkup = 1.0; // 0% markup
       const totalUSDTValue = energyCostInUSDT * serviceMarkup;
       
       // Step 6: Round up to nearest whole number for clean pricing
@@ -477,6 +478,8 @@ export class PricingService {
    */
   async refreshPrices(): Promise<void> {
     this.cache = null;
+    // Also clear energy rate cache to ensure fresh data
+    energyRateService.clearCache();
     await this.getPrices();
   }
 }
