@@ -131,6 +131,21 @@ export class TronAddressController {
    *                       example: 3
    *                     primary:
    *                       $ref: '#/components/schemas/TronAddressResponse'
+   *                     summary:
+   *                       type: object
+   *                       properties:
+   *                         totalTransactions:
+   *                           type: number
+   *                           example: 25
+   *                         completedTransactions:
+   *                           type: number
+   *                           example: 18
+   *                         pendingTransactions:
+   *                           type: number
+   *                           example: 7
+   *                         totalEnergyReceived:
+   *                           type: string
+   *                           example: "234720"
    *       401:
    *         description: Unauthorized
    */

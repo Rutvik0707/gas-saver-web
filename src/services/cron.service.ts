@@ -28,10 +28,16 @@ export class CronService {
       await this.runDepositExpirer();
     });
 
+    // Monitor and deliver energy every 5 minutes
+    this.scheduleJob('energy-monitor', '0 */5 * * * *', async () => {
+      await this.runEnergyMonitor();
+    });
+
     logger.info('🔄 Transaction detector started - scanning every 30 seconds');
     logger.info('💰 Deposit processor started - processing every minute');
     logger.info('📍 Address pool maintenance started - running every hour');
     logger.info('⏳ Deposit expirer started - cleanup every 5 minutes');
+    logger.info('⚡ Energy monitor started - monitoring every 5 minutes');
     logger.info('✅ All background services initialized successfully');
   }
 
@@ -175,6 +181,19 @@ export class CronService {
     }
   }
 
+  private async runEnergyMonitor(): Promise<void> {
+    try {
+      logger.info('⚡ Running energy monitor...');
+      const { energyMonitorService } = await import('./energy-monitor.service');
+      await energyMonitorService.monitorAndDeliverEnergy();
+    } catch (error) {
+      logger.error('❌ Energy monitor failed', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+    }
+  }
+
   // Method to get job status
   getJobStatus(): { name: string; running: boolean }[] {
     return Array.from(this.jobs.entries()).map(([name]) => ({
@@ -198,6 +217,9 @@ export class CronService {
           break;
         case 'deposit-expirer':
           await this.runDepositExpirer();
+          break;
+        case 'energy-monitor':
+          await this.runEnergyMonitor();
           break;
         default:
           logger.warn(`Unknown job name: ${jobName}`);

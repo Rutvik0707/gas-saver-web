@@ -76,10 +76,10 @@ export function getUsdtContract() {
 // Utility functions for TRON operations
 export const tronUtils = {
   // Convert TRX to Sun (1 TRX = 1,000,000 Sun)
-  toSun: (trx: number): number => tronWeb.toSun(trx),
+  toSun: (trx: number): number => (tronWeb as any).toSun(trx),
   
   // Convert Sun to TRX
-  fromSun: (sun: number): number => tronWeb.fromSun(sun),
+  fromSun: (sun: number | string): number => parseFloat((tronWeb as any).fromSun(sun)),
   
   // Validate TRON address
   isAddress: (address: string): boolean => tronWeb.isAddress(address),

@@ -132,7 +132,7 @@ export class EnergyService {
     amount: number = this.ENERGY_AMOUNT_TRX,
     usdtAmount?: number
   ): Promise<string | null> {
-    let requiredEnergy: number;
+    let requiredEnergy: number = 0;
     
     try {
       // Calculate required energy based on USDT amount if provided
@@ -183,7 +183,7 @@ export class EnergyService {
 
       // Check if system wallet has staked TRX for energy
       const stakedBalance = await this.getStakedBalance(config.systemWallet.address);
-      const stakedTRX = parseFloat(tronUtils.fromSun(stakedBalance.stakedForEnergy));
+      const stakedTRX = tronUtils.fromSun(stakedBalance.stakedForEnergy);
       
       logger.info('Staking validation check', {
         stakedTRX,
@@ -307,7 +307,7 @@ export class EnergyService {
       const delegationTrxAmount = Math.max(1, bufferedTrxAmount);
       
       // Convert to SUN and ensure it's an integer
-      const delegationAmountSun = Math.floor(parseFloat(tronUtils.toSun(delegationTrxAmount)));
+      const delegationAmountSun = Math.floor(tronUtils.toSun(delegationTrxAmount));
       
       logger.info('📐 Delegation amounts calculated', {
         step1_requestedEnergy: energyAmount,
@@ -323,7 +323,7 @@ export class EnergyService {
       
       // Check if system wallet has enough STAKED TRX (not balance)
       const stakedBalance = await this.getStakedBalance(systemWalletAddress);
-      const stakedTrx = parseFloat(tronUtils.fromSun(stakedBalance.stakedForEnergy));
+      const stakedTrx = tronUtils.fromSun(stakedBalance.stakedForEnergy);
       
       if (stakedTrx < delegationTrxAmount) {
         throw new Error(`Insufficient staked TRX for delegation. Required: ${delegationTrxAmount.toFixed(2)} TRX, Staked: ${stakedTrx.toFixed(2)} TRX`);
@@ -637,13 +637,13 @@ export class EnergyService {
       
       // Get staked balance
       const stakedBalance = await this.getStakedBalance(systemAddress);
-      const stakedTRX = parseFloat(tronUtils.fromSun(stakedBalance.stakedForEnergy));
+      const stakedTRX = tronUtils.fromSun(stakedBalance.stakedForEnergy);
       
       // Calculate requirements for a typical deposit (or use provided amount)
       const typicalUsdtAmount = requiredUsdtAmount || 20; // Default 20 USDT
-      const requiredEnergy = this.calculateRequiredEnergy(typicalUsdtAmount);
+      const requiredEnergy = await this.calculateRequiredEnergy(typicalUsdtAmount);
       const requiredStakedSun = this.convertEnergyToSun(requiredEnergy);
-      const requiredStakedTRX = parseFloat(tronUtils.fromSun(requiredStakedSun));
+      const requiredStakedTRX = tronUtils.fromSun(requiredStakedSun);
       
       // Calculate how many deposits we can process with current stake
       const canProcessDeposits = Math.floor(stakedTRX / requiredStakedTRX * typicalUsdtAmount);
@@ -715,7 +715,7 @@ export class EnergyService {
       
       // Get total staked for energy (in SUN)
       const stakedForEnergy = account.account_resource?.frozen_balance_for_energy?.frozen_balance || 0;
-      const stakedTrx = parseFloat(tronUtils.fromSun(stakedForEnergy));
+      const stakedTrx = tronUtils.fromSun(stakedForEnergy);
       
       // Get total energy limit
       const totalEnergy = accountResources.EnergyLimit || 0;

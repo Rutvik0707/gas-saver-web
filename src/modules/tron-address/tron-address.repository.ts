@@ -1,6 +1,7 @@
 import { prisma } from '../../config';
-import { UserTronAddress, Prisma, TransactionType, TransactionStatus } from '@prisma/client';
+import { UserTronAddress, Prisma } from '@prisma/client';
 import { TransactionStats } from './tron-address.types';
+import { energyRateService } from '../energy-rate';
 
 export class TronAddressRepository {
   /**
@@ -166,30 +167,23 @@ export class TronAddressRepository {
    * Get transaction statistics for a TRON address
    */
   async getTransactionStats(address: string): Promise<TransactionStats> {
-    // Get all transactions where this address is the recipient
-    const transactions = await prisma.transaction.findMany({
+    // Get all energy deliveries where this address is the recipient
+    const deliveries = await prisma.energyDelivery.findMany({
       where: {
-        toAddress: address,
-        type: TransactionType.ENERGY_TRANSFER,
+        tronAddress: address,
       },
       select: {
-        status: true,
-        amount: true,
+        totalTransactions: true,
+        deliveredTransactions: true,
       },
     });
 
     // Calculate statistics
-    const stats = transactions.reduce(
-      (acc, tx) => {
-        acc.totalTransactions++;
-        
-        if (tx.status === TransactionStatus.COMPLETED) {
-          acc.completedTransactions++;
-          // Add to total energy (amount is stored as Decimal)
-          acc.totalEnergyReceived = acc.totalEnergyReceived.add(tx.amount);
-        } else if (tx.status === TransactionStatus.PENDING) {
-          acc.pendingTransactions++;
-        }
+    const stats = deliveries.reduce(
+      (acc, delivery) => {
+        acc.totalTransactions += delivery.totalTransactions;
+        acc.completedTransactions += delivery.deliveredTransactions;
+        acc.pendingTransactions += (delivery.totalTransactions - delivery.deliveredTransactions);
         
         return acc;
       },
@@ -201,11 +195,16 @@ export class TronAddressRepository {
       }
     );
 
+    // Calculate total energy received based on delivered transactions
+    // Get current energy rate from the service
+    const energyRate = await energyRateService.getCurrentRate();
+    const totalEnergyReceived = stats.completedTransactions * energyRate.energyPerTransaction;
+
     return {
       totalTransactions: stats.totalTransactions,
       completedTransactions: stats.completedTransactions,
       pendingTransactions: stats.pendingTransactions,
-      totalEnergyReceived: stats.totalEnergyReceived.toString(),
+      totalEnergyReceived: totalEnergyReceived.toString(),
     };
   }
 
@@ -217,18 +216,20 @@ export class TronAddressRepository {
       return new Map();
     }
 
-    // Get all transactions for all addresses in one query
-    const transactions = await prisma.transaction.groupBy({
-      by: ['toAddress', 'status'],
+    // Get all energy deliveries for all addresses in one query
+    const deliveries = await prisma.energyDelivery.findMany({
       where: {
-        toAddress: { in: addresses },
-        type: TransactionType.ENERGY_TRANSFER,
+        tronAddress: { in: addresses },
       },
-      _count: true,
-      _sum: {
-        amount: true,
+      select: {
+        tronAddress: true,
+        totalTransactions: true,
+        deliveredTransactions: true,
       },
     });
+
+    // Get current energy rate from the service
+    const energyRate = await energyRateService.getCurrentRate();
 
     // Build stats map
     const statsMap = new Map<string, TransactionStats>();
@@ -243,18 +244,18 @@ export class TronAddressRepository {
       });
     });
 
-    // Populate stats from grouped results
-    transactions.forEach(group => {
-      const stats = statsMap.get(group.toAddress!)!;
-      stats.totalTransactions += group._count;
-      
-      if (group.status === TransactionStatus.COMPLETED) {
-        stats.completedTransactions += group._count;
+    // Group deliveries by address and calculate stats
+    deliveries.forEach(delivery => {
+      const stats = statsMap.get(delivery.tronAddress);
+      if (stats) {
+        stats.totalTransactions += delivery.totalTransactions;
+        stats.completedTransactions += delivery.deliveredTransactions;
+        stats.pendingTransactions += (delivery.totalTransactions - delivery.deliveredTransactions);
+        
+        // Calculate energy received
         const currentEnergy = new Prisma.Decimal(stats.totalEnergyReceived);
-        const additionalEnergy = group._sum.amount || new Prisma.Decimal(0);
+        const additionalEnergy = delivery.deliveredTransactions * energyRate.energyPerTransaction;
         stats.totalEnergyReceived = currentEnergy.add(additionalEnergy).toString();
-      } else if (group.status === TransactionStatus.PENDING) {
-        stats.pendingTransactions += group._count;
       }
     });
 

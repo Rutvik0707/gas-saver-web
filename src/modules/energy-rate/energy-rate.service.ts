@@ -131,7 +131,7 @@ export class EnergyRateService {
     const updatedRate = await this.energyRateRepository.update(id, {
       ...dto,
       updatedBy: adminId,
-    });
+    } as any);
 
     // Clear cache if this is the active rate
     if (updatedRate.isActive) {

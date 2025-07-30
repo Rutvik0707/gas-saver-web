@@ -33,6 +33,7 @@ model User {
   transactions  Transaction[]
   feedbacks     Feedback[]
   tronAddresses UserTronAddress[]
+  energyDeliveries EnergyDelivery[]
 
   @@map("users")
 }
@@ -71,6 +72,7 @@ model Deposit {
   // Relations
   user                User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   addressPool         AddressPool? @relation(fields: [assignedAddressId], references: [id], onDelete: SetNull)
+  energyDelivery      EnergyDelivery?
 
   @@index([assignedAddress])
   @@index([expiresAt])
@@ -209,4 +211,26 @@ model EnergyRate {
   
   @@index([isActive, createdAt(sort: Desc)])
   @@map("energy_rates")
+}
+
+model EnergyDelivery {
+  id                    String    @id @default(cuid())
+  depositId             String    @map("deposit_id") @unique
+  userId                String    @map("user_id")
+  tronAddress           String    @map("tron_address")
+  totalTransactions     Int       @map("total_transactions") // Paid for
+  deliveredTransactions Int       @default(0) @map("delivered_transactions") // Actually delivered
+  lastEnergyCheck       DateTime? @map("last_energy_check")
+  lastDeliveryAt        DateTime? @map("last_delivery_at")
+  isActive              Boolean   @default(true) @map("is_active")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+  
+  // Relations
+  deposit               Deposit   @relation(fields: [depositId], references: [id])
+  user                  User      @relation(fields: [userId], references: [id])
+  
+  @@index([userId, tronAddress, isActive])
+  @@index([lastEnergyCheck])
+  @@map("energy_deliveries")
 }

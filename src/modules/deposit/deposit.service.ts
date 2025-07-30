@@ -456,10 +456,32 @@ export class DepositService {
             }
           });
           
+          // 3. Create EnergyDelivery record for pay-per-transaction model
+          if (deposit.energyRecipientAddress && numberOfTransactions > 0) {
+            logger.info('📋 Creating EnergyDelivery record...', {
+              depositId: deposit.id,
+              userId: deposit.userId,
+              tronAddress: deposit.energyRecipientAddress,
+              totalTransactions: numberOfTransactions,
+            });
+            
+            await tx.energyDelivery.create({
+              data: {
+                depositId: deposit.id,
+                userId: deposit.userId,
+                tronAddress: deposit.energyRecipientAddress,
+                totalTransactions: numberOfTransactions,
+                deliveredTransactions: 0,
+                isActive: true,
+              }
+            });
+          }
+          
           logger.info(`💰 Deposit processed successfully within transaction`, {
             depositId: deposit.id,
             userId: deposit.userId,
             creditsAdded: creditsAmount,
+            energyDeliveryCreated: !!deposit.energyRecipientAddress,
           });
         });
         

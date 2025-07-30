@@ -88,6 +88,12 @@ export class TronAddressService {
       const addressStrings = addresses.map(addr => addr.address);
       const statsMap = await this.tronAddressRepository.getTransactionStatsForAddresses(addressStrings);
       
+      // Calculate summary totals
+      let totalTransactions = 0;
+      let completedTransactions = 0;
+      let pendingTransactions = 0;
+      let totalEnergyReceived = 0;
+      
       // Format addresses with their stats
       const formattedAddresses = addresses.map(addr => {
         const stats = statsMap.get(addr.address) || {
@@ -96,6 +102,13 @@ export class TronAddressService {
           pendingTransactions: 0,
           totalEnergyReceived: '0',
         };
+        
+        // Add to summary totals
+        totalTransactions += stats.totalTransactions;
+        completedTransactions += stats.completedTransactions;
+        pendingTransactions += stats.pendingTransactions;
+        totalEnergyReceived += parseFloat(stats.totalEnergyReceived);
+        
         return formatTronAddressResponse(addr, stats);
       });
       
@@ -105,6 +118,12 @@ export class TronAddressService {
         addresses: formattedAddresses,
         total: formattedAddresses.length,
         primary: primaryAddress,
+        summary: {
+          totalTransactions,
+          completedTransactions,
+          pendingTransactions,
+          totalEnergyReceived: totalEnergyReceived.toString(),
+        },
       };
     } catch (error) {
       logger.error('Failed to get user TRON addresses', {

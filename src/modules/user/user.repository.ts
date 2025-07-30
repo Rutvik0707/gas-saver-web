@@ -224,43 +224,23 @@ async setVerificationToken(id: string, token: string, expiry: Date): Promise<Use
     totalCompleted: number;
     totalPending: number;
   }> {
-    // Get all confirmed/processed deposits with their energy transfer status
-    // Only count deposits where payment was successful (exclude FAILED, EXPIRED, CANCELLED)
-    const deposits = await prisma.deposit.findMany({
-      where: { 
-        userId,
-        energyRecipientAddress: { not: null },
-        status: { in: ['CONFIRMED', 'PROCESSED'] } // Only successful payments
-      },
+    // New simplified approach using EnergyDelivery table
+    const deliveries = await prisma.energyDelivery.findMany({
+      where: { userId },
       select: {
-        numberOfTransactions: true,
-        energyTransferStatus: true,
-      },
-    });
-
-    // Calculate totals based on energy transfer status
-    let totalPurchased = 0;
-    let totalCompleted = 0;
-
-    deposits.forEach(deposit => {
-      const txCount = deposit.numberOfTransactions || 0;
-      totalPurchased += txCount;
-
-      // Only count as completed if energy transfer was successful
-      if (deposit.energyTransferStatus === 'COMPLETED') {
-        totalCompleted += txCount;
+        totalTransactions: true,
+        deliveredTransactions: true
       }
-      // Everything else (PENDING, IN_PROGRESS, FAILED, NO_ADDRESS, null) is pending
-      // because energy still needs to be delivered
     });
-
-    // Pending is everything that was purchased but not yet completed
+    
+    const totalPurchased = deliveries.reduce((sum, d) => sum + d.totalTransactions, 0);
+    const totalCompleted = deliveries.reduce((sum, d) => sum + d.deliveredTransactions, 0);
     const totalPending = totalPurchased - totalCompleted;
-
+    
     return {
       totalPurchased,
       totalCompleted,
-      totalPending,
+      totalPending
     };
   }
 
@@ -306,7 +286,7 @@ async setVerificationToken(id: string, token: string, expiry: Date): Promise<Use
     completedTransactions: number;
     pendingTransactions: number;
   }>> {
-    // First get all user's tron addresses
+    // First get all user's tron addresses for metadata
     const userAddresses = await prisma.userTronAddress.findMany({
       where: { userId },
     });
@@ -316,96 +296,16 @@ async setVerificationToken(id: string, token: string, expiry: Date): Promise<Use
       addressMap.set(addr.address, { tag: addr.tag, isPrimary: addr.isPrimary });
     });
 
-    // Get deposits grouped by energy recipient address (what was purchased)
-    const deposits = await prisma.deposit.findMany({
-      where: {
-        userId,
-        energyRecipientAddress: { not: null },
-        status: { in: ['CONFIRMED', 'PROCESSED'] } // Only confirmed deposits
-      },
-      select: {
-        energyRecipientAddress: true,
-        numberOfTransactions: true,
-        energyTransferStatus: true,
-      },
-    });
-
-    // Get actual energy transfers from transactions table
-    const energyTransfers = await prisma.transaction.findMany({
-      where: {
-        userId,
-        type: 'ENERGY_TRANSFER',
-      },
-      select: {
-        toAddress: true,
-        status: true,
-      },
-    });
-
-    // Calculate stats combining both tables
-    const addressStats = new Map<string, {
-      totalTransactions: number;
-      completedTransactions: number;
-      pendingTransactions: number;
-    }>();
-
-    // First, sum up what was purchased from deposits
-    deposits.forEach(deposit => {
-      const address = deposit.energyRecipientAddress!;
-      const existing = addressStats.get(address) || {
-        totalTransactions: 0,
-        completedTransactions: 0,
-        pendingTransactions: 0,
-      };
-
-      const txCount = deposit.numberOfTransactions || 0;
-      existing.totalTransactions += txCount;
-      addressStats.set(address, existing);
-    });
-
-    // Then, count actual completed transfers from transactions table
-    const transferCounts = new Map<string, { completed: number; pending: number }>();
-    energyTransfers.forEach(transfer => {
-      if (transfer.toAddress) {
-        const existing = transferCounts.get(transfer.toAddress) || { completed: 0, pending: 0 };
-        if (transfer.status === 'COMPLETED') {
-          existing.completed += 1;
-        } else if (transfer.status === 'PENDING') {
-          existing.pending += 1;
-        }
-        transferCounts.set(transfer.toAddress, existing);
+    // New simplified approach using EnergyDelivery grouped by address
+    const deliveries = await prisma.energyDelivery.groupBy({
+      by: ['tronAddress'],
+      where: { userId },
+      _sum: {
+        totalTransactions: true,
+        deliveredTransactions: true
       }
     });
-
-    // Update stats with actual transfer counts
-    addressStats.forEach((stats, address) => {
-      const transfers = transferCounts.get(address) || { completed: 0, pending: 0 };
-      
-      // For each completed transfer, we assume it delivered the numberOfTransactions
-      // from its corresponding deposit
-      const depositsForAddress = deposits.filter(d => d.energyRecipientAddress === address);
-      const completedDeposits = depositsForAddress.filter(d => d.energyTransferStatus === 'COMPLETED');
-      const pendingDeposits = depositsForAddress.filter(d => 
-        d.energyTransferStatus === 'PENDING' || d.energyTransferStatus === 'IN_PROGRESS'
-      );
-
-      stats.completedTransactions = completedDeposits.reduce((sum, d) => sum + (d.numberOfTransactions || 0), 0);
-      stats.pendingTransactions = pendingDeposits.reduce((sum, d) => sum + (d.numberOfTransactions || 0), 0);
-    });
-
-    // Include addresses that have transfers but no deposits (edge case)
-    transferCounts.forEach((transfers, address) => {
-      if (!addressStats.has(address)) {
-        const addressInfo = addressMap.get(address) || { tag: null, isPrimary: false };
-        addressStats.set(address, {
-          totalTransactions: 0, // No deposits found
-          completedTransactions: transfers.completed,
-          pendingTransactions: transfers.pending,
-        });
-      }
-    });
-
-    // Combine address info with stats
+    
     const result: Array<{
       tronAddress: string;
       addressTag: string | null;
@@ -414,14 +314,19 @@ async setVerificationToken(id: string, token: string, expiry: Date): Promise<Use
       completedTransactions: number;
       pendingTransactions: number;
     }> = [];
-
-    addressStats.forEach((stats, address) => {
-      const addressInfo = addressMap.get(address) || { tag: null, isPrimary: false };
+    
+    deliveries.forEach(delivery => {
+      const addressInfo = addressMap.get(delivery.tronAddress) || { tag: null, isPrimary: false };
+      const totalTransactions = delivery._sum.totalTransactions || 0;
+      const completedTransactions = delivery._sum.deliveredTransactions || 0;
+      
       result.push({
-        tronAddress: address,
+        tronAddress: delivery.tronAddress,
         addressTag: addressInfo.tag,
         isPrimary: addressInfo.isPrimary,
-        ...stats,
+        totalTransactions,
+        completedTransactions,
+        pendingTransactions: totalTransactions - completedTransactions
       });
     });
 

@@ -47,6 +47,12 @@ export interface TronAddressListResponse {
   addresses: TronAddressResponse[];
   total: number;
   primary: TronAddressResponse | null;
+  summary?: {
+    totalTransactions: number;
+    completedTransactions: number;
+    pendingTransactions: number;
+    totalEnergyReceived: string;
+  };
 }
 
 // Utility function to format response
