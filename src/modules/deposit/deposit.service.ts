@@ -285,15 +285,23 @@ export class DepositService {
               }
 
               // Also check processed transactions table
-              const { prisma } = await import('../../config');
-              const processedTx = await prisma.processedTransaction.findUnique({
-                where: { txHash: tx.transaction_id }
-              });
-              if (processedTx) {
-                logger.debug('Transaction already in processed transactions table', {
+              try {
+                const { prisma } = await import('../../config');
+                const processedTx = await prisma.processedTransaction.findUnique({
+                  where: { txHash: tx.transaction_id }
+                });
+                if (processedTx) {
+                  logger.debug('Transaction already in processed transactions table', {
+                    txHash: tx.transaction_id.substring(0, 10) + '...'
+                  });
+                  continue;
+                }
+              } catch (error) {
+                logger.warn('Failed to check processed transactions table', {
+                  error: error instanceof Error ? error.message : 'Unknown error',
                   txHash: tx.transaction_id.substring(0, 10) + '...'
                 });
-                continue;
+                // Continue processing even if the table check fails
               }
 
               // Find deposit for this address
@@ -594,6 +602,23 @@ export class DepositService {
       if (existingDeposit) {
         logger.info(`Transaction already processed: ${txHash}`);
         return true;
+      }
+
+      // Also check processed transactions table
+      try {
+        const { prisma } = await import('../../config');
+        const processedTx = await prisma.processedTransaction.findUnique({
+          where: { txHash }
+        });
+        if (processedTx) {
+          logger.info(`Transaction already in processed transactions table: ${txHash}`);
+          return true;
+        }
+      } catch (error) {
+        logger.warn('Failed to check processed transactions table', {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          txHash
+        });
       }
 
       // Get transaction details from TronGrid
