@@ -1,4 +1,4 @@
-import { prisma } from '../../config';
+import { prisma, config } from '../../config';
 import { AddressPool, AddressStatus } from '@prisma/client';
 import { CreateAddressDto } from './deposit.types';
 
@@ -107,19 +107,20 @@ export class AddressPoolRepository {
     used: number;
     inCooldown: number;
   }> {
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const cooldownMs = config.addressPool.cooldownHours * 60 * 60 * 1000;
+    const cooldownThreshold = new Date(Date.now() - cooldownMs);
     
     const [total, free, assigned, used, inCooldown] = await Promise.all([
       prisma.addressPool.count(),
       prisma.addressPool.count({ where: { status: AddressStatus.FREE } }),
       prisma.addressPool.count({ where: { status: AddressStatus.ASSIGNED } }),
       prisma.addressPool.count({ where: { status: AddressStatus.USED } }),
-      // Count addresses in cooldown (USED but lastUsedAt > 1 hour ago)
+      // Count addresses in cooldown (USED but lastUsedAt > cooldown threshold)
       prisma.addressPool.count({ 
         where: { 
           status: AddressStatus.USED,
           lastUsedAt: {
-            gt: oneHourAgo
+            gt: cooldownThreshold
           }
         } 
       })
@@ -196,16 +197,17 @@ export class AddressPoolRepository {
   }
 
   /**
-   * Reset USED addresses back to FREE after cooldown period (1 hour)
+   * Reset USED addresses back to FREE after cooldown period
    */
   async resetCooledDownAddresses(): Promise<number> {
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const cooldownMs = config.addressPool.cooldownHours * 60 * 60 * 1000;
+    const cooldownThreshold = new Date(Date.now() - cooldownMs);
     
     const result = await prisma.addressPool.updateMany({
       where: {
         status: AddressStatus.USED,
         lastUsedAt: {
-          lte: oneHourAgo
+          lte: cooldownThreshold
         }
       },
       data: {
@@ -220,13 +222,14 @@ export class AddressPoolRepository {
    * Get addresses that need cleanup (used addresses past cooldown)
    */
   async findAddressesNeedingCleanup(): Promise<AddressPool[]> {
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const cooldownMs = config.addressPool.cooldownHours * 60 * 60 * 1000;
+    const cooldownThreshold = new Date(Date.now() - cooldownMs);
     
     return prisma.addressPool.findMany({
       where: {
         status: AddressStatus.USED,
         lastUsedAt: {
-          lte: oneHourAgo
+          lte: cooldownThreshold
         }
       }
     });

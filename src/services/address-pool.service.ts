@@ -1,5 +1,5 @@
 import { createHash, randomBytes, createCipheriv, createDecipheriv } from 'crypto';
-import { logger } from '../config';
+import { logger, config } from '../config';
 import { AddressPoolRepository } from '../modules/deposit/address-pool.repository';
 import { 
   AddressAssignment, 
@@ -58,16 +58,48 @@ export class AddressPoolService {
    */
   async assignAddressToDeposit(depositId: string): Promise<AddressAssignment> {
     try {
-      // Find a free address
-      const freeAddress = await this.addressPoolRepository.findFreeAddress();
-      
-      if (!freeAddress) {
-        // No auto-generation - addresses are managed manually
-        logger.error('No free addresses available in pool');
-        throw new Error('Something is wrong at the moment please try again after few mins');
+      // Find free addresses to check
+      let attempts = 0;
+      const maxAttempts = 10; // Check up to 10 addresses
+      let selectedAddress = null;
+
+      while (attempts < maxAttempts && !selectedAddress) {
+        // Find a free address
+        const freeAddress = await this.addressPoolRepository.findFreeAddress();
+        
+        if (!freeAddress) {
+          // No auto-generation - addresses are managed manually
+          logger.error('No free addresses available in pool');
+          throw new Error('Something is wrong at the moment please try again after few mins');
+        }
+
+        // Check if this address has recent USDT transactions
+        const hasRecentTransactions = await this.checkAddressForRecentTransactions(freeAddress.address);
+        
+        if (!hasRecentTransactions) {
+          selectedAddress = freeAddress;
+          logger.info('✅ Found clean address with no recent transactions', {
+            address: freeAddress.address.substring(0, 10) + '...',
+            attempts: attempts + 1
+          });
+        } else {
+          // Mark this address for extended cooldown
+          logger.warn('⚠️ Address has recent transactions, marking for extended cooldown', {
+            address: freeAddress.address.substring(0, 10) + '...',
+            attempts: attempts + 1
+          });
+          // Temporarily mark as USED to skip it in next iteration
+          await this.addressPoolRepository.markAsUsed(freeAddress.address);
+          attempts++;
+        }
       }
 
-      const address = freeAddress;
+      if (!selectedAddress) {
+        logger.error('Could not find clean address after checking multiple addresses');
+        throw new Error('No clean addresses available. Please try again later.');
+      }
+
+      const address = selectedAddress;
 
       // Set 3-hour expiration
       const expiresAt = new Date(Date.now() + 3 * 60 * 60 * 1000);
@@ -318,6 +350,67 @@ export class AddressPoolService {
         addressCount: addresses.length
       });
       throw new Error('Failed to add external addresses: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    }
+  }
+
+  /**
+   * Check if an address has recent USDT transactions
+   */
+  private async checkAddressForRecentTransactions(address: string): Promise<boolean> {
+    try {
+      const usdtContractAddress = config.tron.usdtContract;
+      const baseUrl = config.tron.fullNode.replace('/jsonrpc', '');
+      const tronGridUrl = `${baseUrl}/v1/accounts/${address}/transactions/trc20`;
+      
+      const params = new URLSearchParams({
+        limit: '10',
+        contract_address: usdtContractAddress,
+        only_to: 'true'
+      });
+
+      const response = await fetch(`${tronGridUrl}?${params}`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        logger.warn('Failed to check address transactions', {
+          address: address.substring(0, 10) + '...',
+          status: response.status
+        });
+        // If we can't check, assume it's safe to avoid blocking
+        return false;
+      }
+
+      const data: any = await response.json();
+      
+      if (!data.success || !data.data) {
+        return false;
+      }
+
+      // Check if there are any recent transactions (within last 24 hours)
+      const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
+      const hasRecentTx = data.data.some((tx: any) => {
+        return tx.block_timestamp && tx.block_timestamp > oneDayAgo;
+      });
+
+      if (hasRecentTx) {
+        logger.info('🔍 Address has recent USDT transactions', {
+          address: address.substring(0, 10) + '...',
+          transactionCount: data.data.length
+        });
+      }
+
+      return hasRecentTx;
+    } catch (error) {
+      logger.error('Error checking address transactions', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        address: address.substring(0, 10) + '...'
+      });
+      // If error, assume safe to avoid blocking
+      return false;
     }
   }
 

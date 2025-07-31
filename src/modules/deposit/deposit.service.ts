@@ -278,16 +278,52 @@ export class DepositService {
 
           for (const tx of transactions) {
             try {
-              // Check if transaction already processed
+              // Check if transaction already processed via deposits
               const existingDeposit = await this.depositRepository.findByTxHash(tx.transaction_id);
               if (existingDeposit) {
                 continue; // Skip already processed transactions
+              }
+
+              // Also check processed transactions table
+              const { prisma } = await import('../../config');
+              const processedTx = await prisma.processedTransaction.findUnique({
+                where: { txHash: tx.transaction_id }
+              });
+              if (processedTx) {
+                logger.debug('Transaction already in processed transactions table', {
+                  txHash: tx.transaction_id.substring(0, 10) + '...'
+                });
+                continue;
               }
 
               // Find deposit for this address
               const deposit = await this.depositRepository.findByAssignedAddress(addressInfo.address);
               
               if (deposit && !deposit.txHash && deposit.expiresAt > new Date()) {
+                // Validate transaction timestamp - must be after deposit creation
+                const txTimestamp = new Date(tx.block_timestamp);
+                if (txTimestamp < deposit.createdAt) {
+                  logger.warn('⏰ Skipping old transaction - occurred before deposit creation', {
+                    txHash: tx.transaction_id.substring(0, 10) + '...',
+                    txTimestamp: txTimestamp.toISOString(),
+                    depositCreatedAt: deposit.createdAt.toISOString(),
+                    depositId: deposit.id,
+                    address: addressInfo.address.substring(0, 10) + '...'
+                  });
+                  continue;
+                }
+
+                // Also validate transaction is within deposit window
+                if (txTimestamp > deposit.expiresAt) {
+                  logger.warn('⏰ Skipping late transaction - occurred after deposit expiration', {
+                    txHash: tx.transaction_id.substring(0, 10) + '...',
+                    txTimestamp: txTimestamp.toISOString(),
+                    depositExpiresAt: deposit.expiresAt.toISOString(),
+                    depositId: deposit.id
+                  });
+                  continue;
+                }
+
                 // Perfect match - address maps directly to deposit
                 const amount = Number(tx.value) / Math.pow(10, 6); // Convert from raw USDT value
                 
@@ -297,6 +333,11 @@ export class DepositService {
                   currentStatus: deposit.status,
                   willUpdateTo: DepositStatus.CONFIRMED,
                   energyRecipientAddress: deposit.energyRecipientAddress || 'not_set',
+                  txTimestamp: txTimestamp.toISOString(),
+                  depositWindow: {
+                    createdAt: deposit.createdAt.toISOString(),
+                    expiresAt: deposit.expiresAt.toISOString()
+                  }
                 });
                 
                 // Update deposit with transaction details
@@ -314,6 +355,16 @@ export class DepositService {
                   confirmed: true,
                   txHash: tx.transaction_id.substring(0, 10) + '...',
                   shouldBeProcessedNext: true,
+                });
+
+                // Track processed transaction
+                await this.trackProcessedTransaction({
+                  txHash: tx.transaction_id,
+                  depositId: deposit.id,
+                  address: addressInfo.address,
+                  amountUsdt: amount,
+                  blockNumber: BigInt(tx.block_number),
+                  blockTimestamp: new Date(tx.block_timestamp)
                 });
 
                 // Mark address as used
@@ -564,6 +615,28 @@ export class DepositService {
         return true;
       }
 
+      // Validate transaction timestamp
+      const txTimestamp = new Date(txDetails.block_timestamp);
+      if (txTimestamp < deposit.createdAt) {
+        logger.error(`Transaction occurred before deposit creation`, {
+          txHash,
+          txTimestamp: txTimestamp.toISOString(),
+          depositCreatedAt: deposit.createdAt.toISOString(),
+          depositId: deposit.id
+        });
+        return false;
+      }
+
+      if (txTimestamp > deposit.expiresAt) {
+        logger.error(`Transaction occurred after deposit expiration`, {
+          txHash,
+          txTimestamp: txTimestamp.toISOString(),
+          depositExpiresAt: deposit.expiresAt.toISOString(),
+          depositId: deposit.id
+        });
+        return false;
+      }
+
       // Process the transaction
       const amount = Number(txDetails.value) / Math.pow(10, 6); // Convert from raw USDT value
       
@@ -576,6 +649,16 @@ export class DepositService {
         blockNumber: BigInt(txDetails.block_number),
         status: DepositStatus.CONFIRMED,
         confirmed: true
+      });
+
+      // Track processed transaction
+      await this.trackProcessedTransaction({
+        txHash: txDetails.transaction_id,
+        depositId: deposit.id,
+        address: txDetails.to,
+        amountUsdt: amount,
+        blockNumber: BigInt(txDetails.block_number),
+        blockTimestamp: new Date(txDetails.block_timestamp)
       });
 
       // Mark address as used
@@ -1091,6 +1174,48 @@ export class DepositService {
         userId,
       });
       throw error;
+    }
+  }
+
+  /**
+   * Track processed transaction to prevent reprocessing
+   */
+  private async trackProcessedTransaction(data: {
+    txHash: string;
+    depositId: string;
+    address: string;
+    amountUsdt: number;
+    blockNumber: bigint;
+    blockTimestamp: Date;
+  }): Promise<void> {
+    try {
+      const { prisma } = await import('../../config');
+      
+      await prisma.processedTransaction.create({
+        data: {
+          txHash: data.txHash,
+          depositId: data.depositId,
+          address: data.address,
+          amountUsdt: data.amountUsdt,
+          blockNumber: data.blockNumber,
+          blockTimestamp: data.blockTimestamp
+        }
+      });
+      
+      logger.debug('Tracked processed transaction', {
+        txHash: data.txHash.substring(0, 10) + '...',
+        depositId: data.depositId
+      });
+    } catch (error) {
+      // If transaction already tracked (unique constraint), it's fine
+      if (error instanceof Error && error.message.includes('Unique constraint')) {
+        logger.debug('Transaction already tracked', { txHash: data.txHash });
+      } else {
+        logger.error('Failed to track processed transaction', {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          txHash: data.txHash
+        });
+      }
     }
   }
 

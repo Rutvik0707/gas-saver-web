@@ -234,3 +234,20 @@ model EnergyDelivery {
   @@index([lastEnergyCheck])
   @@map("energy_deliveries")
 }
+
+model ProcessedTransaction {
+  id                String    @id @default(cuid())
+  txHash            String    @unique @map("tx_hash")
+  depositId         String    @map("deposit_id")
+  address           String
+  amountUsdt        Decimal   @map("amount_usdt") @db.Decimal(18, 6)
+  blockNumber       BigInt    @map("block_number")
+  blockTimestamp    DateTime  @map("block_timestamp")
+  processedAt       DateTime  @default(now()) @map("processed_at")
+
+  @@index([depositId])
+  @@index([address])
+  @@index([blockTimestamp])
+  @@index([processedAt])
+  @@map("processed_transactions")
+}

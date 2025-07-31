@@ -84,7 +84,8 @@
       "Bash(NODE_ENV=development ts-node -e \"\nimport { energyMonitorService } from ''./src/services/energy-monitor.service'';\nimport { logger } from ''./src/config'';\n\nasync function test() {\n  try {\n    logger.info(''🧪 Testing energy monitor service...'');\n    const stats = await energyMonitorService.getMonitoringStats();\n    console.log(''📊 Monitoring Stats:'', JSON.stringify(stats, null, 2));\n    \n    logger.info(''🧪 Running energy monitor cycle...'');\n    await energyMonitorService.monitorAndDeliverEnergy();\n    \n    logger.info(''✅ Test completed successfully'');\n  } catch (error) {\n    logger.error(''❌ Test failed:'', error);\n  } finally {\n    process.exit(0);\n  }\n}\n\ntest();\n\")",
       "Bash(NODE_ENV=development npx ts-node --transpile-only -e \"\nimport { energyMonitorService } from ''./src/services/energy-monitor.service'';\nimport { logger } from ''./src/config'';\n\nasync function test() {\n  try {\n    logger.info(''🧪 Testing energy monitor service...'');\n    const stats = await energyMonitorService.getMonitoringStats();\n    console.log(''📊 Monitoring Stats:'', JSON.stringify(stats, null, 2));\n    \n    logger.info(''🧪 Running energy monitor cycle...'');\n    await energyMonitorService.monitorAndDeliverEnergy();\n    \n    logger.info(''✅ Test completed successfully'');\n  } catch (error) {\n    logger.error(''❌ Test failed:'', error);\n  } finally {\n    process.exit(0);\n  }\n}\n\ntest();\n\")",
       "Bash(kill:*)",
-      "Bash(psql:*)"
+      "Bash(psql:*)",
+      "Bash(cd:*)"
     ],
     "deny": []
   }

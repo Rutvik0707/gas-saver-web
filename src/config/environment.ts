@@ -85,6 +85,9 @@ const envSchema = z.object({
   FALLBACK_USDT_PRICE: z.string().transform(Number).default('1.0'),
   FALLBACK_TRX_PRICE: z.string().transform(Number).default('0.12'),
   SERVICE_DISCOUNT_PERCENTAGE: z.string().transform(Number).default('15'),
+
+  // Address Pool Configuration
+  ADDRESS_COOLDOWN_HOURS: z.string().transform(Number).default('1'),
 });
 
 const env = envSchema.parse(process.env);
@@ -152,6 +155,9 @@ export const config = {
     fallbackUsdtPrice: env.FALLBACK_USDT_PRICE,
     fallbackTrxPrice: env.FALLBACK_TRX_PRICE,
     serviceDiscountPercentage: env.SERVICE_DISCOUNT_PERCENTAGE,
+  },
+  addressPool: {
+    cooldownHours: env.ADDRESS_COOLDOWN_HOURS,
   },
 } as const;
 
