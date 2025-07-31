@@ -28,8 +28,8 @@ export class CronService {
       await this.runDepositExpirer();
     });
 
-    // Monitor and deliver energy every 5 minutes
-    this.scheduleJob('energy-monitor', '0 */5 * * * *', async () => {
+    // Monitor and deliver energy every 2 minutes
+    this.scheduleJob('energy-monitor', '0 */2 * * * *', async () => {
       await this.runEnergyMonitor();
     });
 
@@ -37,7 +37,7 @@ export class CronService {
     logger.info('💰 Deposit processor started - processing every minute');
     logger.info('📍 Address pool maintenance started - running every hour');
     logger.info('⏳ Deposit expirer started - cleanup every 5 minutes');
-    logger.info('⚡ Energy monitor started - monitoring every 5 minutes');
+    logger.info('⚡ Energy monitor started - monitoring every 2 minutes');
     logger.info('✅ All background services initialized successfully');
   }
 
