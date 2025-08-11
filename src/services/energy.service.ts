@@ -300,7 +300,7 @@ export class EnergyService {
       
       // Use precise TRX amount for accurate delegation
       // Add small buffer (2%) to ensure we meet the energy requirement
-      const bufferMultiplier = 1.02; // 2% buffer
+  const bufferMultiplier = 1.05; // 5% buffer to reduce chance of under-delivery
       const bufferedTrxAmount = trxAmount * bufferMultiplier;
       
       // Ensure minimum 1 TRX to meet TRON blockchain requirements
@@ -317,7 +317,7 @@ export class EnergyService {
         step4b_withoutBuffer: trxAmount.toFixed(6),
         step5_delegationAmountSun: delegationAmountSun,
         step6_estimatedEnergyReceived: Math.floor(delegationTrxAmount * energyPerTrx),
-        calculation: `${energyAmount} energy ÷ ${energyPerTrx.toFixed(2)} = ${trxAmount.toFixed(6)} TRX × 1.02 buffer = ${delegationTrxAmount.toFixed(6)} TRX → ${delegationAmountSun} SUN`,
+  calculation: `${energyAmount} energy ÷ ${energyPerTrx.toFixed(2)} = ${trxAmount.toFixed(6)} TRX × 1.05 buffer = ${delegationTrxAmount.toFixed(6)} TRX → ${delegationAmountSun} SUN`,
         note: `Using dynamic calculation: 1 TRX ≈ ${energyPerTrx.toFixed(2)} energy`,
       });
       
@@ -850,8 +850,9 @@ export class EnergyService {
         // Get the energy ratio to calculate actual energy
         const energyPerTrx = await this.getCachedEnergyPerTrx();
         const trxAmount = energyAmount / energyPerTrx;
-        const bufferedTrxAmount = trxAmount * 1.02; // 2% buffer
-        const finalTrxAmount = Math.max(1, bufferedTrxAmount);
+  const bufferedTrxAmount = trxAmount * 1.05; // 5% buffer (aligned with delegateEnergyToAddress)
+  // Round up to 6 decimals to avoid under-provision from floating arithmetic
+  const finalTrxAmount = Math.max(1, Math.ceil(bufferedTrxAmount * 1e6) / 1e6);
         const actualEnergy = Math.floor(finalTrxAmount * energyPerTrx);
 
         // Update transaction if it was created

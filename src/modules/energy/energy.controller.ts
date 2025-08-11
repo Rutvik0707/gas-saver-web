@@ -80,4 +80,23 @@ export class EnergyController {
       );
     }
   }
+
+  async estimateEnergy(req: Request, res: Response) {
+    try {
+      const userId = (req as any).user?.id; // Not strictly needed, but kept for parity/logging
+      const rawAmount = req.query.energyAmount;
+      const energyAmount = Number(rawAmount);
+      if (!Number.isFinite(energyAmount)) {
+        return res.status(400).json(apiUtils.error('Invalid energyAmount'));
+      }
+
+      const result = await this.energyTransferService.estimateEnergyDelegation(energyAmount);
+      res.json(apiUtils.success('Energy delegation estimate', result));
+    } catch (error) {
+      if (error instanceof BaseException) {
+        return res.status(error.statusCode).json(apiUtils.error(error.message));
+      }
+      return res.status(500).json(apiUtils.error('Failed to estimate energy delegation'));
+    }
+  }
 }

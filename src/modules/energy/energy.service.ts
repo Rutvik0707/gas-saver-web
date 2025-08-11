@@ -1,6 +1,6 @@
 import { energyService } from '../../services/energy.service';
 import { logger, config } from '../../config';
-import { EnergyTransferResponse, AvailableEnergyResponse, SystemWalletEnergyInfo } from './energy.types';
+import { EnergyTransferResponse, AvailableEnergyResponse, SystemWalletEnergyInfo, EnergyEstimateResponse } from './energy.types';
 import { BadRequestException, InternalServerException, BaseException } from '../../shared/exceptions';
 
 export class EnergyTransferService {
@@ -28,7 +28,7 @@ export class EnergyTransferService {
 
       // Check if system has enough energy
       const hasEnoughEnergy = await energyService.hasEnoughEnergyForDelegation(energyAmount);
-      
+
       if (!hasEnoughEnergy) {
         const availableEnergy = await energyService.getAvailableEnergyForDelegation();
         throw new BadRequestException(
@@ -36,29 +36,22 @@ export class EnergyTransferService {
         );
       }
 
-      // Calculate TRX amount from energy amount
-      // Based on TronScan data: 1 TRX ≈ 10.17 energy (65,000 energy = 6,396 TRX)
-      const trxAmount = energyAmount / 10.17;
-      
-      // Delegate energy to the address
-      const txHash = await energyService.delegateEnergyToUser(
+      // Use direct energy transfer to guarantee requested amount or slightly more (2% buffer)
+      // This avoids double conversion via static ratios that could under-deliver by rounding.
+  const { txHash, actualEnergy, delegatedTrx } = await energyService.transferEnergyDirect(
         tronAddress,
-        userId,
-        trxAmount, // TRX amount that will be converted to the desired energy amount
-        undefined // No USDT amount, using direct energy calculation
+        energyAmount,
+        userId
       );
 
-      if (!txHash) {
-        throw new InternalServerException('Energy delegation failed');
-      }
-
-      // Convert energy to TRX for response
-      const energyInTRX = energyService.convertEnergyToTRX(energyAmount);
+      // Convert actual delegated energy to TRX equivalent for response
+  // Use delegatedTrx (actual frozen TRX) for accuracy
+  const energyInTRX = delegatedTrx;
 
       const response: EnergyTransferResponse = {
         txHash,
         tronAddress,
-        energyAmount,
+        energyAmount: actualEnergy, // ensure we report the REAL (>= requested) energy
         energyInTRX,
         timestamp: new Date(),
       };
@@ -128,5 +121,63 @@ export class EnergyTransferService {
       
       throw new InternalServerException('Failed to retrieve system wallet information');
     }
+  }
+
+  /**
+   * Estimate the TRX that will be frozen (with buffer) and resulting energy.
+   * Keeps logic aligned with transferEnergy -> transferEnergyDirect path.
+   */
+  async estimateEnergyDelegation(energyAmount: number): Promise<EnergyEstimateResponse> {
+    if (!Number.isFinite(energyAmount) || energyAmount < 10) {
+      throw new BadRequestException('energyAmount must be >= 10');
+    }
+    if (energyAmount > 150000) {
+      throw new BadRequestException('energyAmount cannot exceed 150,000');
+    }
+
+    // Dynamic ratio retrieval (energy per TRX)
+    const energyPerTrx = await energyService.getCachedEnergyPerTrx();
+    const baseTrx = energyAmount / energyPerTrx;
+  const bufferPercent = 0.05; // 5% buffer consistent with delegateEnergyToAddress
+    const bufferedTrxRaw = baseTrx * (1 + bufferPercent);
+    const roundUp6 = (v: number) => Math.ceil(v * 1e6) / 1e6;
+    const bufferedTrx = Math.max(1, roundUp6(bufferedTrxRaw));
+    const bufferedSun = Math.floor(bufferedTrx * 1e6); // 1 TRX = 1e6 SUN
+    const estimatedEnergy = Math.floor(bufferedTrx * energyPerTrx);
+    const overProvision = estimatedEnergy - energyAmount;
+
+    // System stats
+    const availableEnergy = await energyService.getAvailableEnergyForDelegation();
+  const stakedBalance = await energyService.getStakedBalance(config.systemWallet.address);
+  // Use shared tronUtils helper for SUN -> TRX
+  const { tronUtils } = require('../../config');
+  const stakedTrx = tronUtils.fromSun(stakedBalance.stakedForEnergy);
+
+    const hasEnoughEnergy = availableEnergy >= energyAmount;
+    const hasEnoughStakedTrx = stakedTrx >= bufferedTrx;
+
+    const response: EnergyEstimateResponse = {
+      requestedEnergy: energyAmount,
+      bufferPercent,
+      energyPerTrx: parseFloat(energyPerTrx.toFixed(6)),
+      baseTrx: parseFloat(baseTrx.toFixed(6)),
+      bufferedTrx,
+      bufferedSun,
+      estimatedEnergy,
+      overProvision,
+      system: {
+        availableEnergy,
+        hasEnoughEnergy,
+        stakedTrx: parseFloat(stakedTrx.toFixed(6)),
+        hasEnoughStakedTrx,
+      },
+      timestamp: new Date(),
+      notes: [
+        'bufferPercent applied to TRX (not energy) to guarantee >= requested',
+        'estimatedEnergy is floor(bufferedTrx * energyPerTrx)',
+      ],
+    };
+
+    return response;
   }
 }

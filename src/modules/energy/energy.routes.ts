@@ -95,6 +95,51 @@ import { energyTransferSchema } from './energy.types';
  *           type: integer
  *           description: Energy available for delegation
  *           example: 500000
+ *     EnergyEstimateResponse:
+ *       type: object
+ *       properties:
+ *         requestedEnergy:
+ *           type: integer
+ *           example: 65000
+ *         bufferPercent:
+ *           type: number
+ *           example: 0.02
+ *         energyPerTrx:
+ *           type: number
+ *           example: 14500
+ *         baseTrx:
+ *           type: number
+ *           example: 4.482759
+ *         bufferedTrx:
+ *           type: number
+ *           example: 4.572414
+ *         bufferedSun:
+ *           type: integer
+ *           example: 4572414
+ *         estimatedEnergy:
+ *           type: integer
+ *           example: 66200
+ *         overProvision:
+ *           type: integer
+ *           example: 1200
+ *         system:
+ *           type: object
+ *           properties:
+ *             availableEnergy:
+ *               type: integer
+ *             hasEnoughEnergy:
+ *               type: boolean
+ *             stakedTrx:
+ *               type: number
+ *             hasEnoughStakedTrx:
+ *               type: boolean
+ *         timestamp:
+ *           type: string
+ *           format: date-time
+ *         notes:
+ *           type: array
+ *           items:
+ *             type: string
  */
 
 /**
@@ -228,6 +273,45 @@ import { energyTransferSchema } from './energy.types';
  *         description: Internal server error
  */
 
+/**
+ * @swagger
+ * /energy/estimate:
+ *   get:
+ *     summary: Estimate TRX, buffer and resulting energy before delegation
+ *     tags: [Energy]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: energyAmount
+ *         schema:
+ *           type: integer
+ *           minimum: 10
+ *           maximum: 150000
+ *         required: true
+ *         description: Desired energy amount
+ *     responses:
+ *       200:
+ *         description: Energy delegation estimate
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   $ref: '#/components/schemas/EnergyEstimateResponse'
+ *       400:
+ *         description: Invalid parameters
+ *       401:
+ *         description: User not authenticated
+ *       500:
+ *         description: Internal server error
+ */
+
 const energyController = new EnergyController(new EnergyTransferService());
 
 export function createEnergyRoutes(): Router {
@@ -253,6 +337,13 @@ export function createEnergyRoutes(): Router {
     '/system-info',
     authMiddleware,
     energyController.getSystemWalletInfo.bind(energyController)
+  );
+
+  // Estimate energy delegation endpoint
+  router.get(
+    '/estimate',
+    authMiddleware,
+    energyController.estimateEnergy.bind(energyController)
   );
 
   return router;

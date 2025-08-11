@@ -20,7 +20,7 @@ export interface EnergyTransferResponse {
   txHash: string;
   tronAddress: string;
   energyAmount: number;
-  energyInTRX: number;
+  energyInTRX: number; // Actual TRX frozen (after buffer)
   timestamp: Date;
 }
 
@@ -36,4 +36,23 @@ export interface SystemWalletEnergyInfo {
   trxBalance: number;
   energyBalance: number;
   availableForDelegation: number;
+}
+
+export interface EnergyEstimateResponse {
+  requestedEnergy: number; // energy requested by client
+  bufferPercent: number;   // buffer applied to TRX delegation
+  energyPerTrx: number;    // dynamic ratio (energy generated per 1 TRX)
+  baseTrx: number;         // TRX required without buffer
+  bufferedTrx: number;     // TRX that will actually be frozen (after buffer)
+  bufferedSun: number;     // SUN amount (integer) corresponding to bufferedTrx
+  estimatedEnergy: number; // floor(bufferedTrx * energyPerTrx)
+  overProvision: number;   // estimatedEnergy - requestedEnergy
+  system: {
+    availableEnergy: number; // current available energy in system wallet
+    hasEnoughEnergy: boolean; // can satisfy requestedEnergy now
+    stakedTrx: number;       // TRX currently staked for ENERGY
+    hasEnoughStakedTrx: boolean; // stakedTrx >= bufferedTrx
+  };
+  timestamp: Date;
+  notes: string[];
 }
