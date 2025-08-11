@@ -99,7 +99,12 @@
       "Bash(DATABASE_URL=\"postgresql://slnexus:SLNEXUS2024@sl-nexus-dev-pg.c9mc0886opd4.ap-south-1.rds.amazonaws.com:5432/energy_broker_db?schema=public\" npx prisma migrate dev --name add_energy_monitoring --create-only)",
       "Bash(DATABASE_URL=\"postgresql://slnexus:SLNEXUS2024@sl-nexus-dev-pg.c9mc0886opd4.ap-south-1.rds.amazonaws.com:5432/energy_broker_db?schema=public\" npx prisma generate)",
       "Bash(DATABASE_URL=\"postgresql://slnexus:SLNEXUS2024@sl-nexus-dev-pg.c9mc0886opd4.ap-south-1.rds.amazonaws.com:5432/energy_broker_db?schema=public\" npx prisma db push)",
-      "Bash(DATABASE_URL=\"postgresql://gassaverBETAdb:gasSaverBETA2026@gassaver-beta-db.cxy06y2aw9cy.ap-south-1.rds.amazonaws.com:5432/tronBeta?schema=public\" npx prisma db push)"
+      "Bash(DATABASE_URL=\"postgresql://gassaverBETAdb:gasSaverBETA2026@gassaver-beta-db.cxy06y2aw9cy.ap-south-1.rds.amazonaws.com:5432/tronBeta?schema=public\" npx prisma db push)",
+      "Bash(DATABASE_URL=\"postgresql://slnexus:SLNEXUS2024@sl-nexus-dev-pg.c9mc0886opd4.ap-south-1.rds.amazonaws.com:5432/energy_broker_db?schema=public\" npx prisma migrate dev --name unify_energy_monitor --create-only)",
+      "Bash(DATABASE_URL=\"postgresql://slnexus:SLNEXUS2024@sl-nexus-dev-pg.c9mc0886opd4.ap-south-1.rds.amazonaws.com:5432/energy_broker_db?schema=public\" npx prisma migrate dev --name unify_energy_monitor --skip-seed)",
+      "Bash(DATABASE_URL=\"postgresql://slnexus:SLNEXUS2024@sl-nexus-dev-pg.c9mc0886opd4.ap-south-1.rds.amazonaws.com:5432/energy_broker_db?schema=public\" npx prisma migrate resolve --applied 20250811000000_unify_energy_monitor)",
+      "Bash(DATABASE_URL=\"postgresql://gassaverBETAdb:gasSaverBETA2026@gassaver-beta-db.cxy06y2aw9cy.ap-south-1.rds.amazonaws.com:5432/tronBeta?schema=public\" npx prisma migrate resolve --applied 20250811000000_unify_energy_monitor)",
+      "Bash(DATABASE_URL=\"postgresql://gassaverBETAdb:gasSaverBETA2026@gassaver-beta-db.cxy06y2aw9cy.ap-south-1.rds.amazonaws.com:5432/tronBeta?schema=public\" npx prisma generate)"
     ],
     "deny": []
   }

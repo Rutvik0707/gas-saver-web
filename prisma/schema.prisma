@@ -175,6 +175,14 @@ enum EnergyAllocationAction {
   PENALTY
   USAGE_DETECT
   OVERRIDE
+  DELEGATE_131K
+  TOP_UP_65K
+  RECLAIM_FULL
+  RECLAIM_PARTIAL
+  PENALTY_24H
+  TX_DECREMENT
+  BUFFER_OK
+  SKIP_LOCK_HELD
 }
 
 model UserEnergyState {
@@ -193,6 +201,10 @@ model UserEnergyState {
   inactivityHours                Int               @default(0)
   transactionsRemaining          Int               @default(0)
   inactivityPenalties            Int               @default(0)
+  lastAction                     String?           @map("last_action")
+  lastActionAt                   DateTime?         @map("last_action_at")
+  // Amount of energy currently allocated (previously a boolean flag)
+  currentAllocationCharged       Int               @default(0) @map("current_allocation_charged")
   status                         EnergyUserStatus  @default(ACTIVE)
   createdAt                      DateTime          @default(now())
   updatedAt                      DateTime          @updatedAt

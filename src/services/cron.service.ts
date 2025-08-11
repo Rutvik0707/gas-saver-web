@@ -28,12 +28,7 @@ export class CronService {
       await this.runDepositExpirer();
     });
 
-    // Monitor and deliver energy every 2 minutes
-    this.scheduleJob('energy-monitor', '0 */2 * * * *', async () => {
-      await this.runEnergyMonitor();
-    });
-
-    // Fine-grained energy usage monitoring every 1 minute (passive Phase 1)
+  // Unified energy usage monitoring & delegation every 1 minute
     this.scheduleJob('energy-usage-monitor', '0 * * * * *', async () => {
       const { energyUsageMonitorService } = await import('./energy-usage-monitor.service');
       await energyUsageMonitorService.runCycle();
@@ -43,8 +38,7 @@ export class CronService {
     logger.info('💰 Deposit processor started - processing every minute');
     logger.info('📍 Address pool maintenance started - running every hour');
     logger.info('⏳ Deposit expirer started - cleanup every 5 minutes');
-    logger.info('⚡ Energy monitor started - monitoring every 2 minutes');
-  logger.info('🔍 Energy usage monitor started - passive logging every 1 minute');
+  logger.info('🔍 Energy usage monitor started - unified delegation & reclaim every 1 minute');
     logger.info('✅ All background services initialized successfully');
   }
 
@@ -188,19 +182,6 @@ export class CronService {
     }
   }
 
-  private async runEnergyMonitor(): Promise<void> {
-    try {
-      logger.info('⚡ Running energy monitor...');
-      const { energyMonitorService } = await import('./energy-monitor.service');
-      await energyMonitorService.monitorAndDeliverEnergy();
-    } catch (error) {
-      logger.error('❌ Energy monitor failed', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-    }
-  }
-
   // Method to get job status
   getJobStatus(): { name: string; running: boolean }[] {
     return Array.from(this.jobs.entries()).map(([name]) => ({
@@ -224,9 +205,6 @@ export class CronService {
           break;
         case 'deposit-expirer':
           await this.runDepositExpirer();
-          break;
-        case 'energy-monitor':
-          await this.runEnergyMonitor();
           break;
         default:
           logger.warn(`Unknown job name: ${jobName}`);

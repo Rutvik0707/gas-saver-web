@@ -1,7 +1,18 @@
 import { prisma, logger } from '../config';
 import { energyService } from './energy.service';
 // TODO: After running `prisma generate`, import enums from @prisma/client instead of string literals
-type EnergyAllocationAction = 'DELEGATE' | 'TOP_UP' | 'RECLAIM' | 'PENALTY' | 'USAGE_DETECT' | 'OVERRIDE';
+type EnergyAllocationAction =
+  | 'DELEGATE_131K'
+  | 'TOP_UP_65K'
+  | 'RECLAIM_FULL'
+  | 'RECLAIM_PARTIAL'
+  | 'PENALTY'
+  | 'PENALTY_24H'
+  | 'TX_DECREMENT'
+  | 'USAGE_DETECT'
+  | 'BUFFER_OK'
+  | 'SKIP_LOCK_HELD'
+  | 'OVERRIDE';
 type EnergyUserStatus = 'ACTIVE' | 'SUSPENDED' | 'BANNED';
 
 /**
@@ -18,6 +29,10 @@ export class EnergyUsageMonitorService {
   private readonly MAX_FETCH = 500; // cap per cycle
   private readonly ACTIVE_MODE = true; // toggle to enable delegation/reclaim
   private readonly ANY_USAGE_COUNTS_MODE = false; // false = cumulative 65k units
+  private readonly ACTION_THROTTLE_SECONDS = 20; // don't repeat same action too fast
+
+  // simple in-memory throttle map (address:action -> timestamp ms)
+  private readonly lastActionTimes = new Map<string, number>();
 
   async runCycle(): Promise<void> {
     const start = Date.now();
@@ -49,19 +64,32 @@ export class EnergyUsageMonitorService {
     }
 
     for (const r of results) {
-  const state = states.find((s: any) => s.tronAddress === r.tronAddress);
+      const state = states.find((s: any) => s.tronAddress === r.tronAddress);
       if (!state) continue;
+      await this.processState(state, r.currentEnergy);
+    }
 
+    const duration = Date.now() - start;
+    logger.info('[EnergyMonitor] Cycle complete', { users: states.length, durationMs: duration });
+  }
+
+    private canRunAction(address: string, action: EnergyAllocationAction): boolean {
+      const key = `${address}:${action}`;
+      const last = this.lastActionTimes.get(key) || 0;
+      if ((Date.now() - last) / 1000 < this.ACTION_THROTTLE_SECONDS) return false;
+      this.lastActionTimes.set(key, Date.now());
+      return true;
+    }
+
+    private async processState(state: any, currentEnergy: number): Promise<void> {
       const prev = state.lastObservedEnergy || 0;
-      const curr = r.currentEnergy;
-      const consumed = prev > 0 ? prev - curr : 0;
+      const consumed = prev > 0 ? prev - currentEnergy : 0;
       const now = new Date();
-
       const logs: any[] = [];
+      let bufferActionTaken = false;
 
-      // Usage detection
+      // Usage detection & transaction decrement logic
       if (consumed > this.SMALL_USAGE_THRESHOLD) {
-  // @ts-ignore - model added via pending migration
         logs.push({
           tronAddress: state.tronAddress,
           userId: state.userId,
@@ -71,7 +99,6 @@ export class EnergyUsageMonitorService {
           reason: 'Usage detect',
         });
 
-        // Update counters
         let transactionsRemaining = state.transactionsRemaining;
         let cumulative = state.cumulativeConsumedSinceLastCharge + consumed;
         let chargeEvents = 0;
@@ -92,7 +119,7 @@ export class EnergyUsageMonitorService {
           logs.push({
             tronAddress: state.tronAddress,
             userId: state.userId,
-            action: 'PENALTY', // semantic: transaction decrement
+            action: 'TX_DECREMENT',
             consumedEnergy: consumed,
             transactionsRemainingAfter: transactionsRemaining,
             reason: `Transactions decremented: ${chargeEvents}`,
@@ -102,7 +129,7 @@ export class EnergyUsageMonitorService {
         state.lastUsageTime = now;
       }
 
-      // Inactivity penalty
+      // Inactivity penalty (24h)
       const refTime = state.lastUsageTime || state.lastDelegationTime;
       if (refTime) {
         const hoursInactive = (Date.now() - new Date(refTime).getTime()) / 3600000;
@@ -113,7 +140,7 @@ export class EnergyUsageMonitorService {
             logs.push({
               tronAddress: state.tronAddress,
               userId: state.userId,
-              action: 'PENALTY',
+              action: 'PENALTY_24H',
               reason: '24h inactivity penalty',
               transactionsRemainingAfter: state.transactionsRemaining,
             });
@@ -121,99 +148,121 @@ export class EnergyUsageMonitorService {
         }
       }
 
-      // Active mode delegation / reclaim decisions
       if (this.ACTIVE_MODE) {
         try {
-          await this.evaluateDelegationOrReclaim(state, curr, logs);
+          // 1. No transactions remaining -> reclaim all
+          if (state.transactionsRemaining <= 0 && currentEnergy > 0) {
+            if (this.canRunAction(state.tronAddress, 'RECLAIM_FULL')) {
+              try {
+                const result = await energyService.reclaimEnergyAmountFromAddress(state.tronAddress, currentEnergy);
+                logs.push({ tronAddress: state.tronAddress, action: 'RECLAIM_FULL', reclaimedEnergy: result.estimatedRecoveredEnergy, reason: 'No transactions remaining', txHash: result.txHash });
+                state.lastAction = 'RECLAIM_FULL';
+                state.lastActionAt = now;
+                bufferActionTaken = true;
+                state.currentAllocationCharged = 0;
+              } catch (e) {
+                logs.push({ tronAddress: state.tronAddress, action: 'OVERRIDE', reason: 'Reclaim-all failed: ' + (e instanceof Error ? e.message : 'unknown') });
+              }
+            } else {
+              logs.push({ tronAddress: state.tronAddress, action: 'SKIP_LOCK_HELD', reason: 'Throttle reclaim full' });
+            }
+          }
+          // 2. Below minimum -> delegate 131k
+          else if (currentEnergy < this.ENERGY_UNIT && state.transactionsRemaining > 0) {
+            if (this.canRunAction(state.tronAddress, 'DELEGATE_131K')) {
+              try {
+                const res = await energyService.transferEnergyDirect(state.tronAddress, this.FULL_BUFFER);
+                logs.push({ tronAddress: state.tronAddress, action: 'DELEGATE_131K', requestedEnergy: this.FULL_BUFFER, actualDelegatedEnergy: res.actualEnergy, txHash: res.txHash, reason: 'Below minimum buffer' });
+                state.lastDelegationTime = now;
+                state.lastDelegatedAmount = res.actualEnergy;
+                state.lastAction = 'DELEGATE_131K';
+                state.lastActionAt = now;
+                state.currentAllocationCharged = res.actualEnergy;
+                bufferActionTaken = true;
+              } catch (e) {
+                logs.push({ tronAddress: state.tronAddress, action: 'OVERRIDE', reason: 'Delegate failed: ' + (e instanceof Error ? e.message : 'unknown') });
+              }
+            } else {
+              logs.push({ tronAddress: state.tronAddress, action: 'SKIP_LOCK_HELD', reason: 'Throttle delegate 131k' });
+            }
+          }
+          // 3. Top up to 131k if between 65k and 131k and >1 tx remaining
+          else if (currentEnergy >= this.ENERGY_UNIT && currentEnergy < this.FULL_BUFFER && state.transactionsRemaining > 1) {
+            const deficit = this.FULL_BUFFER - currentEnergy;
+            if (deficit > 1000) {
+              if (this.canRunAction(state.tronAddress, 'TOP_UP_65K')) {
+                try {
+                  const res = await energyService.transferEnergyDirect(state.tronAddress, deficit);
+                  logs.push({ tronAddress: state.tronAddress, action: 'TOP_UP_65K', requestedEnergy: deficit, actualDelegatedEnergy: res.actualEnergy, txHash: res.txHash, reason: 'Restoring full buffer' });
+                  state.lastDelegationTime = now;
+                  state.lastDelegatedAmount = res.actualEnergy;
+                  state.lastAction = 'TOP_UP_65K';
+                  state.lastActionAt = now;
+                  state.currentAllocationCharged = (state.currentAllocationCharged || 0) + res.actualEnergy;
+                  bufferActionTaken = true;
+                } catch (e) {
+                  logs.push({ tronAddress: state.tronAddress, action: 'OVERRIDE', reason: 'Top-up failed: ' + (e instanceof Error ? e.message : 'unknown') });
+                }
+              } else {
+                logs.push({ tronAddress: state.tronAddress, action: 'SKIP_LOCK_HELD', reason: 'Throttle top-up' });
+              }
+            }
+          }
+          // 4. Partial reclaim after inactivity penalty if excess remains
+          else if (state.lastPenaltyTime && currentEnergy > this.MIN_BUFFER_AFTER_PENALTY && state.transactionsRemaining > 0) {
+            const target = this.MIN_BUFFER_AFTER_PENALTY;
+            const reclaimEnergy = currentEnergy - target;
+            if (reclaimEnergy > 1000) {
+              if (this.canRunAction(state.tronAddress, 'RECLAIM_PARTIAL')) {
+                try {
+                  const res = await energyService.reclaimEnergyAmountFromAddress(state.tronAddress, reclaimEnergy);
+                  logs.push({ tronAddress: state.tronAddress, action: 'RECLAIM_PARTIAL', reclaimedEnergy: res.estimatedRecoveredEnergy, txHash: res.txHash, reason: 'Inactivity partial reclaim' });
+                  state.lastAction = 'RECLAIM_PARTIAL';
+                  state.lastActionAt = now;
+                  state.currentAllocationCharged = target;
+                  bufferActionTaken = true;
+                } catch (e) {
+                  logs.push({ tronAddress: state.tronAddress, action: 'OVERRIDE', reason: 'Partial reclaim failed: ' + (e instanceof Error ? e.message : 'unknown') });
+                }
+              } else {
+                logs.push({ tronAddress: state.tronAddress, action: 'SKIP_LOCK_HELD', reason: 'Throttle partial reclaim' });
+              }
+            }
+          }
         } catch (e) {
           logs.push({ tronAddress: state.tronAddress, action: 'OVERRIDE', reason: 'Evaluation error: ' + (e instanceof Error ? e.message : 'unknown') });
         }
       }
 
-      // Persist logs (bulk-ish)
+      if (!bufferActionTaken) {
+        logs.push({ tronAddress: state.tronAddress, action: 'BUFFER_OK', reason: 'No buffer action needed' });
+      }
+
+      // Persist logs
       for (const l of logs) {
-        // @ts-ignore
+        // @ts-ignore - pending migration
         await (prisma as any).energyAllocationLog.create({ data: l });
       }
 
-      // Update state with new observation & mutated counters
-  // @ts-ignore - model added via pending migration
-  await (prisma as any).userEnergyState.update({
+      // Persist state
+      // @ts-ignore - model added via pending migration
+      await (prisma as any).userEnergyState.update({
         where: { tronAddress: state.tronAddress },
         data: {
-          lastObservedEnergy: curr,
-          currentEnergyCached: curr,
+          lastObservedEnergy: currentEnergy,
+          currentEnergyCached: currentEnergy,
           cumulativeConsumedSinceLastCharge: state.cumulativeConsumedSinceLastCharge,
           totalConsumedToday: state.totalConsumedToday,
-          transactionsRemaining: state.transactionsRemaining,
+            transactionsRemaining: state.transactionsRemaining,
           lastUsageTime: state.lastUsageTime,
           lastPenaltyTime: state.lastPenaltyTime,
+          lastDelegationTime: state.lastDelegationTime,
+          lastAction: state.lastAction,
+          lastActionAt: state.lastActionAt,
+          currentAllocationCharged: state.currentAllocationCharged,
           updatedAt: now,
         }
       });
-    }
-
-    const duration = Date.now() - start;
-    logger.info('[EnergyMonitor] Cycle complete', { users: states.length, durationMs: duration });
-  }
-
-    private async evaluateDelegationOrReclaim(state: any, currentEnergy: number, logs: any[]): Promise<void> {
-      if (state.transactionsRemaining <= 0) {
-        if (currentEnergy > 0) {
-          // reclaim all
-          try {
-            const result = await energyService.reclaimEnergyAmountFromAddress(state.tronAddress, currentEnergy);
-            logs.push({ tronAddress: state.tronAddress, action: 'RECLAIM', reclaimedEnergy: result.estimatedRecoveredEnergy, reason: 'No transactions remaining', txHash: result.txHash });
-          } catch (e) {
-            logs.push({ tronAddress: state.tronAddress, action: 'OVERRIDE', reason: 'Reclaim-all failed: ' + (e instanceof Error ? e.message : 'unknown') });
-          }
-        }
-        return;
-      }
-
-      // Below 65k -> delegate full buffer
-      if (currentEnergy < this.ENERGY_UNIT) {
-        const amount = this.FULL_BUFFER;
-        try {
-          const res = await energyService.transferEnergyDirect(state.tronAddress, amount);
-          logs.push({ tronAddress: state.tronAddress, action: 'DELEGATE', requestedEnergy: amount, actualDelegatedEnergy: res.actualEnergy, txHash: res.txHash, reason: 'Below minimum buffer' });
-          state.lastDelegationTime = new Date();
-          state.lastDelegatedAmount = res.actualEnergy;
-        } catch (e) {
-          logs.push({ tronAddress: state.tronAddress, action: 'OVERRIDE', reason: 'Delegate failed: ' + (e instanceof Error ? e.message : 'unknown') });
-        }
-        return;
-      }
-
-      // Between 65k and 131k and more than 1 transaction remaining -> top-up
-      if (currentEnergy >= this.ENERGY_UNIT && currentEnergy < this.FULL_BUFFER && state.transactionsRemaining > 1) {
-        const deficit = this.FULL_BUFFER - currentEnergy;
-        if (deficit > 1000) { // avoid tiny top-ups
-          try {
-            const res = await energyService.transferEnergyDirect(state.tronAddress, deficit);
-            logs.push({ tronAddress: state.tronAddress, action: 'TOP_UP', requestedEnergy: deficit, actualDelegatedEnergy: res.actualEnergy, txHash: res.txHash, reason: 'Restoring full buffer' });
-            state.lastDelegationTime = new Date();
-            state.lastDelegatedAmount = res.actualEnergy;
-          } catch (e) {
-            logs.push({ tronAddress: state.tronAddress, action: 'OVERRIDE', reason: 'Top-up failed: ' + (e instanceof Error ? e.message : 'unknown') });
-          }
-        }
-        return;
-      }
-
-      // Inactivity partial reclaim (if penalty already applied and still large balance)
-      if (state.lastPenaltyTime && currentEnergy > this.MIN_BUFFER_AFTER_PENALTY && state.transactionsRemaining > 0) {
-        const target = this.MIN_BUFFER_AFTER_PENALTY;
-        const reclaimEnergy = currentEnergy - target;
-        if (reclaimEnergy > 1000) {
-          try {
-            const res = await energyService.reclaimEnergyAmountFromAddress(state.tronAddress, reclaimEnergy);
-            logs.push({ tronAddress: state.tronAddress, action: 'RECLAIM', reclaimedEnergy: res.estimatedRecoveredEnergy, txHash: res.txHash, reason: 'Inactivity partial reclaim' });
-          } catch (e) {
-            logs.push({ tronAddress: state.tronAddress, action: 'OVERRIDE', reason: 'Partial reclaim failed: ' + (e instanceof Error ? e.message : 'unknown') });
-          }
-        }
-      }
     }
 }
 
