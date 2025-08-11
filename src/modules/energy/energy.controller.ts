@@ -99,4 +99,21 @@ export class EnergyController {
       return res.status(500).json(apiUtils.error('Failed to estimate energy delegation'));
     }
   }
+
+  async reclaimEnergy(req: Request, res: Response) {
+    try {
+      const userId = (req as any).user?.id; // Optional for auditing
+      const tronAddress = req.body?.tronAddress || req.query?.tronAddress;
+      if (!tronAddress) {
+        return res.status(400).json(apiUtils.error('tronAddress is required'));
+      }
+      const result = await this.energyTransferService.reclaimEnergy(tronAddress);
+      res.json(apiUtils.success('Energy reclaimed successfully', result));
+    } catch (error) {
+      if (error instanceof BaseException) {
+        return res.status(error.statusCode).json(apiUtils.error(error.message));
+      }
+      return res.status(500).json(apiUtils.error('Failed to reclaim energy'));
+    }
+  }
 }

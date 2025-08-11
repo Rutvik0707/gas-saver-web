@@ -1,6 +1,6 @@
 import { energyService } from '../../services/energy.service';
 import { logger, config } from '../../config';
-import { EnergyTransferResponse, AvailableEnergyResponse, SystemWalletEnergyInfo, EnergyEstimateResponse } from './energy.types';
+import { EnergyTransferResponse, AvailableEnergyResponse, SystemWalletEnergyInfo, EnergyEstimateResponse, EnergyReclaimResponse } from './energy.types';
 import { BadRequestException, InternalServerException, BaseException } from '../../shared/exceptions';
 
 export class EnergyTransferService {
@@ -179,5 +179,29 @@ export class EnergyTransferService {
     };
 
     return response;
+  }
+
+  /**
+   * Reclaim (undelegate) maximum energy from a given user address.
+   */
+  async reclaimEnergy(tronAddress: string): Promise<EnergyReclaimResponse> {
+    if (!tronAddress) {
+      throw new BadRequestException('tronAddress is required');
+    }
+    try {
+      const result = await energyService.reclaimMaxEnergyFromAddress(tronAddress);
+      return {
+        txHash: result.txHash,
+        tronAddress,
+        reclaimedSun: result.reclaimedSun,
+        reclaimedTrx: parseFloat(result.reclaimedTrx.toFixed(6)),
+        estimatedRecoveredEnergy: result.estimatedRecoveredEnergy,
+        ratioUsed: parseFloat(result.ratioUsed.toFixed(6)),
+        timestamp: new Date(),
+        notes: ['Progressive undelegation heuristic used']
+      };
+    } catch (err) {
+      throw new InternalServerException(err instanceof Error ? err.message : 'Failed to reclaim energy');
+    }
   }
 }

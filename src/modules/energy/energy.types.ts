@@ -56,3 +56,14 @@ export interface EnergyEstimateResponse {
   timestamp: Date;
   notes: string[];
 }
+
+export interface EnergyReclaimResponse {
+  txHash: string;
+  tronAddress: string; // address energy was reclaimed from
+  reclaimedSun: number; // SUN (TRX * 1e6) undelegated
+  reclaimedTrx: number; // TRX undelegated
+  estimatedRecoveredEnergy: number; // estimated energy released back (ratio * reclaimedTrx)
+  ratioUsed: number; // energyPerTrx used for estimate
+  timestamp: Date;
+  notes?: string[];
+}

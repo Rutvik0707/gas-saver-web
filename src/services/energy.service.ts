@@ -906,6 +906,80 @@ export class EnergyService {
       throw error;
     }
   }
+
+  /**
+   * Reclaim (undelegate) as much ENERGY resource as possible from a target address back to system wallet.
+   * Tron Stake2.0 uses undelegateResource(amountSun, receiver, resource, owner)
+   * We must know how much was delegated; TronWeb doesn't expose per-receiver delegated amount easily.
+   * Strategy: Attempt progressive binary search style undelegation until success.
+   */
+  async reclaimMaxEnergyFromAddress(targetAddress: string): Promise<{
+    txHash: string; reclaimedSun: number; reclaimedTrx: number; ratioUsed: number; estimatedRecoveredEnergy: number;
+  }> {
+    if (!tronUtils.isAddress(targetAddress)) {
+      throw new Error('Invalid target TRON address');
+    }
+
+    const systemWalletAddress = config.systemWallet.address;
+    const energyPerTrx = await this.getCachedEnergyPerTrx();
+
+    // We'll try to undelegate in descending attempts. Start with a high guess: stakedForEnergy.
+    const stakedBalance = await this.getStakedBalance(systemWalletAddress);
+    const maxSun = stakedBalance.stakedForEnergy; // upper hard cap
+
+    if (maxSun <= 0) {
+      throw new Error('No staked TRX for energy to reclaim');
+    }
+
+    // Attempt undelegation: because we don't track per-address delegated amount, start with max and reduce on failure.
+    // Heuristic list of fractions.
+    const attemptPercents = [1, 0.75, 0.5, 0.25, 0.1, 0.05, 0.02, 0.01];
+    let lastError: any;
+    for (const p of attemptPercents) {
+      const amountSun = Math.floor(maxSun * p);
+      if (amountSun < 1) continue;
+      try {
+        const tx = await (systemTronWeb as any).transactionBuilder.undelegateResource(
+          amountSun,
+          targetAddress,
+          'ENERGY',
+          systemWalletAddress
+        );
+        const signed = await (systemTronWeb as any).trx.sign(tx);
+        const sent = await (systemTronWeb as any).trx.sendRawTransaction(signed);
+        if (!sent.result) {
+          lastError = new Error('Broadcast failed ' + (sent.message || sent.code));
+          continue;
+        }
+        const reclaimedSun = amountSun;
+        const reclaimedTrx = tronUtils.fromSun(reclaimedSun);
+        const estimatedRecoveredEnergy = Math.floor(reclaimedTrx * energyPerTrx);
+        logger.info('Energy undelegation successful', {
+          targetAddress,
+            reclaimedSun,
+            reclaimedTrx,
+            txHash: sent.txid,
+            attemptPercent: p,
+        });
+        return {
+          txHash: sent.txid,
+          reclaimedSun,
+          reclaimedTrx,
+          ratioUsed: energyPerTrx,
+          estimatedRecoveredEnergy,
+        };
+      } catch (err) {
+        lastError = err;
+        logger.warn('Undelegation attempt failed', {
+          percent: p,
+          amountSun,
+          error: err instanceof Error ? err.message : 'Unknown error'
+        });
+        continue;
+      }
+    }
+    throw new Error('Failed to undelegate energy: ' + (lastError instanceof Error ? lastError.message : 'Unknown error'));
+  }
 }
 
 export const energyService = new EnergyService();

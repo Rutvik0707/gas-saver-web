@@ -141,6 +141,35 @@ import { energyTransferSchema } from './energy.types';
  *           items:
  *             type: string
  */
+/**
+ * @swagger
+ * /energy/reclaim:
+ *   post:
+ *     summary: Reclaim (undelegate) maximum energy previously delegated to an address
+ *     tags: [Energy]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [tronAddress]
+ *             properties:
+ *               tronAddress:
+ *                 type: string
+ *                 description: TRON address from which to reclaim delegation
+ *     responses:
+ *       200:
+ *         description: Energy reclaimed successfully
+ *       400:
+ *         description: Invalid request
+ *       401:
+ *         description: User not authenticated
+ *       500:
+ *         description: Internal server error
+ */
 
 /**
  * @swagger
@@ -344,6 +373,13 @@ export function createEnergyRoutes(): Router {
     '/estimate',
     authMiddleware,
     energyController.estimateEnergy.bind(energyController)
+  );
+
+  // Reclaim (undelegate) energy endpoint
+  router.post(
+    '/reclaim',
+    authMiddleware,
+    energyController.reclaimEnergy.bind(energyController)
   );
 
   return router;
