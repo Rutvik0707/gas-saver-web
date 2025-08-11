@@ -34,6 +34,8 @@ model User {
   feedbacks     Feedback[]
   tronAddresses UserTronAddress[]
   energyDeliveries EnergyDelivery[]
+  energyStates  UserEnergyState[]
+  energyLogs    EnergyAllocationLog[]
 
   @@map("users")
 }
@@ -156,6 +158,73 @@ enum TransactionStatus {
   PENDING
   COMPLETED
   FAILED
+}
+
+// Energy monitoring user status
+enum EnergyUserStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+// Actions logged for energy allocation lifecycle
+enum EnergyAllocationAction {
+  DELEGATE
+  TOP_UP
+  RECLAIM
+  PENALTY
+  USAGE_DETECT
+  OVERRIDE
+}
+
+model UserEnergyState {
+  id                             String            @id @default(cuid())
+  userId                         String
+  tronAddress                    String            @unique
+  currentEnergyCached            Int               @default(0)
+  lastDelegatedAmount            Int               @default(0)
+  lastDelegationTxHash           String?
+  lastDelegationTime             DateTime?
+  cumulativeConsumedSinceLastCharge Int            @default(0)
+  totalConsumedToday             Int               @default(0)
+  lastObservedEnergy             Int               @default(0)
+  lastUsageTime                  DateTime?
+  lastPenaltyTime                DateTime?
+  inactivityHours                Int               @default(0)
+  transactionsRemaining          Int               @default(0)
+  inactivityPenalties            Int               @default(0)
+  status                         EnergyUserStatus  @default(ACTIVE)
+  createdAt                      DateTime          @default(now())
+  updatedAt                      DateTime          @updatedAt
+  user                           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  logs                           EnergyAllocationLog[]
+
+  @@index([userId])
+  @@index([status, transactionsRemaining])
+  @@map("user_energy_state")
+}
+
+model EnergyAllocationLog {
+  id                          String                  @id @default(cuid())
+  userId                      String?
+  tronAddress                 String
+  action                      EnergyAllocationAction
+  requestedEnergy             Int?
+  actualDelegatedEnergy       Int?
+  reclaimedEnergy             Int?
+  consumedEnergy              Int?
+  transactionsRemainingAfter  Int?
+  ratioUsed                   Float?
+  txHash                      String?
+  reason                      String?
+  createdAt                   DateTime                @default(now())
+  user                        User?                   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  state                       UserEnergyState?        @relation(fields: [tronAddress], references: [tronAddress], onDelete: Cascade, map: "StateOnAddress")
+
+  @@index([userId])
+  @@index([tronAddress])
+  @@index([action])
+  @@map("energy_allocation_log")
 }
 
 model Admin {

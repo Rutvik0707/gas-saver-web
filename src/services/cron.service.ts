@@ -33,11 +33,18 @@ export class CronService {
       await this.runEnergyMonitor();
     });
 
+    // Fine-grained energy usage monitoring every 1 minute (passive Phase 1)
+    this.scheduleJob('energy-usage-monitor', '0 * * * * *', async () => {
+      const { energyUsageMonitorService } = await import('./energy-usage-monitor.service');
+      await energyUsageMonitorService.runCycle();
+    });
+
     logger.info('🔄 Transaction detector started - scanning every 30 seconds');
     logger.info('💰 Deposit processor started - processing every minute');
     logger.info('📍 Address pool maintenance started - running every hour');
     logger.info('⏳ Deposit expirer started - cleanup every 5 minutes');
     logger.info('⚡ Energy monitor started - monitoring every 2 minutes');
+  logger.info('🔍 Energy usage monitor started - passive logging every 1 minute');
     logger.info('✅ All background services initialized successfully');
   }
 

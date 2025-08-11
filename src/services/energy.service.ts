@@ -980,6 +980,58 @@ export class EnergyService {
     }
     throw new Error('Failed to undelegate energy: ' + (lastError instanceof Error ? lastError.message : 'Unknown error'));
   }
+
+  /**
+   * Reclaim (undelegate) a target ENERGY amount (best-effort) from an address.
+   * targetEnergy is in ENERGY units. We convert to TRX using ratio and attempt a single undelegation.
+   * Falls back to max reclaim if specific amount fails.
+   */
+  async reclaimEnergyAmountFromAddress(targetAddress: string, targetEnergy: number): Promise<{
+    txHash: string; reclaimedSun: number; reclaimedTrx: number; ratioUsed: number; estimatedRecoveredEnergy: number;
+  }> {
+    if (!tronUtils.isAddress(targetAddress)) {
+      throw new Error('Invalid target TRON address');
+    }
+    if (targetEnergy <= 0) {
+      throw new Error('targetEnergy must be positive');
+    }
+    const systemWalletAddress = config.systemWallet.address;
+    const energyPerTrx = await this.getCachedEnergyPerTrx();
+    const trxNeeded = targetEnergy / energyPerTrx;
+    const bufferedTrx = trxNeeded * 1.02; // small buffer
+    // Convert to SUN and clamp to stakedForEnergy
+    const staked = await this.getStakedBalance(systemWalletAddress);
+    const stakedTrx = tronUtils.fromSun(staked.stakedForEnergy);
+    const sunAmount = Math.min(staked.stakedForEnergy, Math.floor(tronUtils.toSun(bufferedTrx)));
+    if (sunAmount <= 0) {
+      throw new Error('No staked TRX available for undelegation');
+    }
+    try {
+      const tx = await (systemTronWeb as any).transactionBuilder.undelegateResource(
+        sunAmount,
+        targetAddress,
+        'ENERGY',
+        systemWalletAddress
+      );
+      const signed = await (systemTronWeb as any).trx.sign(tx);
+      const sent = await (systemTronWeb as any).trx.sendRawTransaction(signed);
+      if (!sent.result) {
+        throw new Error(sent.message || sent.code || 'undelegate failed');
+      }
+      const reclaimedTrx = tronUtils.fromSun(sunAmount);
+      const estimatedRecoveredEnergy = Math.floor(reclaimedTrx * energyPerTrx);
+      return {
+        txHash: sent.txid,
+        reclaimedSun: sunAmount,
+        reclaimedTrx,
+        ratioUsed: energyPerTrx,
+        estimatedRecoveredEnergy,
+      };
+    } catch (e) {
+      // Fallback to max reclaim
+      return this.reclaimMaxEnergyFromAddress(targetAddress);
+    }
+  }
 }
 
 export const energyService = new EnergyService();

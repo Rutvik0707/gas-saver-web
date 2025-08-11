@@ -87,7 +87,19 @@
       "Bash(psql:*)",
       "Bash(cd:*)",
       "Bash(cd:*)",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(DATABASE_URL=\"postgresql://slnexus:SLNEXUS2024@sl-nexus-dev-pg.c9mc0886opd4.ap-south-1.rds.amazonaws.com:5432/energy_broker_db?schema=public\" npx prisma migrate dev --name add_energy_monitoring)",
+      "Bash(DATABASE_URL=\"postgresql://slnexus:SLNEXUS2024@sl-nexus-dev-pg.c9mc0886opd4.ap-south-1.rds.amazonaws.com:5432/energy_broker_db?schema=public\" npx prisma migrate status)",
+      "Bash(DATABASE_URL=\"postgresql://slnexus:SLNEXUS2024@sl-nexus-dev-pg.c9mc0886opd4.ap-south-1.rds.amazonaws.com:5432/energy_broker_db?schema=public\" npx prisma migrate deploy)",
+      "Bash(DATABASE_URL=\"postgresql://slnexus:SLNEXUS2024@sl-nexus-dev-pg.c9mc0886opd4.ap-south-1.rds.amazonaws.com:5432/energy_broker_db?schema=public\" npx prisma migrate resolve --applied 20250121_add_energy_transfer_tracking)",
+      "Bash(DATABASE_URL=\"postgresql://slnexus:SLNEXUS2024@sl-nexus-dev-pg.c9mc0886opd4.ap-south-1.rds.amazonaws.com:5432/energy_broker_db?schema=public\" npx prisma migrate resolve --applied 20250125000000_add_transaction_toaddress_index)",
+      "Bash(for migration in 20250125100000_add_transaction_fields_to_deposits 20250125110000_add_energy_rates_table 20250718130014_init 20250719011817_make_private_key_optional 20250720191033_add_deposit_cancellation_fields 20250721071956_add_tron_address_management 20250731000000_add_processed_transactions)",
+      "Bash(do DATABASE_URL=\"postgresql://slnexus:SLNEXUS2024@sl-nexus-dev-pg.c9mc0886opd4.ap-south-1.rds.amazonaws.com:5432/energy_broker_db?schema=public\" npx prisma migrate resolve --applied $migration)",
+      "Bash(done)",
+      "Bash(DATABASE_URL=\"postgresql://slnexus:SLNEXUS2024@sl-nexus-dev-pg.c9mc0886opd4.ap-south-1.rds.amazonaws.com:5432/energy_broker_db?schema=public\" npx prisma migrate dev --name add_energy_monitoring --create-only)",
+      "Bash(DATABASE_URL=\"postgresql://slnexus:SLNEXUS2024@sl-nexus-dev-pg.c9mc0886opd4.ap-south-1.rds.amazonaws.com:5432/energy_broker_db?schema=public\" npx prisma generate)",
+      "Bash(DATABASE_URL=\"postgresql://slnexus:SLNEXUS2024@sl-nexus-dev-pg.c9mc0886opd4.ap-south-1.rds.amazonaws.com:5432/energy_broker_db?schema=public\" npx prisma db push)",
+      "Bash(DATABASE_URL=\"postgresql://gassaverBETAdb:gasSaverBETA2026@gassaver-beta-db.cxy06y2aw9cy.ap-south-1.rds.amazonaws.com:5432/tronBeta?schema=public\" npx prisma db push)"
     ],
     "deny": []
   }
