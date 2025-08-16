@@ -32,8 +32,8 @@ export class PricingService {
    * Calculate live energy price based on market conditions
    * 
    * CALCULATION LOGIC:
-   * - Based on user feedback: 65,000 energy ≈ 4 TRX
-   * - This means: 1 energy ≈ 61.5 SUN
+   * - Based on user feedback: 65,500 energy ≈ 4 TRX
+   * - This means: 1 energy ≈ 61 SUN
    * - We'll use a dynamic calculation based on TRX price and market conditions
    * 
    * In production, this could fetch from:
@@ -44,10 +44,10 @@ export class PricingService {
   private async calculateLiveEnergyPrice(trxPrice: number): Promise<number> {
     try {
       // Based on adjusted pricing for 1:1 ratio (50 transactions = 50 USDT):
-      // 50 transactions = 3,250,000 energy
+      // 50 transactions = 3,275,000 energy (50 × 65,500)
       // Target: ~50 USDT = ~166.67 TRX (at $0.30/TRX)
       // 166.67 TRX = 166,670,000 SUN
-      // Therefore: 1 energy = 166,670,000 / 3,250,000 = ~51.3 SUN
+      // Therefore: 1 energy = 166,670,000 / 3,275,000 = ~50.9 SUN
       
       // Using fixed 47 SUN per energy for 1:1 transaction to USDT ratio
       const baseEnergyPriceSun = 47;
@@ -146,8 +146,9 @@ export class PricingService {
       // Get current prices
       const prices = await this.getPrices();
 
-      // Calculate energy requirement per transaction
-      const energyPerTransaction = energyService.calculateRequiredEnergy(usdtAmountPerTx);
+      // Get the fixed energy rate per transaction from database
+      const energyRate = await energyRateService.getCurrentRate();
+      const energyPerTransaction = energyRate.energyPerTransaction;
 
       // Calculate total energy needed
       const totalEnergyRequired = energyPerTransaction * numberOfTransactions;

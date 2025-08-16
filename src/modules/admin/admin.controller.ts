@@ -9,11 +9,40 @@ import {
   ChangePasswordDto,
 } from './admin.types';
 import { AuthenticatedAdminRequest } from '../../middleware/admin-auth.middleware';
+import { logCustomAdminAction, AdminActions, EntityTypes } from '../../middleware/audit-trail.middleware';
+import { prisma } from '../../config/database';
 
 export class AdminController {
   async login(req: Request, res: Response): Promise<void> {
     const loginData = req.body;
     const result = await adminService.loginAdmin(loginData);
+    
+    // Log the login activity
+    try {
+      const admin = await prisma.admin.findUnique({
+        where: { email: loginData.email }
+      });
+      
+      if (admin) {
+        await prisma.adminActivityLog.create({
+          data: {
+            adminId: admin.id,
+            adminEmail: admin.email,
+            action: AdminActions.LOGIN,
+            entityType: EntityTypes.ADMIN,
+            entityId: admin.id,
+            ipAddress: req.ip || req.connection.remoteAddress || 'unknown',
+            userAgent: req.headers['user-agent'] || 'unknown',
+            metadata: {
+              timestamp: new Date().toISOString(),
+            }
+          }
+        });
+      }
+    } catch (error) {
+      // Don't fail login if logging fails
+      console.error('Failed to log login activity:', error);
+    }
     
     res.json(apiUtils.success('Admin login successful', result));
   }

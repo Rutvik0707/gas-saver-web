@@ -431,7 +431,9 @@ export class EnergyService {
   async getEnergyBalance(address: string): Promise<number> {
     try {
       const accountResources = await systemTronWeb.trx.getAccountResources(address);
-      return accountResources.EnergyLimit || 0;
+      const limit = accountResources.EnergyLimit || 0;
+      const used = accountResources.EnergyUsed || 0;
+      return Math.max(0, limit - used); // Return available energy, not just limit
     } catch (error) {
       logger.error('Failed to get energy balance', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -454,6 +456,21 @@ export class EnergyService {
     }
   }
 
+  async getUserEnergy(address: string): Promise<number> {
+    try {
+      const accountResources = await systemTronWeb.trx.getAccountResources(address);
+      const limit = accountResources.EnergyLimit || 0;
+      const used = accountResources.EnergyUsed || 0;
+      return Math.max(0, limit - used); // Return available energy
+    } catch (error) {
+      logger.error('Failed to get user energy', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        address,
+      });
+      return 0;
+    }
+  }
+
   async getUserEnergyInfo(userTronAddress: string): Promise<{
     energyBalance: number;
     bandwidthBalance: number;
@@ -464,8 +481,8 @@ export class EnergyService {
       const accountResources = await systemTronWeb.trx.getAccountResources(userTronAddress);
       
       return {
-        energyBalance: accountResources.EnergyUsed || 0,
-        bandwidthBalance: accountResources.NetUsed || 0,
+        energyBalance: Math.max(0, (accountResources.EnergyLimit || 0) - (accountResources.EnergyUsed || 0)),
+        bandwidthBalance: Math.max(0, (accountResources.NetLimit || 0) - (accountResources.NetUsed || 0)),
         totalEnergyLimit: accountResources.EnergyLimit || 0,
         totalNetLimit: accountResources.NetLimit || 0,
       };
@@ -796,11 +813,28 @@ export class EnergyService {
     energyAmount: number,
     userId?: string
   ): Promise<{ txHash: string; actualEnergy: number; delegatedTrx: number }> {
+    const startTime = Date.now();
+    const operationId = `transfer_${Date.now()}_${tronAddress.substring(0, 8)}`;
+    
     try {
       logger.info('Direct energy transfer initiated', {
         tronAddress,
         energyAmount,
         userId: userId || 'anonymous',
+        operationId,
+      });
+      
+      // Log transfer start
+      await energyMonitoringLogger.log({
+        userId,
+        tronAddress,
+        action: 'DELEGATE',
+        logLevel: 'INFO',
+        metadata: {
+          operationId,
+          requestedEnergy: energyAmount,
+          status: 'initiated'
+        }
       });
 
       // Validate inputs
@@ -866,6 +900,24 @@ export class EnergyService {
           });
         }
 
+        // Log successful transfer
+        await energyMonitoringLogger.log({
+          userId,
+          tronAddress,
+          action: 'DELEGATE',
+          logLevel: 'INFO',
+          energyDelta: actualEnergy,
+          txHash,
+          apiDurationMs: Date.now() - startTime,
+          metadata: {
+            operationId,
+            requestedEnergy: energyAmount,
+            actualEnergy,
+            delegatedTrx: finalTrxAmount,
+            status: 'completed'
+          }
+        });
+        
         logger.info('Direct energy transfer successful', {
           tronAddress,
           requestedEnergy: energyAmount,
@@ -873,6 +925,8 @@ export class EnergyService {
           delegatedTrx: finalTrxAmount,
           txHash,
           userId: userId || 'anonymous',
+          duration: Date.now() - startTime,
+          operationId,
         });
 
         return {
@@ -896,11 +950,31 @@ export class EnergyService {
       }
 
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      
+      // Log transfer failure
+      await energyMonitoringLogger.log({
+        userId,
+        tronAddress,
+        action: 'DELEGATE',
+        logLevel: 'ERROR',
+        errorMessage,
+        errorStack: error instanceof Error ? error.stack : undefined,
+        apiDurationMs: Date.now() - startTime,
+        metadata: {
+          operationId,
+          requestedEnergy: energyAmount,
+          status: 'failed'
+        }
+      });
+      
       logger.error('Direct energy transfer failed', {
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: errorMessage,
         tronAddress,
         energyAmount,
         userId: userId || 'anonymous',
+        duration: Date.now() - startTime,
+        operationId,
       });
       
       throw error;
@@ -989,12 +1063,27 @@ export class EnergyService {
   async reclaimEnergyAmountFromAddress(targetAddress: string, targetEnergy: number): Promise<{
     txHash: string; reclaimedSun: number; reclaimedTrx: number; ratioUsed: number; estimatedRecoveredEnergy: number;
   }> {
+    const startTime = Date.now();
+    const operationId = `reclaim_${Date.now()}_${targetAddress.substring(0, 8)}`;
+    
     if (!tronUtils.isAddress(targetAddress)) {
       throw new Error('Invalid target TRON address');
     }
     if (targetEnergy <= 0) {
       throw new Error('targetEnergy must be positive');
     }
+    
+    // Log reclaim start
+    await energyMonitoringLogger.log({
+      tronAddress: targetAddress,
+      action: 'RECLAIM',
+      logLevel: 'INFO',
+      metadata: {
+        operationId,
+        targetEnergy,
+        status: 'initiated'
+      }
+    });
     const systemWalletAddress = config.systemWallet.address;
     const energyPerTrx = await this.getCachedEnergyPerTrx();
     const trxNeeded = targetEnergy / energyPerTrx;
@@ -1020,6 +1109,34 @@ export class EnergyService {
       }
       const reclaimedTrx = tronUtils.fromSun(sunAmount);
       const estimatedRecoveredEnergy = Math.floor(reclaimedTrx * energyPerTrx);
+      
+      // Log successful reclaim
+      await energyMonitoringLogger.log({
+        tronAddress: targetAddress,
+        action: 'RECLAIM',
+        logLevel: 'INFO',
+        energyDelta: -estimatedRecoveredEnergy,
+        txHash: sent.txid,
+        apiDurationMs: Date.now() - startTime,
+        metadata: {
+          operationId,
+          targetEnergy,
+          reclaimedSun: sunAmount,
+          reclaimedTrx,
+          estimatedRecoveredEnergy,
+          status: 'completed'
+        }
+      });
+      
+      logger.info('Energy reclaim successful', {
+        targetAddress,
+        targetEnergy,
+        estimatedRecoveredEnergy,
+        txHash: sent.txid,
+        duration: Date.now() - startTime,
+        operationId,
+      });
+      
       return {
         txHash: sent.txid,
         reclaimedSun: sunAmount,
@@ -1028,6 +1145,30 @@ export class EnergyService {
         estimatedRecoveredEnergy,
       };
     } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : 'Unknown error';
+      
+      // Log reclaim failure before fallback
+      await energyMonitoringLogger.log({
+        tronAddress: targetAddress,
+        action: 'RECLAIM',
+        logLevel: 'WARN',
+        errorMessage,
+        apiDurationMs: Date.now() - startTime,
+        metadata: {
+          operationId,
+          targetEnergy,
+          status: 'fallback_to_max',
+          reason: 'Specific amount reclaim failed, trying max reclaim'
+        }
+      });
+      
+      logger.warn('Specific energy reclaim failed, falling back to max reclaim', {
+        targetAddress,
+        targetEnergy,
+        error: errorMessage,
+        operationId,
+      });
+      
       // Fallback to max reclaim
       return this.reclaimMaxEnergyFromAddress(targetAddress);
     }

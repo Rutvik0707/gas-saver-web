@@ -36,6 +36,7 @@ model User {
   energyDeliveries EnergyDelivery[]
   energyStates  UserEnergyState[]
   energyLogs    EnergyAllocationLog[]
+  monitoringLogs EnergyMonitoringLog[]
 
   @@map("users")
 }
@@ -205,14 +206,21 @@ model UserEnergyState {
   lastActionAt                   DateTime?         @map("last_action_at")
   // Amount of energy currently allocated (previously a boolean flag)
   currentAllocationCharged       Int               @default(0) @map("current_allocation_charged")
+  // New fields for enhanced monitoring
+  energyHistory                  Json?             @map("energy_history") // Array of {timestamp, energy, source}
+  lastBlockchainCheck            DateTime?         @map("last_blockchain_check")
+  apiErrorsCount                 Int               @default(0) @map("api_errors_count")
+  monitoringMetadata             Json?             @map("monitoring_metadata")
   status                         EnergyUserStatus  @default(ACTIVE)
   createdAt                      DateTime          @default(now())
   updatedAt                      DateTime          @updatedAt
   user                           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   logs                           EnergyAllocationLog[]
+  monitoringLogs                 EnergyMonitoringLog[]
 
   @@index([userId])
   @@index([status, transactionsRemaining])
+  @@index([lastBlockchainCheck])
   @@map("user_energy_state")
 }
 
@@ -250,8 +258,36 @@ model Admin {
   lastLoginAt     DateTime?   @map("last_login_at")
   createdAt       DateTime    @default(now()) @map("created_at")
   updatedAt       DateTime    @updatedAt @map("updated_at")
+  
+  // Relations
+  activityLogs    AdminActivityLog[]
 
   @@map("admins")
+}
+
+model AdminActivityLog {
+  id              String      @id @default(cuid())
+  adminId         String      @map("admin_id")
+  adminEmail      String      @map("admin_email")
+  action          String      // LOGIN, CREATE_USER, UPDATE_USER, DELETE_USER, UPDATE_DEPOSIT, etc.
+  entityType      String?     @map("entity_type") // USER, DEPOSIT, TRANSACTION, ADMIN, etc.
+  entityId        String?     @map("entity_id")
+  beforeState     Json?       @map("before_state")
+  afterState      Json?       @map("after_state")
+  ipAddress       String?     @map("ip_address")
+  userAgent       String?     @map("user_agent")
+  metadata        Json?       // Additional context data
+  createdAt       DateTime    @default(now()) @map("created_at")
+  
+  // Relations
+  admin           Admin       @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  
+  @@index([adminId])
+  @@index([action])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([createdAt])
+  @@map("admin_activity_logs")
 }
 
 enum AdminRole {
@@ -331,4 +367,36 @@ model ProcessedTransaction {
   @@index([blockTimestamp])
   @@index([processedAt])
   @@map("processed_transactions")
+}
+
+model EnergyMonitoringLog {
+  id                String            @id @default(cuid())
+  userId            String?           @map("user_id")
+  tronAddress       String            @map("tron_address")
+  action            String            // CHECK_ENERGY, DELEGATE, RECLAIM, ERROR, etc.
+  logLevel          String            @default("INFO") @map("log_level") // DEBUG, INFO, WARN, ERROR
+  energyBefore      Int?              @map("energy_before")
+  energyAfter       Int?              @map("energy_after")
+  energyDelta       Int?              @map("energy_delta")
+  txHash            String?           @map("tx_hash")
+  apiResponse       Json?             @map("api_response") // Full blockchain API response
+  apiDurationMs     Int?              @map("api_duration_ms")
+  decisionReason    String?           @map("decision_reason") // Why action was taken
+  errorMessage      String?           @map("error_message")
+  errorStack        String?           @map("error_stack")
+  metadata          Json?             // Additional context data
+  cycleId           String?           @map("cycle_id") // To group logs from same cron cycle
+  createdAt         DateTime          @default(now()) @map("created_at")
+  
+  // Relations
+  user              User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  energyState       UserEnergyState?  @relation(fields: [tronAddress], references: [tronAddress], onDelete: Cascade, map: "MonitorLogOnAddress")
+
+  @@index([userId])
+  @@index([tronAddress])
+  @@index([action])
+  @@index([logLevel])
+  @@index([cycleId])
+  @@index([createdAt])
+  @@map("energy_monitoring_logs")
 }

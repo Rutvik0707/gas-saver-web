@@ -78,16 +78,20 @@ export class DepositService {
       const transactionCost = await pricingService.getTransactionUSDTCost(numberOfTransactions);
       const calculatedUsdtAmount = transactionCost.costInUSDT;
 
+      // Get current energy rate
+      const energyRate = await energyRateService.getCurrentRate();
+      const energyPerTransaction = energyRate.energyPerTransaction;
+
       logger.info('💰 Deposit initiation - calculated USDT amount from transactions', {
         userId,
         numberOfTransactions,
         calculatedUsdtAmount,
-        energyPerTransaction: 65,
-        totalEnergyPaidFor: 65 * numberOfTransactions,
-        actualEnergyToDelegate: 65,
+        energyPerTransaction,
+        totalEnergyPaidFor: energyPerTransaction * numberOfTransactions,
+        actualEnergyToDelegate: energyPerTransaction,
         energyRecipientAddress,
         source: tronAddress ? 'user_provided' : energyRecipientAddress ? 'user_profile' : 'none',
-        note: 'User pays for multiple transactions worth of energy but receives 65 energy per deposit',
+        note: `User pays for multiple transactions worth of energy but receives ${energyPerTransaction} energy per deposit`,
         timestamp: transactionCost.timestamp
       });
 
@@ -534,6 +538,65 @@ export class DepositService {
                 isActive: true,
               }
             });
+            
+            // 4. Initialize or update UserEnergyState for monitoring
+            logger.info('🔋 Initializing/Updating UserEnergyState...', {
+              userId: deposit.userId,
+              tronAddress: deposit.energyRecipientAddress,
+              transactionsToAdd: numberOfTransactions,
+            });
+            
+            const existingState = await tx.userEnergyState.findUnique({
+              where: { tronAddress: deposit.energyRecipientAddress }
+            });
+            
+            if (existingState) {
+              // Update existing state - add transactions
+              await tx.userEnergyState.update({
+                where: { tronAddress: deposit.energyRecipientAddress },
+                data: {
+                  transactionsRemaining: {
+                    increment: numberOfTransactions
+                  },
+                  status: 'ACTIVE',
+                  updatedAt: new Date(),
+                  monitoringMetadata: {
+                    ...(existingState.monitoringMetadata as any || {}),
+                    lastDepositId: deposit.id,
+                    lastDepositAt: new Date().toISOString(),
+                    totalDeposits: ((existingState.monitoringMetadata as any)?.totalDeposits || 0) + 1
+                  }
+                }
+              });
+              
+              logger.info('✅ Updated existing UserEnergyState', {
+                tronAddress: deposit.energyRecipientAddress,
+                transactionsAdded: numberOfTransactions,
+                newTotal: existingState.transactionsRemaining + numberOfTransactions,
+              });
+            } else {
+              // Create new state
+              await tx.userEnergyState.create({
+                data: {
+                  userId: deposit.userId,
+                  tronAddress: deposit.energyRecipientAddress,
+                  transactionsRemaining: numberOfTransactions,
+                  status: 'ACTIVE',
+                  monitoringMetadata: {
+                    createdFrom: 'deposit_processing',
+                    firstDepositId: deposit.id,
+                    firstDepositAt: new Date().toISOString(),
+                    totalDeposits: 1
+                  }
+                }
+              });
+              
+              logger.info('✅ Created new UserEnergyState', {
+                userId: deposit.userId,
+                tronAddress: deposit.energyRecipientAddress,
+                initialTransactions: numberOfTransactions,
+              });
+            }
           }
           
           logger.info(`💰 Deposit processed successfully within transaction`, {

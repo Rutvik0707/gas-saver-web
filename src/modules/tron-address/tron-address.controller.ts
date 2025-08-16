@@ -510,7 +510,7 @@ export class TronAddressController {
    *                             example: "ENERGY_RECEIVED"
    *                           energyAmount:
    *                             type: number
-   *                             example: 65000
+   *                             example: 65500
    *                           usdtAmount:
    *                             type: string
    *                             example: "10.50"

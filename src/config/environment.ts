@@ -74,7 +74,7 @@ const envSchema = z.object({
   FRONTEND_URL: z.string().url().default('https://energy-demo.scriptlanes.in'),
 
   // Energy Configuration
-  USDT_TRANSFER_ENERGY_BASE: z.string().transform(Number).default('65000'),
+  USDT_TRANSFER_ENERGY_BASE: z.string().transform(Number).default('65500'),
   ENERGY_BUFFER_PERCENTAGE: z.string().transform(Number).default('0.2'),
   ENERGY_PRICE_SUN: z.string().transform(Number).default('420'),
   MIN_ENERGY_DELEGATION: z.string().transform(Number).default('1'),

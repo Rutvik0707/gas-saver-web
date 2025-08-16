@@ -47,7 +47,7 @@ import { energyTransferSchema } from './energy.types';
  *         energyAmount:
  *           type: integer
  *           description: Amount of energy transferred
- *           example: 65000
+ *           example: 65500
  *         energyInTRX:
  *           type: number
  *           description: Equivalent TRX value of the energy
@@ -100,7 +100,7 @@ import { energyTransferSchema } from './energy.types';
  *       properties:
  *         requestedEnergy:
  *           type: integer
- *           example: 65000
+ *           example: 65500
  *         bufferPercent:
  *           type: number
  *           example: 0.02

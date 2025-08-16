@@ -16,6 +16,7 @@ import {
   requireViewTransactions,
   requireViewDashboard,
 } from '../../middleware/admin-auth.middleware';
+import { auditLog, AdminActions, EntityTypes } from '../../middleware/audit-trail.middleware';
 import { 
   LoginAdminDto, 
   CreateAdminDto, 
@@ -184,7 +185,7 @@ router.post('/change-password', ...adminAuth(requireAnyAdmin, validationMiddlewa
  *       403:
  *         description: Insufficient permissions
  */
-router.post('/admins', ...adminAuth(requireSuperAdmin, validationMiddleware(CreateAdminDto)), adminController.createAdmin);
+router.post('/admins', ...adminAuth(requireSuperAdmin, validationMiddleware(CreateAdminDto)), auditLog(AdminActions.CREATE_ADMIN, EntityTypes.ADMIN), adminController.createAdmin);
 
 /**
  * @swagger
@@ -206,8 +207,8 @@ router.post('/admins', ...adminAuth(requireSuperAdmin, validationMiddleware(Crea
 router.get('/admins', ...adminAuth(requireSuperAdmin), adminController.getAllAdmins);
 
 router.get('/admins/:id', ...adminAuth(requireSuperAdmin), adminController.getAdminById);
-router.put('/admins/:id', ...adminAuth(requireSuperAdmin, validationMiddleware(UpdateAdminDto)), adminController.updateAdmin);
-router.delete('/admins/:id', ...adminAuth(requireSuperAdmin), adminController.deleteAdmin);
+router.put('/admins/:id', ...adminAuth(requireSuperAdmin, validationMiddleware(UpdateAdminDto)), auditLog(AdminActions.UPDATE_ADMIN, EntityTypes.ADMIN), adminController.updateAdmin);
+router.delete('/admins/:id', ...adminAuth(requireSuperAdmin), auditLog(AdminActions.DELETE_ADMIN, EntityTypes.ADMIN), adminController.deleteAdmin);
 
 // User management routes
 /**
@@ -335,7 +336,7 @@ router.get('/users/:id', ...adminAuth(requireViewUsers), adminController.getUser
  *       403:
  *         description: Insufficient permissions
  */
-router.put('/users/:id', ...adminAuth(requireEditUsers), adminController.updateUser);
+router.put('/users/:id', ...adminAuth(requireEditUsers), auditLog(AdminActions.UPDATE_USER, EntityTypes.USER), adminController.updateUser);
 
 /**
  * @swagger
@@ -363,7 +364,7 @@ router.put('/users/:id', ...adminAuth(requireEditUsers), adminController.updateU
  *       403:
  *         description: Insufficient permissions
  */
-router.delete('/users/:id', ...adminAuth(requireDeleteUsers), adminController.deleteUser);
+router.delete('/users/:id', ...adminAuth(requireDeleteUsers), auditLog(AdminActions.DELETE_USER, EntityTypes.USER), adminController.deleteUser);
 
 // Deposit management routes
 /**
@@ -447,7 +448,7 @@ router.get('/deposits', ...adminAuth(requireViewDeposits, validationMiddleware(D
  *       403:
  *         description: Insufficient permissions
  */
-router.put('/deposits/:id', ...adminAuth(requireEditDeposits), adminController.updateDeposit);
+router.put('/deposits/:id', ...adminAuth(requireEditDeposits), auditLog(AdminActions.UPDATE_DEPOSIT, EntityTypes.DEPOSIT), adminController.updateDeposit);
 
 /**
  * @swagger
@@ -489,7 +490,7 @@ router.put('/deposits/:id', ...adminAuth(requireEditDeposits), adminController.u
  *       403:
  *         description: Insufficient permissions
  */
-router.post('/deposits/:id/cancel', ...adminAuth(requireEditDeposits), adminDepositController.cancelDeposit.bind(adminDepositController));
+router.post('/deposits/:id/cancel', ...adminAuth(requireEditDeposits), auditLog(AdminActions.CANCEL_DEPOSIT, EntityTypes.DEPOSIT), adminDepositController.cancelDeposit.bind(adminDepositController));
 
 /**
  * @swagger
@@ -535,7 +536,7 @@ router.post('/deposits/:id/cancel', ...adminAuth(requireEditDeposits), adminDepo
  *       403:
  *         description: Insufficient permissions
  */
-router.post('/deposits/:depositId/trigger-energy-transfer', ...adminAuth(requireEditDeposits), adminController.triggerEnergyTransfer);
+router.post('/deposits/:depositId/trigger-energy-transfer', ...adminAuth(requireEditDeposits), auditLog(AdminActions.TRIGGER_ENERGY_TRANSFER, EntityTypes.DEPOSIT, req => req.params.depositId), adminController.triggerEnergyTransfer);
 
 // Transaction management routes
 /**
@@ -655,5 +656,13 @@ router.get('/dashboard/charts', ...adminAuth(requireViewDashboard), adminControl
  *         description: Insufficient permissions
  */
 router.get('/dashboard/recent-activity', ...adminAuth(requireViewDashboard), adminController.getRecentActivity);
+
+// Import and use audit routes
+import { auditRoutes } from './audit/audit.routes';
+router.use('/', auditRoutes);
+
+// Import and use energy monitoring routes
+import { energyMonitoringRoutes } from './energy-monitoring/energy-monitoring.routes';
+router.use('/', energyMonitoringRoutes);
 
 export const adminRoutes = router;
