@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { apiUtils } from '../../shared/utils';
-import { logger } from '../../config';
+import { logger, config, systemTronWeb, tronUtils } from '../../config';
 import { energyService } from '../../services/energy.service';
 import { addressPoolService } from '../../services/address-pool.service';
 import { prisma } from '../../config/database';
@@ -163,6 +163,87 @@ export class SystemStatusController {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
       throw error;
+    }
+  }
+
+  /**
+   * Get system wallet staked balance details
+   */
+  async getSystemWalletStakedBalance(req: Request, res: Response): Promise<void> {
+    try {
+      const systemAddress = config.systemWallet.address;
+      
+      // Get staked balance
+      const stakedBalance = await energyService.getStakedBalance(systemAddress);
+      const stakedTrx = tronUtils.fromSun(stakedBalance.stakedForEnergy);
+      
+      // Get energy per TRX ratio
+      const energyPerTrx = await energyService.getCachedEnergyPerTrx();
+      
+      // Calculate available energy from staked TRX
+      const availableEnergyFromStake = Math.floor(stakedTrx * energyPerTrx);
+      
+      // Get current energy balance
+      const currentEnergy = await energyService.getEnergyBalance(systemAddress);
+      
+      // Get account resources for more details
+      const accountResources = await systemTronWeb.trx.getAccountResources(systemAddress);
+      
+      const result = {
+        systemWallet: systemAddress,
+        staked: {
+          forEnergy: {
+            sun: stakedBalance.stakedForEnergy,
+            trx: stakedTrx,
+            estimatedEnergy: availableEnergyFromStake
+          },
+          forBandwidth: {
+            sun: stakedBalance.stakedForBandwidth,
+            trx: tronUtils.fromSun(stakedBalance.stakedForBandwidth)
+          },
+          total: {
+            sun: stakedBalance.totalStaked,
+            trx: tronUtils.fromSun(stakedBalance.totalStaked)
+          }
+        },
+        energy: {
+          current: currentEnergy,
+          limit: accountResources.EnergyLimit || 0,
+          used: accountResources.EnergyUsed || 0,
+          available: currentEnergy
+        },
+        calculations: {
+          energyPerTrx,
+          canDelegate65500: stakedTrx >= (65500 / energyPerTrx * 1.05),
+          canDelegate131000: stakedTrx >= (131000 / energyPerTrx * 1.05),
+          maxDelegableEnergy: Math.floor(stakedTrx * energyPerTrx / 1.05),
+          requiredTrxFor65500: (65500 / energyPerTrx * 1.05).toFixed(2),
+          requiredTrxFor131000: (131000 / energyPerTrx * 1.05).toFixed(2)
+        },
+        warnings: [] as string[]
+      };
+      
+      // Add warnings if needed
+      if (stakedTrx < 100) {
+        result.warnings.push(`Low staked TRX: Only ${stakedTrx.toFixed(2)} TRX staked for energy`);
+      }
+      if (!result.calculations.canDelegate65500) {
+        result.warnings.push(`Cannot delegate 65,500 energy. Need at least ${result.calculations.requiredTrxFor65500} TRX staked`);
+      }
+      if (!result.calculations.canDelegate131000) {
+        result.warnings.push(`Cannot delegate 131,000 energy. Need at least ${result.calculations.requiredTrxFor131000} TRX staked`);
+      }
+      
+      res.json(
+        apiUtils.success('System wallet staked balance retrieved successfully', result)
+      );
+    } catch (error) {
+      logger.error('Get system wallet staked balance failed', { 
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      res.status(500).json(
+        apiUtils.error('Failed to get system wallet staked balance', error instanceof Error ? error.message : 'Unknown error')
+      );
     }
   }
 

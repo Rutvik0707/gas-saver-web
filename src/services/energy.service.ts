@@ -824,6 +824,21 @@ export class EnergyService {
         operationId,
       });
       
+      // Check staked balance before attempting delegation
+      const energyPerTrx = await this.getCachedEnergyPerTrx();
+      const requiredTrx = (energyAmount / energyPerTrx) * 1.05; // 5% buffer
+      const stakedBalance = await this.getStakedBalance(config.systemWallet.address);
+      const availableStakedTrx = tronUtils.fromSun(stakedBalance.stakedForEnergy);
+      
+      logger.info('[EnergyService] Staked balance check before delegation', {
+        requiredEnergy: energyAmount,
+        requiredTrx: requiredTrx.toFixed(2),
+        availableStakedTrx: availableStakedTrx.toFixed(2),
+        canDelegate: availableStakedTrx >= requiredTrx,
+        deficit: Math.max(0, requiredTrx - availableStakedTrx).toFixed(2),
+        systemWallet: config.systemWallet.address
+      });
+      
       // Log transfer start
       await energyMonitoringLogger.log({
         userId,

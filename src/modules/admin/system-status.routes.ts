@@ -175,5 +175,82 @@ export function createSystemStatusRoutes(): Router {
    */
   router.post('/retry-energy-transfers', systemStatusController.retryFailedEnergyTransfers.bind(systemStatusController));
 
+  /**
+   * @swagger
+   * /system/staked-balance:
+   *   get:
+   *     tags:
+   *       - System
+   *     summary: Get system wallet staked balance details
+   *     description: |
+   *       Get detailed information about the system wallet's staked TRX balance,
+   *       available energy for delegation, and capacity calculations.
+   *     security:
+   *       - bearerAuth: []
+   *     responses:
+   *       200:
+   *         description: Staked balance retrieved successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 message:
+   *                   type: string
+   *                   example: System wallet staked balance retrieved successfully
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     systemWallet:
+   *                       type: string
+   *                       description: System wallet address
+   *                     staked:
+   *                       type: object
+   *                       properties:
+   *                         forEnergy:
+   *                           type: object
+   *                           properties:
+   *                             sun:
+   *                               type: number
+   *                             trx:
+   *                               type: number
+   *                             estimatedEnergy:
+   *                               type: number
+   *                     energy:
+   *                       type: object
+   *                       properties:
+   *                         current:
+   *                           type: number
+   *                         limit:
+   *                           type: number
+   *                         used:
+   *                           type: number
+   *                         available:
+   *                           type: number
+   *                     calculations:
+   *                       type: object
+   *                       properties:
+   *                         energyPerTrx:
+   *                           type: number
+   *                         canDelegate65500:
+   *                           type: boolean
+   *                         canDelegate131000:
+   *                           type: boolean
+   *                         maxDelegableEnergy:
+   *                           type: number
+   *                         requiredTrxFor65500:
+   *                           type: string
+   *                         requiredTrxFor131000:
+   *                           type: string
+   *                     warnings:
+   *                       type: array
+   *                       items:
+   *                         type: string
+   */
+  router.get('/staked-balance', systemStatusController.getSystemWalletStakedBalance.bind(systemStatusController));
+
   return router;
 }

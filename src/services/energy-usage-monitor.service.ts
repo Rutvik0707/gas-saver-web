@@ -414,6 +414,14 @@ export class EnergyUsageMonitorService {
                 // Update EnergyDelivery records
                 await this.updateEnergyDeliveryRecords(state.tronAddress, 1, now);
               } catch (e) {
+                const errorMessage = e instanceof Error ? e.message : 'Unknown error';
+                logger.error('[EnergyMonitor] Energy delegation failed', {
+                  address: state.tronAddress,
+                  requestedEnergy: this.ENERGY_UNIT,
+                  error: errorMessage,
+                  errorDetails: e instanceof Error ? e.stack : e
+                });
+                
                 await energyMonitoringLogger.logDelegation(
                   state.tronAddress,
                   state.userId,
@@ -424,7 +432,7 @@ export class EnergyUsageMonitorService {
                   'Delegation failed',
                   e instanceof Error ? e : new Error('Unknown error')
                 );
-                logs.push({ tronAddress: state.tronAddress, action: 'OVERRIDE', reason: 'Delegate 65k failed: ' + (e instanceof Error ? e.message : 'unknown') });
+                logs.push({ tronAddress: state.tronAddress, action: 'OVERRIDE', reason: 'Delegate 65k failed: ' + errorMessage });
               }
             } else {
               logs.push({ tronAddress: state.tronAddress, action: 'SKIP_LOCK_HELD', reason: 'Throttle delegate 65k' });
@@ -496,6 +504,15 @@ export class EnergyUsageMonitorService {
                 // Update EnergyDelivery records
                 await this.updateEnergyDeliveryRecords(state.tronAddress, transactionsToDelegate, now);
               } catch (e) {
+                const errorMessage = e instanceof Error ? e.message : 'Unknown error';
+                logger.error('[EnergyMonitor] Energy delegation failed', {
+                  address: state.tronAddress,
+                  requestedEnergy: energyToDelegate,
+                  transactionsToDelegate,
+                  error: errorMessage,
+                  errorDetails: e instanceof Error ? e.stack : e
+                });
+                
                 await energyMonitoringLogger.logDelegation(
                   state.tronAddress,
                   state.userId,
@@ -506,7 +523,7 @@ export class EnergyUsageMonitorService {
                   'Delegation failed',
                   e instanceof Error ? e : new Error('Unknown error')
                 );
-                logs.push({ tronAddress: state.tronAddress, action: 'OVERRIDE', reason: 'Delegate failed: ' + (e instanceof Error ? e.message : 'unknown') });
+                logs.push({ tronAddress: state.tronAddress, action: 'OVERRIDE', reason: 'Delegate failed: ' + errorMessage });
               }
             } else {
               logs.push({ tronAddress: state.tronAddress, action: 'SKIP_LOCK_HELD', reason: `Throttle ${actionName}` });
