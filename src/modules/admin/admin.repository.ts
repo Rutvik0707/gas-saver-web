@@ -24,6 +24,7 @@ export class AdminRepository {
     return this.prisma.admin.create({
       data: {
         ...data,
+        email: data.email.toLowerCase(),
         passwordHash: data.passwordHash,
       },
     });
@@ -36,8 +37,13 @@ export class AdminRepository {
   }
 
   async findByEmail(email: string): Promise<Admin | null> {
-    return this.prisma.admin.findUnique({
-      where: { email },
+    return this.prisma.admin.findFirst({
+      where: { 
+        email: {
+          equals: email,
+          mode: 'insensitive'
+        }
+      },
     });
   }
 

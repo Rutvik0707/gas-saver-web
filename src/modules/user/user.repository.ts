@@ -18,7 +18,7 @@ export class UserRepository {
     const { password, ...data } = userData as any;
     return prisma.user.create({
       data: {
-        email: data.email,
+        email: data.email.toLowerCase(),
         phoneNumber: data.phoneNumber,
         passwordHash: data.passwordHash,
         verificationToken: data.verificationToken,
@@ -38,8 +38,13 @@ export class UserRepository {
   }
 
 async findByEmail(email: string): Promise<User | null> {
-    return prisma.user.findUnique({
-      where: { email },
+    return prisma.user.findFirst({
+      where: { 
+        email: {
+          equals: email,
+          mode: 'insensitive'
+        }
+      },
     });
   }
 

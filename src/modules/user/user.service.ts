@@ -37,6 +37,7 @@ export class UserService {
 
 async createUser(userData: CreateUserDto): Promise<{ user: UserResponse; message: string }> {
     const { email, phoneNumber, password } = userData;
+    const normalizedEmail = email.toLowerCase();
 
     // Validate phone number format
     if (!WhatsAppService.validatePhoneNumber(phoneNumber)) {
@@ -44,7 +45,7 @@ async createUser(userData: CreateUserDto): Promise<{ user: UserResponse; message
     }
 
     // Check if user already exists
-    const existingUser = await this.userRepository.findByEmail(email);
+    const existingUser = await this.userRepository.findByEmail(normalizedEmail);
     if (existingUser) {
       throw new ConflictException('User with this email already exists');
     }
@@ -65,7 +66,7 @@ async createUser(userData: CreateUserDto): Promise<{ user: UserResponse; message
 
     // Create user with hashed password
     const newUser = await this.userRepository.create({
-      email,
+      email: normalizedEmail,
       phoneNumber,
       passwordHash,
       otpCode: `${emailOtp}:${phoneOtp}`, // Store both OTPs
@@ -73,12 +74,12 @@ async createUser(userData: CreateUserDto): Promise<{ user: UserResponse; message
     });
 
     // Send OTP to email
-    await emailService.sendOTPEmail(email, emailOtp);
+    await emailService.sendOTPEmail(normalizedEmail, emailOtp);
     
     // Send OTP to WhatsApp
     await whatsappService.sendOTP(phoneNumber, phoneOtp);
 
-    logger.info(`New user registration initiated: ${email}`, { userId: newUser.id, phoneNumber });
+    logger.info(`New user registration initiated: ${normalizedEmail}`, { userId: newUser.id, phoneNumber });
 
     return {
       user: this.formatUserResponse(newUser),
@@ -88,9 +89,10 @@ async createUser(userData: CreateUserDto): Promise<{ user: UserResponse; message
 
   async verifyRegistrationOtp(verifyData: VerifyRegistrationOtpDto): Promise<LoginResponse> {
     const { email, phoneNumber, emailOtp, phoneOtp } = verifyData;
+    const normalizedEmail = email.toLowerCase();
 
     // Find user by email and phone
-    const user = await this.userRepository.findByEmail(email);
+    const user = await this.userRepository.findByEmail(normalizedEmail);
     if (!user || user.phoneNumber !== phoneNumber) {
       throw new ValidationException('Invalid email or phone number');
     }
@@ -117,7 +119,7 @@ async createUser(userData: CreateUserDto): Promise<{ user: UserResponse; message
     // Generate JWT token since user is now fully registered
     const token = this.generateToken(verifiedUser);
 
-    logger.info(`User verified successfully: ${email}`, { userId: user.id });
+    logger.info(`User verified successfully: ${normalizedEmail}`, { userId: user.id });
 
     return {
       user: this.formatUserResponse(verifiedUser),
@@ -168,7 +170,8 @@ async loginUser(loginData: LoginUserDto): Promise<LoginResponse> {
     // Find user by email or phone number
     let user;
     if (identifier.includes('@')) {
-      user = await this.userRepository.findByEmail(identifier);
+      const normalizedEmail = identifier.toLowerCase();
+      user = await this.userRepository.findByEmail(normalizedEmail);
     } else {
       user = await this.userRepository.findByPhoneNumber(identifier);
     }
@@ -291,8 +294,10 @@ async loginUser(loginData: LoginUserDto): Promise<LoginResponse> {
     }
 
     // If updating email, check for conflicts
-    if (updateData.email && updateData.email !== existingUser.email) {
-      const emailExists = await this.userRepository.findByEmail(updateData.email);
+    if (updateData.email && updateData.email.toLowerCase() !== existingUser.email.toLowerCase()) {
+      const normalizedEmail = updateData.email.toLowerCase();
+      const emailExists = await this.userRepository.findByEmail(normalizedEmail);
+      updateData.email = normalizedEmail;
       if (emailExists) {
         throw new ConflictException('Email is already in use');
       }
@@ -397,8 +402,9 @@ async verifyEmailToken(token: string): Promise<UserResponse> {
   }
   
   async resendVerificationEmail(email: string): Promise<boolean> {
+    const normalizedEmail = email.toLowerCase();
     // Find user by email
-    const user = await this.userRepository.findByEmail(email);
+    const user = await this.userRepository.findByEmail(normalizedEmail);
     
     if (!user) {
       // Don't reveal that the email doesn't exist
@@ -418,16 +424,17 @@ async verifyEmailToken(token: string): Promise<UserResponse> {
     await this.userRepository.setVerificationToken(user.id, verificationToken, verificationTokenExpiry);
     
     // Send verification email
-    const emailSent = await emailService.sendVerificationEmail(email, verificationToken);
+    const emailSent = await emailService.sendVerificationEmail(normalizedEmail, verificationToken);
     
-    logger.info(`Verification email resent to: ${email}`, { userId: user.id });
+    logger.info(`Verification email resent to: ${normalizedEmail}`, { userId: user.id });
     
     return emailSent;
   }
   
   async requestPasswordReset(email: string): Promise<boolean> {
+    const normalizedEmail = email.toLowerCase();
     // Find user by email
-    const user = await this.userRepository.findByEmail(email);
+    const user = await this.userRepository.findByEmail(normalizedEmail);
     
     if (!user || !user.isActive) {
       // Don't reveal that the email doesn't exist or account is inactive
@@ -442,9 +449,9 @@ async verifyEmailToken(token: string): Promise<UserResponse> {
     await this.userRepository.setResetToken(user.id, resetToken, resetTokenExpiry);
     
     // Send password reset email
-    const emailSent = await emailService.sendPasswordResetEmail(email, resetToken);
+    const emailSent = await emailService.sendPasswordResetEmail(normalizedEmail, resetToken);
     
-    logger.info(`Password reset email sent to: ${email}`, { userId: user.id });
+    logger.info(`Password reset email sent to: ${normalizedEmail}`, { userId: user.id });
     
     return emailSent;
   }
@@ -470,8 +477,9 @@ async verifyEmailToken(token: string): Promise<UserResponse> {
   }
 
   async verifyOTP(email: string, otp: string): Promise<UserResponse> {
+    const normalizedEmail = email.toLowerCase();
     // Find user by email
-    const user = await this.userRepository.findByEmail(email);
+    const user = await this.userRepository.findByEmail(normalizedEmail);
     
     if (!user) {
       throw new ValidationException('User not found');
@@ -534,8 +542,9 @@ async verifyEmailToken(token: string): Promise<UserResponse> {
   // }
 
   async resendOTP(email: string, phoneNumber: string): Promise<boolean> {
+    const normalizedEmail = email.toLowerCase();
     // Find user by email
-    const user = await this.userRepository.findByEmail(email);
+    const user = await this.userRepository.findByEmail(normalizedEmail);
     
     if (!user) {
       throw new ValidationException('User not found');
@@ -559,9 +568,9 @@ async verifyEmailToken(token: string): Promise<UserResponse> {
     await this.userRepository.setOtpCode(user.id, otp, otpExpiry);
     
     // Send OTP
-    const sent = await otpService.sendOTP(email, phoneNumber, otp);
+    const sent = await otpService.sendOTP(normalizedEmail, phoneNumber, otp);
     
-    logger.info(`OTP resent to user: ${email}`, { userId: user.id, phoneNumber });
+    logger.info(`OTP resent to user: ${normalizedEmail}`, { userId: user.id, phoneNumber });
     
     return sent;
   }
@@ -650,7 +659,8 @@ private formatUserResponse(user: any): UserResponse {
     // Find user by email or phone
     let user;
     if (identifier.includes('@')) {
-      user = await this.userRepository.findByEmail(identifier);
+      const normalizedEmail = identifier.toLowerCase();
+      user = await this.userRepository.findByEmail(normalizedEmail);
     } else {
       user = await this.userRepository.findByPhoneNumber(identifier);
     }
@@ -668,7 +678,7 @@ private formatUserResponse(user: any): UserResponse {
     
     // Send OTP based on identifier type
     if (identifier.includes('@')) {
-      await emailService.sendOTPEmail(user.email, otp);
+      await emailService.sendOTPEmail(user.email.toLowerCase(), otp);
     } else {
       await whatsappService.sendOTP(user.phoneNumber, otp);
     }
@@ -684,7 +694,8 @@ private formatUserResponse(user: any): UserResponse {
     // Find user
     let user;
     if (identifier.includes('@')) {
-      user = await this.userRepository.findByEmail(identifier);
+      const normalizedEmail = identifier.toLowerCase();
+      user = await this.userRepository.findByEmail(normalizedEmail);
     } else {
       user = await this.userRepository.findByPhoneNumber(identifier);
     }
@@ -713,7 +724,8 @@ private formatUserResponse(user: any): UserResponse {
     // Find user
     let user;
     if (identifier.includes('@')) {
-      user = await this.userRepository.findByEmail(identifier);
+      const normalizedEmail = identifier.toLowerCase();
+      user = await this.userRepository.findByEmail(normalizedEmail);
     } else {
       user = await this.userRepository.findByPhoneNumber(identifier);
     }

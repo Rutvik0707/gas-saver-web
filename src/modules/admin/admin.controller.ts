@@ -19,8 +19,13 @@ export class AdminController {
     
     // Log the login activity
     try {
-      const admin = await prisma.admin.findUnique({
-        where: { email: loginData.email }
+      const admin = await prisma.admin.findFirst({
+        where: { 
+          email: {
+            equals: loginData.email.toLowerCase(),
+            mode: 'insensitive'
+          }
+        }
       });
       
       if (admin) {

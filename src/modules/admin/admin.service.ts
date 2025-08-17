@@ -31,9 +31,10 @@ export class AdminService {
 
   async createAdmin(adminData: CreateAdminDtoType): Promise<AdminResponse> {
     const { email, password, name, role, permissions } = adminData;
+    const normalizedEmail = email.toLowerCase();
 
     // Check if admin already exists
-    const existingAdmin = await this.adminRepository.findByEmail(email);
+    const existingAdmin = await this.adminRepository.findByEmail(normalizedEmail);
     if (existingAdmin) {
       throw new ConflictException('Admin with this email already exists');
     }
@@ -46,7 +47,7 @@ export class AdminService {
 
     // Create admin
     const newAdmin = await this.adminRepository.create({
-      email,
+      email: normalizedEmail,
       password, // This will be ignored in repository
       name,
       role,
@@ -54,16 +55,17 @@ export class AdminService {
       passwordHash,
     });
 
-    logger.info(`New admin created: ${email}`, { adminId: newAdmin.id, role });
+    logger.info(`New admin created: ${normalizedEmail}`, { adminId: newAdmin.id, role });
 
     return this.formatAdminResponse(newAdmin);
   }
 
   async loginAdmin(loginData: LoginAdminDtoType): Promise<AdminLoginResponse> {
     const { email, password } = loginData;
+    const normalizedEmail = email.toLowerCase();
 
     // Find admin by email
-    const admin = await this.adminRepository.findByEmail(email);
+    const admin = await this.adminRepository.findByEmail(normalizedEmail);
     if (!admin) {
       throw new UnauthorizedException('Invalid email or password');
     }
@@ -85,7 +87,7 @@ export class AdminService {
     // Generate JWT token
     const token = this.generateToken(admin);
 
-    logger.info(`Admin logged in: ${email}`, { adminId: admin.id, role: admin.role });
+    logger.info(`Admin logged in: ${normalizedEmail}`, { adminId: admin.id, role: admin.role });
 
     return {
       admin: this.formatAdminResponse(admin),
@@ -111,11 +113,13 @@ export class AdminService {
     }
 
     // If updating email, check for conflicts
-    if (updateData.email && updateData.email !== existingAdmin.email) {
-      const emailExists = await this.adminRepository.findByEmail(updateData.email);
+    if (updateData.email && updateData.email.toLowerCase() !== existingAdmin.email.toLowerCase()) {
+      const normalizedEmail = updateData.email.toLowerCase();
+      const emailExists = await this.adminRepository.findByEmail(normalizedEmail);
       if (emailExists) {
         throw new ConflictException('Email is already in use');
       }
+      updateData.email = normalizedEmail;
     }
 
     // If updating role, update permissions accordingly
