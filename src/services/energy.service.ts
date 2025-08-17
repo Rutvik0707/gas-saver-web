@@ -2,6 +2,7 @@ import { logger, systemTronWeb, tronUtils, config } from '../config';
 import { prisma } from '../config/database';
 import { TransactionType, TransactionStatus } from '@prisma/client';
 import { energyRateService } from '../modules/energy-rate';
+import { energyMonitoringLogger } from './energy-monitoring-logger.service';
 
 export class EnergyService {
   private readonly ENERGY_AMOUNT_TRX = 1; // 1 TRX worth of energy per deposit (deprecated)
@@ -627,6 +628,149 @@ export class EnergyService {
   }
 
   /**
+   * Get delegated energy from system wallet to a specific address
+   * This queries the blockchain to find how much energy is delegated to the target address
+   * @param targetAddress The address to check delegated energy for
+   * @returns Amount of energy delegated to the address from system wallet
+   */
+  async getDelegatedResourceToAddress(targetAddress: string): Promise<{
+    delegatedEnergy: number;
+    delegatedTrx: number;
+    canReclaim: boolean;
+  }> {
+    try {
+      if (!tronUtils.isAddress(targetAddress)) {
+        throw new Error('Invalid target TRON address');
+      }
+
+      const systemWalletAddress = config.systemWallet.address;
+      
+      // Try to get delegated resource info using TronWeb API
+      // Note: getDelegatedResourceV2 may not be available in all TronWeb versions
+      let delegatedResources: any[] = [];
+      try {
+        if ((systemTronWeb.trx as any).getDelegatedResourceV2) {
+          delegatedResources = await (systemTronWeb.trx as any).getDelegatedResourceV2(
+            systemWalletAddress,
+            targetAddress
+          );
+        } else if ((systemTronWeb.trx as any).getDelegatedResource) {
+          delegatedResources = await (systemTronWeb.trx as any).getDelegatedResource(
+            systemWalletAddress,
+            targetAddress
+          );
+        }
+      } catch (apiError) {
+        // API method not available, will fall back to alternative approach
+        logger.debug('getDelegatedResource API not available', {
+          error: apiError instanceof Error ? apiError.message : 'Unknown'
+        });
+      }
+      
+      if (delegatedResources && delegatedResources.length > 0) {
+        // Find ENERGY delegations
+        const energyDelegation = delegatedResources.find(
+          (d: any) => d.type === 'ENERGY'
+        );
+        
+        if (energyDelegation) {
+          const delegatedSun = energyDelegation.amount || 0;
+          const delegatedTrx = tronUtils.fromSun(delegatedSun);
+          const energyPerTrx = await this.getCachedEnergyPerTrx();
+          const delegatedEnergy = Math.floor(delegatedTrx * energyPerTrx);
+          
+          logger.info('Found delegated resources to address', {
+            targetAddress,
+            delegatedSun,
+            delegatedTrx,
+            delegatedEnergy,
+            fromAddress: systemWalletAddress
+          });
+          
+          return {
+            delegatedEnergy,
+            delegatedTrx,
+            canReclaim: delegatedSun > 0
+          };
+        }
+      }
+      
+      // No delegation found
+      return {
+        delegatedEnergy: 0,
+        delegatedTrx: 0,
+        canReclaim: false
+      };
+      
+    } catch (error) {
+      // If the API doesn't support this method, try alternative approach
+      logger.warn('Could not query delegated resources directly, trying alternative', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        targetAddress
+      });
+      
+      try {
+        // Alternative: Check the target address's account resources
+        // and see if it has delegated energy from our system wallet
+        const accountResources = await systemTronWeb.trx.getAccountResources(targetAddress);
+        const account = await systemTronWeb.trx.getAccount(targetAddress);
+        
+        // Check if account has acquired delegated resource
+        if (account.acquired_delegated_resource) {
+          const delegatedForEnergy = account.acquired_delegated_resource.energy_from_frozen || 0;
+          const delegatedTrx = tronUtils.fromSun(delegatedForEnergy);
+          const energyPerTrx = await this.getCachedEnergyPerTrx();
+          const delegatedEnergy = Math.floor(delegatedTrx * energyPerTrx);
+          
+          return {
+            delegatedEnergy,
+            delegatedTrx,
+            canReclaim: delegatedForEnergy > 0
+          };
+        }
+        
+        // Check account resources for delegated energy
+        const totalEnergy = accountResources.EnergyLimit || 0;
+        const ownEnergy = account.account_resource?.frozen_balance_for_energy?.frozen_balance || 0;
+        const ownEnergyConverted = Math.floor(tronUtils.fromSun(ownEnergy) * (await this.getCachedEnergyPerTrx()));
+        
+        // Delegated energy is total minus own
+        const delegatedEnergy = Math.max(0, totalEnergy - ownEnergyConverted);
+        
+        if (delegatedEnergy > 0) {
+          const energyPerTrx = await this.getCachedEnergyPerTrx();
+          const delegatedTrx = delegatedEnergy / energyPerTrx;
+          
+          logger.info('Estimated delegated energy from total', {
+            targetAddress,
+            totalEnergy,
+            ownEnergyConverted,
+            delegatedEnergy,
+            delegatedTrx
+          });
+          
+          return {
+            delegatedEnergy,
+            delegatedTrx,
+            canReclaim: true
+          };
+        }
+      } catch (altError) {
+        logger.error('Alternative delegation check also failed', {
+          error: altError instanceof Error ? altError.message : 'Unknown error',
+          targetAddress
+        });
+      }
+      
+      return {
+        delegatedEnergy: 0,
+        delegatedTrx: 0,
+        canReclaim: false
+      };
+    }
+  }
+
+  /**
    * Check if system wallet is ready for energy delegation
    * Returns detailed status and requirements
    */
@@ -897,11 +1041,13 @@ export class EnergyService {
         const txHash = await this.delegateEnergyToAddress(tronAddress, energyAmount);
 
         // Get the energy ratio to calculate actual energy
+        // Note: delegateEnergyToAddress already applies a 5% buffer internally
         const energyPerTrx = await this.getCachedEnergyPerTrx();
         const trxAmount = energyAmount / energyPerTrx;
-  const bufferedTrxAmount = trxAmount * 1.05; // 5% buffer (aligned with delegateEnergyToAddress)
-  // Round up to 6 decimals to avoid under-provision from floating arithmetic
-  const finalTrxAmount = Math.max(1, Math.ceil(bufferedTrxAmount * 1e6) / 1e6);
+        // delegateEnergyToAddress applies its own 5% buffer, so we calculate the final amount with that buffer
+        const bufferedTrxAmount = trxAmount * 1.05; // This matches what delegateEnergyToAddress uses
+        // Round up to 6 decimals to match internal calculation
+        const finalTrxAmount = Math.max(1, Math.ceil(bufferedTrxAmount * 1e6) / 1e6);
         const actualEnergy = Math.floor(finalTrxAmount * energyPerTrx);
 
         // Update transaction if it was created
@@ -1071,12 +1217,17 @@ export class EnergyService {
   }
 
   /**
-   * Reclaim (undelegate) a target ENERGY amount (best-effort) from an address.
-   * targetEnergy is in ENERGY units. We convert to TRX using ratio and attempt a single undelegation.
-   * Falls back to max reclaim if specific amount fails.
+   * Reclaim (undelegate) energy from an address using exact delegated amount
+   * First queries the blockchain to get the exact delegated amount, then reclaims it
+   * @param targetAddress Address to reclaim energy from
+   * @returns Reclaim result with transaction hash and recovered energy
    */
-  async reclaimEnergyAmountFromAddress(targetAddress: string, targetEnergy: number): Promise<{
-    txHash: string; reclaimedSun: number; reclaimedTrx: number; ratioUsed: number; estimatedRecoveredEnergy: number;
+  async reclaimEnergyFromAddress(targetAddress: string): Promise<{
+    txHash: string; 
+    reclaimedSun: number; 
+    reclaimedTrx: number; 
+    ratioUsed: number; 
+    estimatedRecoveredEnergy: number;
   }> {
     const startTime = Date.now();
     const operationId = `reclaim_${Date.now()}_${targetAddress.substring(0, 8)}`;
@@ -1084,8 +1235,24 @@ export class EnergyService {
     if (!tronUtils.isAddress(targetAddress)) {
       throw new Error('Invalid target TRON address');
     }
-    if (targetEnergy <= 0) {
-      throw new Error('targetEnergy must be positive');
+    
+    // First, query how much energy is delegated to this address
+    const delegationInfo = await this.getDelegatedResourceToAddress(targetAddress);
+    
+    if (!delegationInfo.canReclaim || delegationInfo.delegatedTrx <= 0) {
+      logger.info('No energy to reclaim from address', {
+        targetAddress,
+        delegatedEnergy: delegationInfo.delegatedEnergy,
+        delegatedTrx: delegationInfo.delegatedTrx
+      });
+      
+      return {
+        txHash: '',
+        reclaimedSun: 0,
+        reclaimedTrx: 0,
+        ratioUsed: await this.getCachedEnergyPerTrx(),
+        estimatedRecoveredEnergy: 0
+      };
     }
     
     // Log reclaim start
@@ -1095,21 +1262,26 @@ export class EnergyService {
       logLevel: 'INFO',
       metadata: {
         operationId,
-        targetEnergy,
+        delegatedEnergy: delegationInfo.delegatedEnergy,
+        delegatedTrx: delegationInfo.delegatedTrx,
         status: 'initiated'
       }
     });
+    
     const systemWalletAddress = config.systemWallet.address;
     const energyPerTrx = await this.getCachedEnergyPerTrx();
-    const trxNeeded = targetEnergy / energyPerTrx;
-    const bufferedTrx = trxNeeded * 1.02; // small buffer
-    // Convert to SUN and clamp to stakedForEnergy
-    const staked = await this.getStakedBalance(systemWalletAddress);
-    const stakedTrx = tronUtils.fromSun(staked.stakedForEnergy);
-    const sunAmount = Math.min(staked.stakedForEnergy, Math.floor(tronUtils.toSun(bufferedTrx)));
-    if (sunAmount <= 0) {
-      throw new Error('No staked TRX available for undelegation');
-    }
+    
+    // Use the exact delegated amount for undelegation
+    const sunAmount = Math.floor(tronUtils.toSun(delegationInfo.delegatedTrx));
+    
+    logger.info('Attempting to reclaim exact delegated amount', {
+      targetAddress,
+      delegatedTrx: delegationInfo.delegatedTrx,
+      delegatedEnergy: delegationInfo.delegatedEnergy,
+      sunAmount,
+      operationId
+    });
+    
     try {
       const tx = await (systemTronWeb as any).transactionBuilder.undelegateResource(
         sunAmount,
@@ -1119,9 +1291,11 @@ export class EnergyService {
       );
       const signed = await (systemTronWeb as any).trx.sign(tx);
       const sent = await (systemTronWeb as any).trx.sendRawTransaction(signed);
+      
       if (!sent.result) {
         throw new Error(sent.message || sent.code || 'undelegate failed');
       }
+      
       const reclaimedTrx = tronUtils.fromSun(sunAmount);
       const estimatedRecoveredEnergy = Math.floor(reclaimedTrx * energyPerTrx);
       
@@ -1135,7 +1309,6 @@ export class EnergyService {
         apiDurationMs: Date.now() - startTime,
         metadata: {
           operationId,
-          targetEnergy,
           reclaimedSun: sunAmount,
           reclaimedTrx,
           estimatedRecoveredEnergy,
@@ -1145,8 +1318,8 @@ export class EnergyService {
       
       logger.info('Energy reclaim successful', {
         targetAddress,
-        targetEnergy,
         estimatedRecoveredEnergy,
+        reclaimedTrx,
         txHash: sent.txid,
         duration: Date.now() - startTime,
         operationId,
@@ -1159,34 +1332,266 @@ export class EnergyService {
         ratioUsed: energyPerTrx,
         estimatedRecoveredEnergy,
       };
-    } catch (e) {
-      const errorMessage = e instanceof Error ? e.message : 'Unknown error';
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       
-      // Log reclaim failure before fallback
+      // Log reclaim failure
       await energyMonitoringLogger.log({
         tronAddress: targetAddress,
         action: 'RECLAIM',
-        logLevel: 'WARN',
+        logLevel: 'ERROR',
         errorMessage,
         apiDurationMs: Date.now() - startTime,
         metadata: {
           operationId,
-          targetEnergy,
-          status: 'fallback_to_max',
-          reason: 'Specific amount reclaim failed, trying max reclaim'
+          delegatedTrx: delegationInfo.delegatedTrx,
+          sunAmount,
+          status: 'failed'
         }
       });
       
-      logger.warn('Specific energy reclaim failed, falling back to max reclaim', {
+      logger.error('Energy reclaim failed', {
         targetAddress,
-        targetEnergy,
+        delegatedTrx: delegationInfo.delegatedTrx,
+        sunAmount,
         error: errorMessage,
         operationId,
       });
       
-      // Fallback to max reclaim
-      return this.reclaimMaxEnergyFromAddress(targetAddress);
+      // Return zero reclaim on failure
+      return {
+        txHash: '',
+        reclaimedSun: 0,
+        reclaimedTrx: 0,
+        ratioUsed: energyPerTrx,
+        estimatedRecoveredEnergy: 0
+      };
     }
+  }
+
+  /**
+   * Reclaim ALL available energy from an address (the entire current balance)
+   * This assumes all current energy was previously delegated
+   * @param targetAddress Address to reclaim energy from
+   * @returns Reclaim result with transaction hash and recovered energy
+   */
+  async reclaimAllEnergyFromAddress(targetAddress: string): Promise<{
+    txHash: string;
+    reclaimedEnergy: number;
+    reclaimedTrx: number;
+  }> {
+    const startTime = Date.now();
+    const operationId = `reclaim_all_${Date.now()}_${targetAddress.substring(0, 8)}`;
+    
+    if (!tronUtils.isAddress(targetAddress)) {
+      throw new Error('Invalid target TRON address');
+    }
+    
+    // Get current energy balance (this is what we'll try to reclaim)
+    const currentEnergy = await this.getEnergyBalance(targetAddress);
+    
+    // Also get delegation info for comparison
+    const delegationInfo = await this.getDelegatedResourceToAddress(targetAddress);
+    
+    logger.info('[EnergyService] Attempting to reclaim all energy', {
+      targetAddress,
+      currentEnergy,
+      delegatedEnergy: delegationInfo.delegatedEnergy,
+      delegatedTrx: delegationInfo.delegatedTrx,
+      difference: currentEnergy - delegationInfo.delegatedEnergy,
+      operationId
+    });
+    
+    if (currentEnergy <= 0) {
+      logger.info('[EnergyService] No energy to reclaim', {
+        targetAddress,
+        currentEnergy
+      });
+      return {
+        txHash: '',
+        reclaimedEnergy: 0,
+        reclaimedTrx: 0
+      };
+    }
+    
+    // Log reclaim start
+    await energyMonitoringLogger.log({
+      tronAddress: targetAddress,
+      action: 'RECLAIM',
+      logLevel: 'INFO',
+      metadata: {
+        operationId,
+        currentEnergy,
+        status: 'initiated'
+      }
+    });
+    
+    const systemWalletAddress = config.systemWallet.address;
+    const energyPerTrx = await this.getCachedEnergyPerTrx();
+    
+    // Convert current energy to TRX amount for undelegation
+    const trxAmountFromEnergy = currentEnergy / energyPerTrx;
+    let sunAmountFromEnergy = Math.floor(tronUtils.toSun(trxAmountFromEnergy));
+    
+    // Compare with actual delegated amount
+    let sunAmount = sunAmountFromEnergy;
+    if (delegationInfo.canReclaim && delegationInfo.delegatedTrx > 0) {
+      const sunAmountFromDelegation = Math.floor(tronUtils.toSun(delegationInfo.delegatedTrx));
+      
+      logger.info('[EnergyService] Comparing reclaim amounts', {
+        targetAddress,
+        fromCurrentEnergy: {
+          energy: currentEnergy,
+          trx: trxAmountFromEnergy,
+          sun: sunAmountFromEnergy
+        },
+        fromDelegationInfo: {
+          energy: delegationInfo.delegatedEnergy,
+          trx: delegationInfo.delegatedTrx,
+          sun: sunAmountFromDelegation
+        },
+        difference: sunAmountFromDelegation - sunAmountFromEnergy,
+        operationId
+      });
+      
+      // Use the larger of the two amounts (more likely to be the actual delegated amount)
+      if (sunAmountFromDelegation > sunAmountFromEnergy) {
+        logger.info('[EnergyService] Using delegation info amount (larger)', {
+          originalSun: sunAmountFromEnergy,
+          delegatedSun: sunAmountFromDelegation
+        });
+        sunAmount = sunAmountFromDelegation;
+      }
+    }
+    
+    // Try to reclaim with exact amount first
+    let attempts = [
+      { percent: 1.0, description: 'exact amount' },
+      { percent: 0.95, description: '95% of amount' },
+      { percent: 0.9, description: '90% of amount' },
+      { percent: 0.8, description: '80% of amount' }
+    ];
+    
+    for (const attempt of attempts) {
+      const attemptSun = Math.floor(sunAmount * attempt.percent);
+      const attemptTrx = tronUtils.fromSun(attemptSun);
+      const attemptEnergy = Math.floor(attemptTrx * energyPerTrx);
+      
+      logger.info('[EnergyService] Reclaim attempt', {
+        targetAddress,
+        attempt: attempt.description,
+        attemptSun,
+        attemptTrx,
+        attemptEnergy,
+        operationId
+      });
+      
+      try {
+        const tx = await (systemTronWeb as any).transactionBuilder.undelegateResource(
+          attemptSun,
+          targetAddress,
+          'ENERGY',
+          systemWalletAddress
+        );
+        const signed = await (systemTronWeb as any).trx.sign(tx);
+        const sent = await (systemTronWeb as any).trx.sendRawTransaction(signed);
+        
+        if (!sent.result) {
+          logger.warn('[EnergyService] Reclaim broadcast failed', {
+            attempt: attempt.description,
+            message: sent.message || sent.code
+          });
+          continue;
+        }
+        
+        // Success!
+        await energyMonitoringLogger.log({
+          tronAddress: targetAddress,
+          action: 'RECLAIM',
+          logLevel: 'INFO',
+          energyDelta: -attemptEnergy,
+          txHash: sent.txid,
+          apiDurationMs: Date.now() - startTime,
+          metadata: {
+            operationId,
+            attemptSun,
+            attemptTrx,
+            reclaimedEnergy: attemptEnergy,
+            status: 'completed',
+            attempt: attempt.description
+          }
+        });
+        
+        logger.info('[EnergyService] Energy reclaim successful', {
+          targetAddress,
+          reclaimedEnergy: attemptEnergy,
+          reclaimedTrx: attemptTrx,
+          txHash: sent.txid,
+          attempt: attempt.description,
+          duration: Date.now() - startTime,
+          operationId
+        });
+        
+        return {
+          txHash: sent.txid,
+          reclaimedEnergy: attemptEnergy,
+          reclaimedTrx: attemptTrx
+        };
+        
+      } catch (error) {
+        logger.warn('[EnergyService] Reclaim attempt failed', {
+          attempt: attempt.description,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+        // Continue to next attempt
+      }
+    }
+    
+    // All attempts failed
+    await energyMonitoringLogger.log({
+      tronAddress: targetAddress,
+      action: 'RECLAIM',
+      logLevel: 'ERROR',
+      errorMessage: 'All reclaim attempts failed',
+      apiDurationMs: Date.now() - startTime,
+      metadata: {
+        operationId,
+        currentEnergy,
+        status: 'failed'
+      }
+    });
+    
+    logger.error('[EnergyService] All reclaim attempts failed', {
+      targetAddress,
+      currentEnergy,
+      operationId
+    });
+    
+    return {
+      txHash: '',
+      reclaimedEnergy: 0,
+      reclaimedTrx: 0
+    };
+  }
+
+  /**
+   * Legacy method - redirects to new reclaimAllEnergyFromAddress
+   * @deprecated Use reclaimAllEnergyFromAddress instead
+   */
+  async reclaimEnergyAmountFromAddress(targetAddress: string, targetEnergy: number): Promise<{
+    txHash: string; reclaimedSun: number; reclaimedTrx: number; ratioUsed: number; estimatedRecoveredEnergy: number;
+  }> {
+    // Ignore targetEnergy parameter and reclaim all
+    const result = await this.reclaimAllEnergyFromAddress(targetAddress);
+    const energyPerTrx = await this.getCachedEnergyPerTrx();
+    
+    return {
+      txHash: result.txHash,
+      reclaimedSun: Math.floor(tronUtils.toSun(result.reclaimedTrx)),
+      reclaimedTrx: result.reclaimedTrx,
+      ratioUsed: energyPerTrx,
+      estimatedRecoveredEnergy: result.reclaimedEnergy
+    };
   }
 }
 

@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -11,71 +8,63 @@ datasource db {
 }
 
 model User {
-  id                      String    @id @default(cuid())
-  email                   String    @unique
-  passwordHash            String?   @map("password_hash") // Made optional for OTP-first registration
-  phoneNumber             String    @unique @map("phone_number") // Made required for WhatsApp
-  isPhoneVerified         Boolean   @default(false) @map("is_phone_verified")
-  isEmailVerified         Boolean   @default(false) @map("is_email_verified")
-  otpCode                 String?   @map("otp_code")
-  otpExpiry               DateTime? @map("otp_expiry")
-  credits                 Decimal   @default(0) @db.Decimal(18, 6)
-  isActive                Boolean   @default(true) @map("is_active")
-  verificationToken       String?   @map("verification_token")
-  verificationTokenExpiry DateTime? @map("verification_token_expiry")
-  resetToken              String?   @map("reset_token")
-  resetTokenExpiry        DateTime? @map("reset_token_expiry")
-  createdAt               DateTime  @default(now()) @map("created_at")
-  updatedAt               DateTime  @updatedAt @map("updated_at")
-
-  // Relations
-  deposits      Deposit[]
-  transactions  Transaction[]
-  feedbacks     Feedback[]
-  tronAddresses UserTronAddress[]
-  energyDeliveries EnergyDelivery[]
-  energyStates  UserEnergyState[]
-  energyLogs    EnergyAllocationLog[]
-  monitoringLogs EnergyMonitoringLog[]
+  id                      String                @id @default(cuid())
+  email                   String                @unique
+  passwordHash            String?               @map("password_hash")
+  phoneNumber             String                @unique @map("phone_number")
+  isPhoneVerified         Boolean               @default(false) @map("is_phone_verified")
+  otpCode                 String?               @map("otp_code")
+  otpExpiry               DateTime?             @map("otp_expiry")
+  credits                 Decimal               @default(0) @db.Decimal(18, 6)
+  isActive                Boolean               @default(true) @map("is_active")
+  isEmailVerified         Boolean               @default(false) @map("is_email_verified")
+  verificationToken       String?               @map("verification_token")
+  verificationTokenExpiry DateTime?             @map("verification_token_expiry")
+  resetToken              String?               @map("reset_token")
+  resetTokenExpiry        DateTime?             @map("reset_token_expiry")
+  createdAt               DateTime              @default(now()) @map("created_at")
+  updatedAt               DateTime              @updatedAt @map("updated_at")
+  feedbacks               Feedback[]
+  deposits                Deposit[]
+  energyLogs              EnergyAllocationLog[]
+  energyDeliveries        EnergyDelivery[]
+  monitoringLogs          EnergyMonitoringLog[]
+  transactions            Transaction[]
+  energyStates            UserEnergyState[]
+  tronAddresses           UserTronAddress[]
 
   @@map("users")
 }
 
 model Deposit {
-  id                    String      @id @default(cuid())
-  userId                String      @map("user_id")
-  assignedAddressId     String?     @map("assigned_address_id")
-  assignedAddress       String      @map("assigned_address")
-  energyRecipientAddress String?    @map("energy_recipient_address")
-  txHash                String?     @unique @map("tx_hash")
-  amountUsdt            Decimal?    @map("amount_usdt") @db.Decimal(18, 6)
-  expectedAmount        Decimal     @map("expected_amount") @db.Decimal(18, 6)
-  status                DepositStatus @default(PENDING)
-  confirmed             Boolean     @default(false)
-  blockNumber           BigInt?     @map("block_number")
-  processedAt           DateTime?   @map("processed_at")
-  expiresAt             DateTime    @map("expires_at")
-  
-  // Energy transfer tracking
-  energyTransferStatus    String?       @default("PENDING") @map("energy_transfer_status")
-  energyTransferTxHash    String?       @map("energy_transfer_txhash")
-  energyTransferError     String?       @map("energy_transfer_error")
-  energyTransferAttempts  Int           @default(0) @map("energy_transfer_attempts")
-  energyTransferredAt     DateTime?     @map("energy_transferred_at")
-  
-  numberOfTransactions  Int?        @map("number_of_transactions")
-  calculatedUsdtAmount  Decimal?    @db.Decimal(18, 6) @map("calculated_usdt_amount")
-  
-  cancelledAt           DateTime?   @map("cancelled_at")
-  cancelledBy           String?     @map("cancelled_by")
-  cancellationReason    String?     @map("cancellation_reason")
-  createdAt             DateTime    @default(now()) @map("created_at")
-  updatedAt             DateTime    @updatedAt @map("updated_at")
-
-  // Relations
-  user                User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  addressPool         AddressPool? @relation(fields: [assignedAddressId], references: [id], onDelete: SetNull)
-  energyDelivery      EnergyDelivery?
+  id                     String          @id @default(cuid())
+  userId                 String          @map("user_id")
+  assignedAddressId      String?         @map("assigned_address_id")
+  assignedAddress        String          @map("assigned_address")
+  txHash                 String?         @unique @map("tx_hash")
+  amountUsdt             Decimal?        @map("amount_usdt") @db.Decimal(18, 6)
+  expectedAmount         Decimal         @map("expected_amount") @db.Decimal(18, 6)
+  status                 DepositStatus   @default(PENDING)
+  confirmed              Boolean         @default(false)
+  blockNumber            BigInt?         @map("block_number")
+  processedAt            DateTime?       @map("processed_at")
+  expiresAt              DateTime        @map("expires_at")
+  createdAt              DateTime        @default(now()) @map("created_at")
+  updatedAt              DateTime        @updatedAt @map("updated_at")
+  energyRecipientAddress String?         @map("energy_recipient_address")
+  cancelledAt            DateTime?       @map("cancelled_at")
+  cancelledBy            String?         @map("cancelled_by")
+  cancellationReason     String?         @map("cancellation_reason")
+  energyTransferStatus   String?         @default("PENDING") @map("energy_transfer_status")
+  energyTransferTxHash   String?         @map("energy_transfer_txhash")
+  energyTransferError    String?         @map("energy_transfer_error")
+  energyTransferAttempts Int             @default(0) @map("energy_transfer_attempts")
+  energyTransferredAt    DateTime?       @map("energy_transferred_at")
+  numberOfTransactions   Int?            @map("number_of_transactions")
+  calculatedUsdtAmount   Decimal?        @map("calculated_usdt_amount") @db.Decimal(18, 6)
+  addressPool            AddressPool?    @relation(fields: [assignedAddressId], references: [id])
+  user                   User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  energyDelivery         EnergyDelivery?
 
   @@index([assignedAddress])
   @@index([expiresAt])
@@ -85,19 +74,17 @@ model Deposit {
 }
 
 model AddressPool {
-  id                    String      @id @default(cuid())
-  address               String      @unique
-  privateKeyEncrypted   String?     @map("private_key_encrypted")
-  status                AddressStatus @default(FREE)
-  assignedToDepositId   String?     @map("assigned_to_deposit_id")
-  assignedAt            DateTime?   @map("assigned_at")
-  expiresAt             DateTime?   @map("expires_at")
-  lastUsedAt            DateTime?   @map("last_used_at")
-  usageCount            Int         @default(0) @map("usage_count")
-  createdAt             DateTime    @default(now()) @map("created_at")
-
-  // Relations
-  deposits              Deposit[]
+  id                  String        @id @default(cuid())
+  address             String        @unique
+  privateKeyEncrypted String?       @map("private_key_encrypted")
+  status              AddressStatus @default(FREE)
+  assignedToDepositId String?       @map("assigned_to_deposit_id")
+  assignedAt          DateTime?     @map("assigned_at")
+  expiresAt           DateTime?     @map("expires_at")
+  lastUsedAt          DateTime?     @map("last_used_at")
+  usageCount          Int           @default(0) @map("usage_count")
+  createdAt           DateTime      @default(now()) @map("created_at")
+  deposits            Deposit[]
 
   @@index([status])
   @@index([expiresAt])
@@ -106,20 +93,18 @@ model AddressPool {
 }
 
 model Transaction {
-  id            String          @id @default(cuid())
-  userId        String          @map("user_id")
-  type          TransactionType
-  amount        Decimal         @db.Decimal(18, 6)
-  txHash        String?         @map("tx_hash")
-  status        TransactionStatus @default(PENDING)
-  fromAddress   String?         @map("from_address")
-  toAddress     String?         @map("to_address")
-  description   String?
-  createdAt     DateTime        @default(now()) @map("created_at")
-  updatedAt     DateTime        @updatedAt @map("updated_at")
-
-  // Relations
-  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String            @id @default(cuid())
+  userId      String            @map("user_id")
+  type        TransactionType
+  amount      Decimal           @db.Decimal(18, 6)
+  txHash      String?           @map("tx_hash")
+  status      TransactionStatus @default(PENDING)
+  fromAddress String?           @map("from_address")
+  toAddress   String?           @map("to_address")
+  description String?
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("transactions")
 }
@@ -127,10 +112,207 @@ model Transaction {
 model Feedback {
   id        String   @id @default(cuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id])
   message   String
-  rating    Int?     // optional: if you want a 1–5 star type thing
+  rating    Int?
   createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model UserEnergyState {
+  id                                String                @id @default(cuid())
+  userId                            String
+  tronAddress                       String                @unique
+  currentEnergyCached               Int                   @default(0)
+  lastDelegatedAmount               Int                   @default(0)
+  lastDelegationTxHash              String?
+  lastDelegationTime                DateTime?
+  cumulativeConsumedSinceLastCharge Int                   @default(0)
+  totalConsumedToday                Int                   @default(0)
+  lastObservedEnergy                Int                   @default(0)
+  lastUsageTime                     DateTime?
+  lastPenaltyTime                   DateTime?
+  inactivityHours                   Int                   @default(0)
+  transactionsRemaining             Int                   @default(0)
+  inactivityPenalties               Int                   @default(0)
+  status                            EnergyUserStatus      @default(ACTIVE)
+  createdAt                         DateTime              @default(now())
+  updatedAt                         DateTime              @updatedAt
+  apiErrorsCount                    Int                   @default(0) @map("api_errors_count")
+  currentAllocationCharged          Int                   @default(0) @map("current_allocation_charged")
+  energyHistory                     Json?                 @map("energy_history")
+  lastAction                        String?               @map("last_action")
+  lastActionAt                      DateTime?             @map("last_action_at")
+  lastBlockchainCheck               DateTime?             @map("last_blockchain_check")
+  monitoringMetadata                Json?                 @map("monitoring_metadata")
+  logs                              EnergyAllocationLog[]
+  monitoringLogs                    EnergyMonitoringLog[]
+  user                              User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status, transactionsRemaining])
+  @@index([lastBlockchainCheck])
+  @@map("user_energy_state")
+}
+
+model EnergyAllocationLog {
+  id                         String                 @id @default(cuid())
+  userId                     String?
+  tronAddress                String
+  action                     EnergyAllocationAction
+  requestedEnergy            Int?
+  actualDelegatedEnergy      Int?
+  reclaimedEnergy            Int?
+  consumedEnergy             Int?
+  transactionsRemainingAfter Int?
+  ratioUsed                  Float?
+  txHash                     String?
+  reason                     String?
+  createdAt                  DateTime               @default(now())
+  state                      UserEnergyState        @relation(fields: [tronAddress], references: [tronAddress], onDelete: Cascade, map: "StateOnAddress")
+  user                       User?                  @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([tronAddress])
+  @@index([action])
+  @@map("energy_allocation_log")
+}
+
+model Admin {
+  id           String             @id @default(cuid())
+  email        String             @unique
+  passwordHash String             @map("password_hash")
+  name         String?
+  role         AdminRole          @default(ADMIN)
+  permissions  String[]           @default([])
+  isActive     Boolean            @default(true) @map("is_active")
+  lastLoginAt  DateTime?          @map("last_login_at")
+  createdAt    DateTime           @default(now()) @map("created_at")
+  updatedAt    DateTime           @updatedAt @map("updated_at")
+  activityLogs AdminActivityLog[]
+
+  @@map("admins")
+}
+
+model AdminActivityLog {
+  id          String   @id @default(cuid())
+  adminId     String   @map("admin_id")
+  adminEmail  String   @map("admin_email")
+  action      String
+  entityType  String?  @map("entity_type")
+  entityId    String?  @map("entity_id")
+  beforeState Json?    @map("before_state")
+  afterState  Json?    @map("after_state")
+  ipAddress   String?  @map("ip_address")
+  userAgent   String?  @map("user_agent")
+  metadata    Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+  admin       Admin    @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@index([action])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([createdAt])
+  @@map("admin_activity_logs")
+}
+
+model UserTronAddress {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  address    String
+  tag        String?
+  isVerified Boolean  @default(false) @map("is_verified")
+  isPrimary  Boolean  @default(false) @map("is_primary")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, address])
+  @@index([userId])
+  @@map("user_tron_addresses")
+}
+
+model EnergyRate {
+  id                   String   @id @default(cuid())
+  energyPerTransaction Int      @map("energy_per_transaction")
+  bufferPercentage     Decimal  @map("buffer_percentage") @db.Decimal(5, 2)
+  minEnergy            Int      @map("min_energy")
+  maxEnergy            Int      @map("max_energy")
+  description          String?
+  updatedBy            String   @map("updated_by")
+  isActive             Boolean  @default(true) @map("is_active")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive, createdAt(sort: Desc)])
+  @@map("energy_rates")
+}
+
+model EnergyDelivery {
+  id                    String    @id @default(cuid())
+  depositId             String    @unique @map("deposit_id")
+  userId                String    @map("user_id")
+  tronAddress           String    @map("tron_address")
+  totalTransactions     Int       @map("total_transactions")
+  deliveredTransactions Int       @default(0) @map("delivered_transactions")
+  lastEnergyCheck       DateTime? @map("last_energy_check")
+  lastDeliveryAt        DateTime? @map("last_delivery_at")
+  isActive              Boolean   @default(true) @map("is_active")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+  deposit               Deposit   @relation(fields: [depositId], references: [id])
+  user                  User      @relation(fields: [userId], references: [id])
+
+  @@index([userId, tronAddress, isActive])
+  @@index([lastEnergyCheck])
+  @@map("energy_deliveries")
+}
+
+model ProcessedTransaction {
+  id             String   @id @default(cuid())
+  txHash         String   @unique @map("tx_hash")
+  depositId      String   @map("deposit_id")
+  address        String
+  amountUsdt     Decimal  @map("amount_usdt") @db.Decimal(18, 6)
+  blockNumber    BigInt   @map("block_number")
+  blockTimestamp DateTime @map("block_timestamp")
+  processedAt    DateTime @default(now()) @map("processed_at")
+
+  @@index([depositId])
+  @@index([address])
+  @@index([blockTimestamp])
+  @@index([processedAt])
+  @@map("processed_transactions")
+}
+
+model EnergyMonitoringLog {
+  id             String          @id @default(cuid())
+  userId         String?         @map("user_id")
+  tronAddress    String          @map("tron_address")
+  action         String
+  logLevel       String          @default("INFO") @map("log_level")
+  energyBefore   Int?            @map("energy_before")
+  energyAfter    Int?            @map("energy_after")
+  energyDelta    Int?            @map("energy_delta")
+  txHash         String?         @map("tx_hash")
+  apiResponse    Json?           @map("api_response")
+  apiDurationMs  Int?            @map("api_duration_ms")
+  decisionReason String?         @map("decision_reason")
+  errorMessage   String?         @map("error_message")
+  errorStack     String?         @map("error_stack")
+  metadata       Json?
+  cycleId        String?         @map("cycle_id")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  energyState    UserEnergyState @relation(fields: [tronAddress], references: [tronAddress], onDelete: Cascade, map: "MonitorLogOnAddress")
+  user           User?           @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([tronAddress])
+  @@index([action])
+  @@index([logLevel])
+  @@index([cycleId])
+  @@index([createdAt])
+  @@map("energy_monitoring_logs")
 }
 
 enum DepositStatus {
@@ -161,14 +343,12 @@ enum TransactionStatus {
   FAILED
 }
 
-// Energy monitoring user status
 enum EnergyUserStatus {
   ACTIVE
   SUSPENDED
   BANNED
 }
 
-// Actions logged for energy allocation lifecycle
 enum EnergyAllocationAction {
   DELEGATE
   TOP_UP
@@ -186,217 +366,8 @@ enum EnergyAllocationAction {
   SKIP_LOCK_HELD
 }
 
-model UserEnergyState {
-  id                             String            @id @default(cuid())
-  userId                         String
-  tronAddress                    String            @unique
-  currentEnergyCached            Int               @default(0)
-  lastDelegatedAmount            Int               @default(0)
-  lastDelegationTxHash           String?
-  lastDelegationTime             DateTime?
-  cumulativeConsumedSinceLastCharge Int            @default(0)
-  totalConsumedToday             Int               @default(0)
-  lastObservedEnergy             Int               @default(0)
-  lastUsageTime                  DateTime?
-  lastPenaltyTime                DateTime?
-  inactivityHours                Int               @default(0)
-  transactionsRemaining          Int               @default(0)
-  inactivityPenalties            Int               @default(0)
-  lastAction                     String?           @map("last_action")
-  lastActionAt                   DateTime?         @map("last_action_at")
-  // Amount of energy currently allocated (previously a boolean flag)
-  currentAllocationCharged       Int               @default(0) @map("current_allocation_charged")
-  // New fields for enhanced monitoring
-  energyHistory                  Json?             @map("energy_history") // Array of {timestamp, energy, source}
-  lastBlockchainCheck            DateTime?         @map("last_blockchain_check")
-  apiErrorsCount                 Int               @default(0) @map("api_errors_count")
-  monitoringMetadata             Json?             @map("monitoring_metadata")
-  status                         EnergyUserStatus  @default(ACTIVE)
-  createdAt                      DateTime          @default(now())
-  updatedAt                      DateTime          @updatedAt
-  user                           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  logs                           EnergyAllocationLog[]
-  monitoringLogs                 EnergyMonitoringLog[]
-
-  @@index([userId])
-  @@index([status, transactionsRemaining])
-  @@index([lastBlockchainCheck])
-  @@map("user_energy_state")
-}
-
-model EnergyAllocationLog {
-  id                          String                  @id @default(cuid())
-  userId                      String?
-  tronAddress                 String
-  action                      EnergyAllocationAction
-  requestedEnergy             Int?
-  actualDelegatedEnergy       Int?
-  reclaimedEnergy             Int?
-  consumedEnergy              Int?
-  transactionsRemainingAfter  Int?
-  ratioUsed                   Float?
-  txHash                      String?
-  reason                      String?
-  createdAt                   DateTime                @default(now())
-  user                        User?                   @relation(fields: [userId], references: [id], onDelete: SetNull)
-  state                       UserEnergyState?        @relation(fields: [tronAddress], references: [tronAddress], onDelete: Cascade, map: "StateOnAddress")
-
-  @@index([userId])
-  @@index([tronAddress])
-  @@index([action])
-  @@map("energy_allocation_log")
-}
-
-model Admin {
-  id              String      @id @default(cuid())
-  email           String      @unique
-  passwordHash    String      @map("password_hash")
-  name            String?
-  role            AdminRole   @default(ADMIN)
-  permissions     String[]    @default([])
-  isActive        Boolean     @default(true) @map("is_active")
-  lastLoginAt     DateTime?   @map("last_login_at")
-  createdAt       DateTime    @default(now()) @map("created_at")
-  updatedAt       DateTime    @updatedAt @map("updated_at")
-  
-  // Relations
-  activityLogs    AdminActivityLog[]
-
-  @@map("admins")
-}
-
-model AdminActivityLog {
-  id              String      @id @default(cuid())
-  adminId         String      @map("admin_id")
-  adminEmail      String      @map("admin_email")
-  action          String      // LOGIN, CREATE_USER, UPDATE_USER, DELETE_USER, UPDATE_DEPOSIT, etc.
-  entityType      String?     @map("entity_type") // USER, DEPOSIT, TRANSACTION, ADMIN, etc.
-  entityId        String?     @map("entity_id")
-  beforeState     Json?       @map("before_state")
-  afterState      Json?       @map("after_state")
-  ipAddress       String?     @map("ip_address")
-  userAgent       String?     @map("user_agent")
-  metadata        Json?       // Additional context data
-  createdAt       DateTime    @default(now()) @map("created_at")
-  
-  // Relations
-  admin           Admin       @relation(fields: [adminId], references: [id], onDelete: Cascade)
-  
-  @@index([adminId])
-  @@index([action])
-  @@index([entityType])
-  @@index([entityId])
-  @@index([createdAt])
-  @@map("admin_activity_logs")
-}
-
 enum AdminRole {
   SUPER_ADMIN
   ADMIN
   VIEWER
-}
-
-model UserTronAddress {
-  id          String    @id @default(cuid())
-  userId      String    @map("user_id")
-  address     String
-  tag         String?   // Optional tag/label for the address
-  isVerified  Boolean   @default(false) @map("is_verified")
-  isPrimary   Boolean   @default(false) @map("is_primary")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
-
-  // Relations
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, address])
-  @@index([userId])
-  @@map("user_tron_addresses")
-}
-
-model EnergyRate {
-  id                   String    @id @default(cuid())
-  energyPerTransaction Int       @map("energy_per_transaction") // Energy units per USDT transaction
-  bufferPercentage     Decimal   @map("buffer_percentage") @db.Decimal(5, 2) // Buffer % (e.g., 20.00)
-  minEnergy            Int       @map("min_energy") // Minimum energy delegation
-  maxEnergy            Int       @map("max_energy") // Maximum energy delegation
-  description          String?   // Optional description for this rate
-  updatedBy            String    @map("updated_by") // Admin ID who updated
-  isActive             Boolean   @default(true) @map("is_active")
-  createdAt            DateTime  @default(now()) @map("created_at")
-  updatedAt            DateTime  @updatedAt @map("updated_at")
-  
-  @@index([isActive, createdAt(sort: Desc)])
-  @@map("energy_rates")
-}
-
-model EnergyDelivery {
-  id                    String    @id @default(cuid())
-  depositId             String    @map("deposit_id") @unique
-  userId                String    @map("user_id")
-  tronAddress           String    @map("tron_address")
-  totalTransactions     Int       @map("total_transactions") // Paid for
-  deliveredTransactions Int       @default(0) @map("delivered_transactions") // Actually delivered
-  lastEnergyCheck       DateTime? @map("last_energy_check")
-  lastDeliveryAt        DateTime? @map("last_delivery_at")
-  isActive              Boolean   @default(true) @map("is_active")
-  createdAt             DateTime  @default(now()) @map("created_at")
-  updatedAt             DateTime  @updatedAt @map("updated_at")
-  
-  // Relations
-  deposit               Deposit   @relation(fields: [depositId], references: [id])
-  user                  User      @relation(fields: [userId], references: [id])
-  
-  @@index([userId, tronAddress, isActive])
-  @@index([lastEnergyCheck])
-  @@map("energy_deliveries")
-}
-
-model ProcessedTransaction {
-  id                String    @id @default(cuid())
-  txHash            String    @unique @map("tx_hash")
-  depositId         String    @map("deposit_id")
-  address           String
-  amountUsdt        Decimal   @map("amount_usdt") @db.Decimal(18, 6)
-  blockNumber       BigInt    @map("block_number")
-  blockTimestamp    DateTime  @map("block_timestamp")
-  processedAt       DateTime  @default(now()) @map("processed_at")
-
-  @@index([depositId])
-  @@index([address])
-  @@index([blockTimestamp])
-  @@index([processedAt])
-  @@map("processed_transactions")
-}
-
-model EnergyMonitoringLog {
-  id                String            @id @default(cuid())
-  userId            String?           @map("user_id")
-  tronAddress       String            @map("tron_address")
-  action            String            // CHECK_ENERGY, DELEGATE, RECLAIM, ERROR, etc.
-  logLevel          String            @default("INFO") @map("log_level") // DEBUG, INFO, WARN, ERROR
-  energyBefore      Int?              @map("energy_before")
-  energyAfter       Int?              @map("energy_after")
-  energyDelta       Int?              @map("energy_delta")
-  txHash            String?           @map("tx_hash")
-  apiResponse       Json?             @map("api_response") // Full blockchain API response
-  apiDurationMs     Int?              @map("api_duration_ms")
-  decisionReason    String?           @map("decision_reason") // Why action was taken
-  errorMessage      String?           @map("error_message")
-  errorStack        String?           @map("error_stack")
-  metadata          Json?             // Additional context data
-  cycleId           String?           @map("cycle_id") // To group logs from same cron cycle
-  createdAt         DateTime          @default(now()) @map("created_at")
-  
-  // Relations
-  user              User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
-  energyState       UserEnergyState?  @relation(fields: [tronAddress], references: [tronAddress], onDelete: Cascade, map: "MonitorLogOnAddress")
-
-  @@index([userId])
-  @@index([tronAddress])
-  @@index([action])
-  @@index([logLevel])
-  @@index([cycleId])
-  @@index([createdAt])
-  @@map("energy_monitoring_logs")
 }

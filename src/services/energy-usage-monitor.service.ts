@@ -35,15 +35,36 @@ export class EnergyUsageMonitorService {
 
   // simple in-memory throttle map (address:action -> timestamp ms)
   private readonly lastActionTimes = new Map<string, number>();
+  
+  // Prevent concurrent execution
+  private isRunning = false;
+
+  /**
+   * Calculate transaction cost based on reclaimed energy
+   * @param reclaimedEnergy Energy amount reclaimed
+   * @returns 1 if reclaimed >= 65.5k, 2 if reclaimed < 65.5k
+   */
+  private calculateTransactionCost(reclaimedEnergy: number): number {
+    return reclaimedEnergy >= this.ENERGY_UNIT ? 1 : 2;
+  }
 
   async runCycle(): Promise<void> {
-    const start = Date.now();
-    const cycleId = energyMonitoringLogger.startCycle();
-    logger.info('[EnergyMonitor] Cycle start', { cycleId });
+    // Prevent concurrent execution
+    if (this.isRunning) {
+      logger.warn('[EnergyMonitor] Cycle already running, skipping this execution');
+      return;
+    }
+    
+    this.isRunning = true;
+    
+    try {
+      const start = Date.now();
+      const cycleId = energyMonitoringLogger.startCycle();
+      logger.info('[EnergyMonitor] Cycle start', { cycleId });
 
-    // Fetch active states
-  // @ts-ignore - model added via pending migration
-    const states: any[] = await (prisma as any).userEnergyState.findMany({
+      // Fetch active states
+      // @ts-ignore - model added via pending migration
+      const states: any[] = await (prisma as any).userEnergyState.findMany({
       // @ts-ignore status field exists post-migration
       where: { status: 'ACTIVE' },
       take: this.MAX_FETCH,
@@ -53,6 +74,7 @@ export class EnergyUsageMonitorService {
     if (states.length === 0) {
       logger.debug('[EnergyMonitor] No active user energy states to process');
       await energyMonitoringLogger.endCycle({ usersProcessed: 0 });
+      this.isRunning = false;
       return;
     }
 
@@ -122,8 +144,17 @@ export class EnergyUsageMonitorService {
       durationMs: duration
     };
     
-    await energyMonitoringLogger.endCycle(stats);
-    logger.info('[EnergyMonitor] Cycle complete', stats);
+      await energyMonitoringLogger.endCycle(stats);
+      logger.info('[EnergyMonitor] Cycle complete', stats);
+    } catch (error) {
+      logger.error('[EnergyMonitor] Cycle failed with error', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined
+      });
+    } finally {
+      // Always reset the running flag
+      this.isRunning = false;
+    }
   }
 
     private canRunAction(address: string, action: EnergyAllocationAction): boolean {
@@ -324,7 +355,7 @@ export class EnergyUsageMonitorService {
                   'No transactions remaining'
                 );
                 
-                logs.push({ tronAddress: state.tronAddress, action: 'RECLAIM_FULL', reclaimedEnergy: result.estimatedRecoveredEnergy, reason: 'No transactions remaining', txHash: result.txHash });
+                logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'RECLAIM_FULL', reclaimedEnergy: result.estimatedRecoveredEnergy, reason: 'No transactions remaining', txHash: result.txHash });
                 state.lastAction = 'RECLAIM_FULL';
                 state.lastActionAt = now;
                 bufferActionTaken = true;
@@ -339,10 +370,10 @@ export class EnergyUsageMonitorService {
                   'Reclaim failed',
                   e instanceof Error ? e : new Error('Unknown error')
                 );
-                logs.push({ tronAddress: state.tronAddress, action: 'OVERRIDE', reason: 'Reclaim-all failed: ' + (e instanceof Error ? e.message : 'unknown') });
+                logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'OVERRIDE', reason: 'Reclaim-all failed: ' + (e instanceof Error ? e.message : 'unknown') });
               }
             } else {
-              logs.push({ tronAddress: state.tronAddress, action: 'SKIP_LOCK_HELD', reason: 'Throttle reclaim full' });
+              logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'SKIP_LOCK_HELD', reason: 'Throttle reclaim full' });
             }
           }
           // 2. Energy is sufficient (>= 131k) -> do nothing
@@ -352,163 +383,163 @@ export class EnergyUsageMonitorService {
               currentEnergy,
               threshold: this.FULL_BUFFER
             });
-            logs.push({ tronAddress: state.tronAddress, action: 'BUFFER_OK', reason: `Energy sufficient (${currentEnergy} >= ${this.FULL_BUFFER})` });
+            logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'BUFFER_OK', reason: `Energy sufficient (${currentEnergy} >= ${this.FULL_BUFFER})` });
           }
-          // 3. Energy between 65.5k and 131k -> delegate exactly 65.5k and reduce count by 1
-          else if (currentEnergy >= this.ENERGY_UNIT && currentEnergy < this.FULL_BUFFER && state.transactionsRemaining > 0) {
+          // 3. Energy below 131k -> Reclaim ALL current energy, then delegate 131k
+          else if (currentEnergy < this.FULL_BUFFER && state.transactionsRemaining > 0) {
             await energyMonitoringLogger.logDecision(
               state.tronAddress,
               state.userId,
-              'DELEGATE_65K',
-              `Energy between thresholds (${currentEnergy}), delegating one transaction worth`,
+              'RECLAIM_AND_DELEGATE',
+              `Energy below 131k (${currentEnergy}), will reclaim all and delegate 131k`,
               { currentEnergy, transactionsRemaining: state.transactionsRemaining }
             );
             
-            if (this.canRunAction(state.tronAddress, 'DELEGATE_65K')) {
+            if (this.canRunAction(state.tronAddress, 'DELEGATE_131K')) {
+              let reclaimedEnergy = 0;
+              let reclaimTxHash: string = '';
+              
+              // Step 1: Try to reclaim ALL current energy (max reclaim)
+              if (currentEnergy > 0) {
+                try {
+                  logger.info('[EnergyMonitor] Attempting to reclaim all current energy', {
+                    address: state.tronAddress,
+                    currentEnergy
+                  });
+                  
+                  const reclaimResult = await energyService.reclaimAllEnergyFromAddress(state.tronAddress);
+                  reclaimedEnergy = reclaimResult.reclaimedEnergy;
+                  reclaimTxHash = reclaimResult.txHash;
+                  
+                  if (reclaimedEnergy > 0) {
+                    await energyMonitoringLogger.logReclaim(
+                      state.tronAddress,
+                      state.userId,
+                      currentEnergy,
+                      reclaimedEnergy,
+                      reclaimTxHash,
+                      'Reclaimed all available energy'
+                    );
+                    
+                    logger.info('[EnergyMonitor] Energy reclaimed successfully', {
+                      address: state.tronAddress,
+                      requestedReclaim: currentEnergy,
+                      actualReclaimed: reclaimedEnergy,
+                      txHash: reclaimTxHash
+                    });
+                    
+                    logs.push({
+                      tronAddress: state.tronAddress,
+                      userId: state.userId,
+                      action: 'RECLAIM_FULL',
+                      reclaimedEnergy,
+                      txHash: reclaimTxHash,
+                      reason: `Reclaimed ${reclaimedEnergy} energy (all available)`
+                    });
+                  } else {
+                    logger.info('[EnergyMonitor] No energy could be reclaimed', {
+                      address: state.tronAddress,
+                      currentEnergy
+                    });
+                  }
+                } catch (e) {
+                  logger.warn('[EnergyMonitor] Energy reclaim failed, continuing with delegation', {
+                    address: state.tronAddress,
+                    currentEnergy,
+                    error: e instanceof Error ? e.message : 'Unknown error'
+                  });
+                  
+                  await energyMonitoringLogger.logReclaim(
+                    state.tronAddress,
+                    state.userId,
+                    currentEnergy,
+                    0,
+                    undefined,
+                    'Reclaim failed',
+                    e instanceof Error ? e : new Error('Unknown error')
+                  );
+                  
+                  // If reclaim fails, treat as 0 reclaimed
+                  reclaimedEnergy = 0;
+                }
+              } else {
+                logger.info('[EnergyMonitor] No energy to reclaim (current energy is 0)', {
+                  address: state.tronAddress
+                });
+              }
+              
+              // Step 2: ALWAYS delegate exactly 131k energy
               try {
-                // Transfer exactly 65.5k energy
-                const res = await energyService.transferEnergyDirect(state.tronAddress, this.ENERGY_UNIT);
+                logger.info('[EnergyMonitor] Delegating 131k energy', {
+                  address: state.tronAddress,
+                  energyToDelegate: this.FULL_BUFFER,
+                  reclaimedEnergy
+                });
+                
+                const res = await energyService.transferEnergyDirect(state.tronAddress, this.FULL_BUFFER);
                 
                 await energyMonitoringLogger.logDelegation(
                   state.tronAddress,
                   state.userId,
-                  currentEnergy,
-                  this.ENERGY_UNIT,
+                  0, // Current energy is 0 after reclaim
+                  this.FULL_BUFFER,
                   res.actualEnergy,
                   res.txHash,
-                  'Top up to maintain buffer'
+                  `Delegated 131k after reclaiming ${reclaimedEnergy} energy`
                 );
                 
-                // Reduce transaction count by 1
-                state.transactionsRemaining -= 1;
+                // Step 3: Calculate transaction cost based on reclaimed energy
+                const transactionCost = this.calculateTransactionCost(reclaimedEnergy);
+                state.transactionsRemaining -= transactionCost;
                 
-                logs.push({ 
-                  tronAddress: state.tronAddress, 
-                  action: 'DELEGATE_65K', 
-                  requestedEnergy: this.ENERGY_UNIT, 
-                  actualDelegatedEnergy: res.actualEnergy, 
-                  txHash: res.txHash, 
-                  reason: 'Energy between 65.5k and 131k',
-                  transactionsRemainingAfter: state.transactionsRemaining
-                });
-                
-                state.lastDelegationTime = now;
-                state.lastDelegatedAmount = res.actualEnergy;
-                state.lastAction = 'DELEGATE_65K';
-                state.lastActionAt = now;
-                state.currentAllocationCharged = (state.currentAllocationCharged || 0) + res.actualEnergy;
-                
-                // Update current energy
-                currentEnergy = currentEnergy + res.actualEnergy;
-                state.lastObservedEnergy = currentEnergy;
-                bufferActionTaken = true;
-                
-                logger.info('[EnergyMonitor] Delegated 65.5k energy, reduced count by 1', {
+                logger.info('[EnergyMonitor] Transaction cost calculation', {
                   address: state.tronAddress,
-                  energyBefore: currentEnergy - res.actualEnergy,
-                  energyAfter: currentEnergy,
-                  delegated: res.actualEnergy,
+                  reclaimedEnergy,
+                  transactionCost,
+                  reason: reclaimedEnergy >= this.ENERGY_UNIT ? 'Reclaimed >= 65.5k' : 'Reclaimed < 65.5k',
                   transactionsRemaining: state.transactionsRemaining
                 });
                 
-                // Update EnergyDelivery records
-                await this.updateEnergyDeliveryRecords(state.tronAddress, 1, now);
-              } catch (e) {
-                const errorMessage = e instanceof Error ? e.message : 'Unknown error';
-                logger.error('[EnergyMonitor] Energy delegation failed', {
-                  address: state.tronAddress,
-                  requestedEnergy: this.ENERGY_UNIT,
-                  error: errorMessage,
-                  errorDetails: e instanceof Error ? e.stack : e
-                });
-                
-                await energyMonitoringLogger.logDelegation(
-                  state.tronAddress,
-                  state.userId,
-                  currentEnergy,
-                  this.ENERGY_UNIT,
-                  0,
-                  undefined,
-                  'Delegation failed',
-                  e instanceof Error ? e : new Error('Unknown error')
-                );
-                logs.push({ tronAddress: state.tronAddress, action: 'OVERRIDE', reason: 'Delegate 65k failed: ' + errorMessage });
-              }
-            } else {
-              logs.push({ tronAddress: state.tronAddress, action: 'SKIP_LOCK_HELD', reason: 'Throttle delegate 65k' });
-            }
-          }
-          // 4. Energy below 65.5k -> delegate based on remaining transactions
-          else if (currentEnergy < this.ENERGY_UNIT && state.transactionsRemaining > 0) {
-            // Determine how much to delegate based on remaining transactions
-            const transactionsToDelegate = Math.min(2, state.transactionsRemaining);
-            const energyToDelegate = transactionsToDelegate * this.ENERGY_UNIT;
-            
-            await energyMonitoringLogger.logDecision(
-              state.tronAddress,
-              state.userId,
-              transactionsToDelegate === 2 ? 'DELEGATE_131K' : 'DELEGATE_65K',
-              `Energy below minimum (${currentEnergy} < ${this.ENERGY_UNIT}), delegating ${transactionsToDelegate} transaction(s) worth`,
-              { currentEnergy, transactionsRemaining: state.transactionsRemaining, transactionsToDelegate }
-            );
-            
-            const actionName = transactionsToDelegate === 2 ? 'DELEGATE_131K' : 'DELEGATE_65K';
-            
-            if (this.canRunAction(state.tronAddress, actionName)) {
-              try {
-                const res = await energyService.transferEnergyDirect(state.tronAddress, energyToDelegate);
-                
-                await energyMonitoringLogger.logDelegation(
-                  state.tronAddress,
-                  state.userId,
-                  currentEnergy,
-                  energyToDelegate,
-                  res.actualEnergy,
-                  res.txHash,
-                  `Energy below minimum, delegated ${transactionsToDelegate} transaction(s)`
-                );
-                
-                // Reduce transaction count by the number of transactions delegated
-                state.transactionsRemaining -= transactionsToDelegate;
-                
-                logs.push({ 
-                  tronAddress: state.tronAddress, 
-                  action: actionName, 
-                  requestedEnergy: energyToDelegate, 
-                  actualDelegatedEnergy: res.actualEnergy, 
-                  txHash: res.txHash, 
-                  reason: `Energy below minimum, delegated ${transactionsToDelegate} tx`,
-                  transactionsRemainingAfter: state.transactionsRemaining
+                logs.push({
+                  tronAddress: state.tronAddress,
+                  userId: state.userId,
+                  action: 'DELEGATE_131K',
+                  requestedEnergy: this.FULL_BUFFER,
+                  actualDelegatedEnergy: res.actualEnergy,
+                  txHash: res.txHash,
+                  reason: `Delegated 131k after reclaim, cost: ${transactionCost} tx (reclaimed: ${reclaimedEnergy})`,
+                  transactionsRemainingAfter: state.transactionsRemaining,
+                  reclaimedEnergy
                 });
                 
                 state.lastDelegationTime = now;
                 state.lastDelegatedAmount = res.actualEnergy;
-                state.lastAction = actionName;
+                state.lastAction = 'DELEGATE_131K';
                 state.lastActionAt = now;
                 state.currentAllocationCharged = res.actualEnergy;
                 
-                // Update current energy
-                currentEnergy = currentEnergy + res.actualEnergy;
+                // Update current energy to 131k (what we just delegated)
+                currentEnergy = this.FULL_BUFFER;
                 state.lastObservedEnergy = currentEnergy;
                 bufferActionTaken = true;
                 
-                logger.info('[EnergyMonitor] Delegated energy for low balance', {
+                logger.info('[EnergyMonitor] Reclaim and delegate completed successfully', {
                   address: state.tronAddress,
-                  energyBefore: currentEnergy - res.actualEnergy,
-                  energyAfter: currentEnergy,
-                  delegated: res.actualEnergy,
-                  transactionsDelegated: transactionsToDelegate,
-                  transactionsRemaining: state.transactionsRemaining
+                  reclaimedEnergy,
+                  delegatedEnergy: res.actualEnergy,
+                  transactionCost,
+                  transactionsRemaining: state.transactionsRemaining,
+                  finalEnergy: this.FULL_BUFFER
                 });
                 
                 // Update EnergyDelivery records
-                await this.updateEnergyDeliveryRecords(state.tronAddress, transactionsToDelegate, now);
+                await this.updateEnergyDeliveryRecords(state.tronAddress, transactionCost, now);
               } catch (e) {
                 const errorMessage = e instanceof Error ? e.message : 'Unknown error';
-                logger.error('[EnergyMonitor] Energy delegation failed', {
+                logger.error('[EnergyMonitor] Energy delegation failed after reclaim', {
                   address: state.tronAddress,
-                  requestedEnergy: energyToDelegate,
-                  transactionsToDelegate,
+                  requestedEnergy: this.FULL_BUFFER,
+                  reclaimedEnergy,
                   error: errorMessage,
                   errorDetails: e instanceof Error ? e.stack : e
                 });
@@ -516,17 +547,17 @@ export class EnergyUsageMonitorService {
                 await energyMonitoringLogger.logDelegation(
                   state.tronAddress,
                   state.userId,
-                  currentEnergy,
-                  energyToDelegate,
+                  0,
+                  this.FULL_BUFFER,
                   0,
                   undefined,
                   'Delegation failed',
                   e instanceof Error ? e : new Error('Unknown error')
                 );
-                logs.push({ tronAddress: state.tronAddress, action: 'OVERRIDE', reason: 'Delegate failed: ' + errorMessage });
+                logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'OVERRIDE', reason: 'Delegate 131k failed: ' + errorMessage });
               }
             } else {
-              logs.push({ tronAddress: state.tronAddress, action: 'SKIP_LOCK_HELD', reason: `Throttle ${actionName}` });
+              logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'SKIP_LOCK_HELD', reason: 'Throttle delegate 131k' });
             }
           }
           // 5. Partial reclaim after inactivity penalty if excess remains
@@ -537,32 +568,52 @@ export class EnergyUsageMonitorService {
               if (this.canRunAction(state.tronAddress, 'RECLAIM_PARTIAL')) {
                 try {
                   const res = await energyService.reclaimEnergyAmountFromAddress(state.tronAddress, reclaimEnergy);
-                  logs.push({ tronAddress: state.tronAddress, action: 'RECLAIM_PARTIAL', reclaimedEnergy: res.estimatedRecoveredEnergy, txHash: res.txHash, reason: 'Inactivity partial reclaim' });
+                  logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'RECLAIM_PARTIAL', reclaimedEnergy: res.estimatedRecoveredEnergy, txHash: res.txHash, reason: 'Inactivity partial reclaim' });
                   state.lastAction = 'RECLAIM_PARTIAL';
                   state.lastActionAt = now;
                   state.currentAllocationCharged = target;
                   bufferActionTaken = true;
                 } catch (e) {
-                  logs.push({ tronAddress: state.tronAddress, action: 'OVERRIDE', reason: 'Partial reclaim failed: ' + (e instanceof Error ? e.message : 'unknown') });
+                  logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'OVERRIDE', reason: 'Partial reclaim failed: ' + (e instanceof Error ? e.message : 'unknown') });
                 }
               } else {
-                logs.push({ tronAddress: state.tronAddress, action: 'SKIP_LOCK_HELD', reason: 'Throttle partial reclaim' });
+                logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'SKIP_LOCK_HELD', reason: 'Throttle partial reclaim' });
               }
             }
           }
         } catch (e) {
-          logs.push({ tronAddress: state.tronAddress, action: 'OVERRIDE', reason: 'Evaluation error: ' + (e instanceof Error ? e.message : 'unknown') });
+          logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'OVERRIDE', reason: 'Evaluation error: ' + (e instanceof Error ? e.message : 'unknown') });
         }
       }
 
       if (!bufferActionTaken) {
-        logs.push({ tronAddress: state.tronAddress, action: 'BUFFER_OK', reason: 'No buffer action needed' });
+        logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'BUFFER_OK', reason: 'No buffer action needed' });
       }
 
       // Persist logs
       for (const l of logs) {
         // @ts-ignore - pending migration
-        await (prisma as any).energyAllocationLog.create({ data: l });
+        await (prisma as any).energyAllocationLog.create({ 
+          data: {
+            // Connect through relations
+            state: {
+              connect: { tronAddress: l.tronAddress }
+            },
+            user: l.userId ? {
+              connect: { id: l.userId }
+            } : undefined,
+            // Include all valid fields (excluding transactionCost as it's not in schema)
+            action: l.action,
+            requestedEnergy: l.requestedEnergy || null,
+            actualDelegatedEnergy: l.actualDelegatedEnergy || null,
+            reclaimedEnergy: l.reclaimedEnergy || null,
+            consumedEnergy: l.consumedEnergy || null,
+            transactionsRemainingAfter: l.transactionsRemainingAfter || null,
+            ratioUsed: l.ratioUsed || null,
+            txHash: l.txHash || null,
+            reason: l.reason || null
+          }
+        });
       }
 
       // Log before persisting
