@@ -470,10 +470,11 @@ export class EnergyUsageMonitorService {
               
               // Step 2: ALWAYS delegate exactly 131k energy
               try {
-                logger.info('[EnergyMonitor] Delegating 131k energy', {
+                logger.info('[EnergyMonitor] Delegating energy buffer', {
                   address: state.tronAddress,
                   energyToDelegate: this.FULL_BUFFER,
-                  reclaimedEnergy
+                  reclaimedEnergy,
+                  note: `Requesting ${this.FULL_BUFFER.toLocaleString()} energy units for buffer`
                 });
                 
                 const res = await energyService.transferEnergyDirect(state.tronAddress, this.FULL_BUFFER);

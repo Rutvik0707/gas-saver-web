@@ -318,8 +318,8 @@ export class EnergyService {
         step4b_withoutBuffer: trxAmount.toFixed(6),
         step5_delegationAmountSun: delegationAmountSun,
         step6_estimatedEnergyReceived: Math.floor(delegationTrxAmount * energyPerTrx),
-  calculation: `${energyAmount} energy ÷ ${energyPerTrx.toFixed(2)} = ${trxAmount.toFixed(6)} TRX × 1.05 buffer = ${delegationTrxAmount.toFixed(6)} TRX → ${delegationAmountSun} SUN`,
-        note: `Using dynamic calculation: 1 TRX ≈ ${energyPerTrx.toFixed(2)} energy`,
+        calculation: `${energyAmount} energy ÷ ${energyPerTrx.toFixed(2)} = ${trxAmount.toFixed(6)} TRX × 1.05 buffer = ${delegationTrxAmount.toFixed(6)} TRX → ${delegationAmountSun} SUN`,
+        note: `Delegating ${delegationTrxAmount.toFixed(2)} TRX to provide ~${Math.floor(delegationTrxAmount * energyPerTrx).toLocaleString()} energy (requested: ${energyAmount.toLocaleString()})`,
       });
       
       // Check if system wallet has enough STAKED TRX (not balance)
@@ -874,9 +874,23 @@ export class EnergyService {
       const accountResources = await systemTronWeb.trx.getAccountResources(systemAddress);
       const account = await systemTronWeb.trx.getAccount(systemAddress);
       
-      // Get total staked for energy (in SUN)
-      const stakedForEnergy = account.account_resource?.frozen_balance_for_energy?.frozen_balance || 0;
-      const stakedTrx = tronUtils.fromSun(stakedForEnergy);
+      // Get total staked for energy using Stake 2.0 (frozenV2)
+      let stakedForEnergySun = 0;
+      
+      // First try Stake 2.0 (frozenV2)
+      const frozenV2 = account.frozenV2 || [];
+      frozenV2.forEach((frozen: any) => {
+        if (frozen.type === 'ENERGY') {
+          stakedForEnergySun += frozen.amount || 0;
+        }
+      });
+      
+      // If no Stake 2.0, fall back to Stake 1.0 (for compatibility)
+      if (stakedForEnergySun === 0) {
+        stakedForEnergySun = account.account_resource?.frozen_balance_for_energy?.frozen_balance || 0;
+      }
+      
+      const stakedTrx = tronUtils.fromSun(stakedForEnergySun);
       
       // Get total energy limit
       const totalEnergy = accountResources.EnergyLimit || 0;
@@ -887,7 +901,9 @@ export class EnergyService {
         logger.info('Calculated energy per TRX ratio', {
           totalEnergy,
           stakedTrx,
+          stakedForEnergySun,
           ratio: ratio.toFixed(2),
+          method: frozenV2.length > 0 ? 'Stake 2.0' : 'Stake 1.0',
           timestamp: new Date().toISOString()
         });
         return ratio;
@@ -896,7 +912,8 @@ export class EnergyService {
       // Fallback to observed ratio if calculation fails
       logger.warn('Could not calculate energy ratio, using fallback', {
         totalEnergy,
-        stakedTrx
+        stakedTrx,
+        stakedForEnergySun
       });
       return 14.5; // Based on observed test results
     } catch (error) {
