@@ -28,6 +28,7 @@
     "seed": "ts-node prisma/seed.ts",
     "seed:admin": "ts-node scripts/seed-admin.ts",
     "migrate:energy-deliveries": "ts-node scripts/migrate-energy-deliveries.ts",
+    "test:energy-reclaim": "ts-node scripts/test-energy-reclaim.ts",
     "studio": "prisma studio",
     "generate-keys": "ts-node scripts/generate-tron-keys.ts",
     "generate-system-wallet": "ts-node scripts/generate-system-wallet.ts",

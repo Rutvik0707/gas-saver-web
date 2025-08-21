@@ -1388,7 +1388,7 @@ export class EnergyService {
 
   /**
    * Reclaim ALL available energy from an address (the entire current balance)
-   * This assumes all current energy was previously delegated
+   * This ensures ALL delegated energy is reclaimed, including any newly generated energy
    * @param targetAddress Address to reclaim energy from
    * @returns Reclaim result with transaction hash and recovered energy
    */
@@ -1404,31 +1404,43 @@ export class EnergyService {
       throw new Error('Invalid target TRON address');
     }
     
-    // Get current energy balance (this is what we'll try to reclaim)
+    // Get current energy balance (visible energy)
     const currentEnergy = await this.getEnergyBalance(targetAddress);
     
-    // Also get delegation info for comparison
+    // Get delegation info - this is critical for getting the actual delegated amount
     const delegationInfo = await this.getDelegatedResourceToAddress(targetAddress);
     
-    logger.info('[EnergyService] Attempting to reclaim all energy', {
+    logger.info('[EnergyService] Reclaim ALL energy - Analysis', {
       targetAddress,
       currentEnergy,
       delegatedEnergy: delegationInfo.delegatedEnergy,
       delegatedTrx: delegationInfo.delegatedTrx,
       difference: currentEnergy - delegationInfo.delegatedEnergy,
+      hasNewlyGeneratedEnergy: currentEnergy > delegationInfo.delegatedEnergy,
       operationId
     });
     
-    if (currentEnergy <= 0) {
-      logger.info('[EnergyService] No energy to reclaim', {
+    // IMPORTANT: Always prioritize delegation info over current energy
+    // This ensures we reclaim ALL delegated energy, not just what's visible
+    if (!delegationInfo.canReclaim || delegationInfo.delegatedTrx <= 0) {
+      // If no delegation info, check if we have current energy
+      if (currentEnergy <= 0) {
+        logger.info('[EnergyService] No energy to reclaim (no delegation info and no current energy)', {
+          targetAddress,
+          currentEnergy,
+          delegationInfo
+        });
+        return {
+          txHash: '',
+          reclaimedEnergy: 0,
+          reclaimedTrx: 0
+        };
+      }
+      // Try to reclaim based on current energy as fallback
+      logger.warn('[EnergyService] No delegation info available, using current energy as fallback', {
         targetAddress,
         currentEnergy
       });
-      return {
-        txHash: '',
-        reclaimedEnergy: 0,
-        reclaimedTrx: 0
-      };
     }
     
     // Log reclaim start
@@ -1439,6 +1451,7 @@ export class EnergyService {
       metadata: {
         operationId,
         currentEnergy,
+        delegatedEnergy: delegationInfo.delegatedEnergy,
         status: 'initiated'
       }
     });
@@ -1446,39 +1459,34 @@ export class EnergyService {
     const systemWalletAddress = config.systemWallet.address;
     const energyPerTrx = await this.getCachedEnergyPerTrx();
     
-    // Convert current energy to TRX amount for undelegation
-    const trxAmountFromEnergy = currentEnergy / energyPerTrx;
-    let sunAmountFromEnergy = Math.floor(tronUtils.toSun(trxAmountFromEnergy));
+    // ALWAYS use delegation info as primary source when available
+    let sunAmount = 0;
+    let sourceUsed = '';
     
-    // Compare with actual delegated amount
-    let sunAmount = sunAmountFromEnergy;
     if (delegationInfo.canReclaim && delegationInfo.delegatedTrx > 0) {
-      const sunAmountFromDelegation = Math.floor(tronUtils.toSun(delegationInfo.delegatedTrx));
+      // Use exact delegated amount - this ensures ALL delegated energy is reclaimed
+      sunAmount = Math.floor(tronUtils.toSun(delegationInfo.delegatedTrx));
+      sourceUsed = 'delegation_info';
       
-      logger.info('[EnergyService] Comparing reclaim amounts', {
+      logger.info('[EnergyService] Using EXACT delegation amount for full reclaim', {
         targetAddress,
-        fromCurrentEnergy: {
-          energy: currentEnergy,
-          trx: trxAmountFromEnergy,
-          sun: sunAmountFromEnergy
-        },
-        fromDelegationInfo: {
-          energy: delegationInfo.delegatedEnergy,
-          trx: delegationInfo.delegatedTrx,
-          sun: sunAmountFromDelegation
-        },
-        difference: sunAmountFromDelegation - sunAmountFromEnergy,
-        operationId
+        delegatedTrx: delegationInfo.delegatedTrx,
+        delegatedEnergy: delegationInfo.delegatedEnergy,
+        sunAmount,
+        note: 'This will reclaim ALL delegated energy including any newly generated'
       });
+    } else {
+      // Fallback: Use current energy (less reliable)
+      const trxAmountFromEnergy = currentEnergy / energyPerTrx;
+      sunAmount = Math.floor(tronUtils.toSun(trxAmountFromEnergy));
+      sourceUsed = 'current_energy';
       
-      // Use the larger of the two amounts (more likely to be the actual delegated amount)
-      if (sunAmountFromDelegation > sunAmountFromEnergy) {
-        logger.info('[EnergyService] Using delegation info amount (larger)', {
-          originalSun: sunAmountFromEnergy,
-          delegatedSun: sunAmountFromDelegation
-        });
-        sunAmount = sunAmountFromDelegation;
-      }
+      logger.warn('[EnergyService] Using current energy as fallback (less reliable)', {
+        targetAddress,
+        currentEnergy,
+        trxAmount: trxAmountFromEnergy,
+        sunAmount
+      });
     }
     
     // Try to reclaim with exact amount first
@@ -1500,6 +1508,7 @@ export class EnergyService {
         attemptSun,
         attemptTrx,
         attemptEnergy,
+        sourceUsed,
         operationId
       });
       
@@ -1535,18 +1544,21 @@ export class EnergyService {
             attemptTrx,
             reclaimedEnergy: attemptEnergy,
             status: 'completed',
-            attempt: attempt.description
+            attempt: attempt.description,
+            sourceUsed
           }
         });
         
-        logger.info('[EnergyService] Energy reclaim successful', {
+        logger.info('[EnergyService] ✅ Energy reclaim successful - ALL delegated energy reclaimed', {
           targetAddress,
           reclaimedEnergy: attemptEnergy,
           reclaimedTrx: attemptTrx,
           txHash: sent.txid,
           attempt: attempt.description,
+          sourceUsed,
           duration: Date.now() - startTime,
-          operationId
+          operationId,
+          note: 'All delegated energy including newly generated has been reclaimed'
         });
         
         return {

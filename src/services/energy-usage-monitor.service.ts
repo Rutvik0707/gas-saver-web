@@ -332,34 +332,58 @@ export class EnergyUsageMonitorService {
 
       if (this.ACTIVE_MODE) {
         try {
-          // 1. No transactions remaining -> reclaim all
-          if (state.transactionsRemaining <= 0 && currentEnergy > 0) {
+          // 1. No transactions remaining -> reclaim ALL delegated energy
+          if (state.transactionsRemaining <= 0) {
             await energyMonitoringLogger.logDecision(
               state.tronAddress,
               state.userId,
               'RECLAIM_ALL',
-              'No transactions remaining, reclaiming all energy',
+              'No transactions remaining, reclaiming ALL delegated energy',
               { currentEnergy, transactionsRemaining: state.transactionsRemaining }
             );
             
             if (this.canRunAction(state.tronAddress, 'RECLAIM_FULL')) {
               try {
-                const result = await energyService.reclaimEnergyAmountFromAddress(state.tronAddress, currentEnergy);
+                // Use reclaimAllEnergyFromAddress to ensure ALL delegated energy is reclaimed
+                const result = await energyService.reclaimAllEnergyFromAddress(state.tronAddress);
                 
-                await energyMonitoringLogger.logReclaim(
-                  state.tronAddress,
-                  state.userId,
-                  currentEnergy,
-                  result.estimatedRecoveredEnergy,
-                  result.txHash,
-                  'No transactions remaining'
-                );
-                
-                logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'RECLAIM_FULL', reclaimedEnergy: result.estimatedRecoveredEnergy, reason: 'No transactions remaining', txHash: result.txHash });
-                state.lastAction = 'RECLAIM_FULL';
-                state.lastActionAt = now;
-                bufferActionTaken = true;
-                state.currentAllocationCharged = 0;
+                if (result.reclaimedEnergy > 0) {
+                  await energyMonitoringLogger.logReclaim(
+                    state.tronAddress,
+                    state.userId,
+                    currentEnergy,
+                    result.reclaimedEnergy,
+                    result.txHash,
+                    'No transactions remaining - reclaimed ALL delegated energy'
+                  );
+                  
+                  logger.info('[EnergyMonitor] ✅ Reclaimed ALL energy - no transactions remaining', {
+                    address: state.tronAddress,
+                    visibleEnergy: currentEnergy,
+                    reclaimedEnergy: result.reclaimedEnergy,
+                    difference: result.reclaimedEnergy - currentEnergy,
+                    txHash: result.txHash,
+                    note: 'All delegated energy including newly generated has been reclaimed'
+                  });
+                  
+                  logs.push({ 
+                    tronAddress: state.tronAddress, 
+                    userId: state.userId, 
+                    action: 'RECLAIM_FULL', 
+                    reclaimedEnergy: result.reclaimedEnergy, 
+                    reason: `No transactions remaining - reclaimed ALL ${result.reclaimedEnergy} energy`, 
+                    txHash: result.txHash 
+                  });
+                  state.lastAction = 'RECLAIM_FULL';
+                  state.lastActionAt = now;
+                  bufferActionTaken = true;
+                  state.currentAllocationCharged = 0;
+                } else {
+                  logger.info('[EnergyMonitor] No delegated energy to reclaim', {
+                    address: state.tronAddress,
+                    visibleEnergy: currentEnergy
+                  });
+                }
               } catch (e) {
                 await energyMonitoringLogger.logReclaim(
                   state.tronAddress,
@@ -399,12 +423,14 @@ export class EnergyUsageMonitorService {
               let reclaimedEnergy = 0;
               let reclaimTxHash: string = '';
               
-              // Step 1: Try to reclaim ALL current energy (max reclaim)
-              if (currentEnergy > 0) {
+              // Step 1: Try to reclaim ALL delegated energy (not just visible energy)
+              // This ensures we reclaim any newly generated energy from staked TRX
+              if (currentEnergy > 0 || true) { // Always attempt reclaim to get ALL delegated energy
                 try {
-                  logger.info('[EnergyMonitor] Attempting to reclaim all current energy', {
+                  logger.info('[EnergyMonitor] 🔄 Attempting to reclaim ALL delegated energy', {
                     address: state.tronAddress,
-                    currentEnergy
+                    visibleEnergy: currentEnergy,
+                    note: 'Will reclaim ALL delegated energy including newly generated'
                   });
                   
                   const reclaimResult = await energyService.reclaimAllEnergyFromAddress(state.tronAddress);
@@ -418,14 +444,18 @@ export class EnergyUsageMonitorService {
                       currentEnergy,
                       reclaimedEnergy,
                       reclaimTxHash,
-                      'Reclaimed all available energy'
+                      'Reclaimed ALL delegated energy (including newly generated)'
                     );
                     
-                    logger.info('[EnergyMonitor] Energy reclaimed successfully', {
+                    logger.info('[EnergyMonitor] ✅ ALL energy reclaimed successfully', {
                       address: state.tronAddress,
-                      requestedReclaim: currentEnergy,
+                      visibleEnergyBefore: currentEnergy,
                       actualReclaimed: reclaimedEnergy,
-                      txHash: reclaimTxHash
+                      difference: reclaimedEnergy - currentEnergy,
+                      txHash: reclaimTxHash,
+                      note: reclaimedEnergy > currentEnergy ? 
+                        `Reclaimed ${reclaimedEnergy - currentEnergy} extra energy (newly generated)` : 
+                        'Reclaimed matches visible energy'
                     });
                     
                     logs.push({
@@ -434,18 +464,18 @@ export class EnergyUsageMonitorService {
                       action: 'RECLAIM_FULL',
                       reclaimedEnergy,
                       txHash: reclaimTxHash,
-                      reason: `Reclaimed ${reclaimedEnergy} energy (all available)`
+                      reason: `Reclaimed ALL ${reclaimedEnergy} energy (visible was ${currentEnergy})`
                     });
                   } else {
-                    logger.info('[EnergyMonitor] No energy could be reclaimed', {
+                    logger.info('[EnergyMonitor] No delegated energy to reclaim', {
                       address: state.tronAddress,
-                      currentEnergy
+                      visibleEnergy: currentEnergy
                     });
                   }
                 } catch (e) {
                   logger.warn('[EnergyMonitor] Energy reclaim failed, continuing with delegation', {
                     address: state.tronAddress,
-                    currentEnergy,
+                    visibleEnergy: currentEnergy,
                     error: e instanceof Error ? e.message : 'Unknown error'
                   });
                   
@@ -463,7 +493,7 @@ export class EnergyUsageMonitorService {
                   reclaimedEnergy = 0;
                 }
               } else {
-                logger.info('[EnergyMonitor] No energy to reclaim (current energy is 0)', {
+                logger.info('[EnergyMonitor] Checking for delegated energy even with 0 visible', {
                   address: state.tronAddress
                 });
               }
@@ -524,13 +554,15 @@ export class EnergyUsageMonitorService {
                 state.lastObservedEnergy = currentEnergy;
                 bufferActionTaken = true;
                 
-                logger.info('[EnergyMonitor] Reclaim and delegate completed successfully', {
+                logger.info('[EnergyMonitor] ✅ Reclaim and delegate cycle completed', {
                   address: state.tronAddress,
                   reclaimedEnergy,
                   delegatedEnergy: res.actualEnergy,
                   transactionCost,
                   transactionsRemaining: state.transactionsRemaining,
-                  finalEnergy: this.FULL_BUFFER
+                  finalEnergy: this.FULL_BUFFER,
+                  summary: `Reclaimed ALL delegated energy (${reclaimedEnergy}), then delegated fresh ${this.FULL_BUFFER}`,
+                  benefit: 'No residual energy remains with user from staked TRX generation'
                 });
                 
                 // Update EnergyDelivery records
@@ -561,25 +593,43 @@ export class EnergyUsageMonitorService {
               logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'SKIP_LOCK_HELD', reason: 'Throttle delegate 131k' });
             }
           }
-          // 5. Partial reclaim after inactivity penalty if excess remains
+          // 5. After inactivity penalty, reclaim ALL and re-delegate minimum buffer
           else if (state.lastPenaltyTime && currentEnergy > this.MIN_BUFFER_AFTER_PENALTY && state.transactionsRemaining > 0) {
             const target = this.MIN_BUFFER_AFTER_PENALTY;
-            const reclaimEnergy = currentEnergy - target;
-            if (reclaimEnergy > 1000) {
-              if (this.canRunAction(state.tronAddress, 'RECLAIM_PARTIAL')) {
-                try {
-                  const res = await energyService.reclaimEnergyAmountFromAddress(state.tronAddress, reclaimEnergy);
-                  logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'RECLAIM_PARTIAL', reclaimedEnergy: res.estimatedRecoveredEnergy, txHash: res.txHash, reason: 'Inactivity partial reclaim' });
+            if (this.canRunAction(state.tronAddress, 'RECLAIM_PARTIAL')) {
+              try {
+                // First reclaim ALL delegated energy
+                const reclaimResult = await energyService.reclaimAllEnergyFromAddress(state.tronAddress);
+                
+                if (reclaimResult.reclaimedEnergy > 0) {
+                  logger.info('[EnergyMonitor] Reclaimed ALL energy after penalty', {
+                    address: state.tronAddress,
+                    reclaimedEnergy: reclaimResult.reclaimedEnergy,
+                    txHash: reclaimResult.txHash
+                  });
+                  
+                  // Then delegate just the minimum buffer
+                  const delegateResult = await energyService.transferEnergyDirect(state.tronAddress, target);
+                  
+                  logs.push({ 
+                    tronAddress: state.tronAddress, 
+                    userId: state.userId, 
+                    action: 'RECLAIM_PARTIAL', 
+                    reclaimedEnergy: reclaimResult.reclaimedEnergy,
+                    actualDelegatedEnergy: delegateResult.actualEnergy,
+                    txHash: delegateResult.txHash, 
+                    reason: `Inactivity: reclaimed ALL (${reclaimResult.reclaimedEnergy}), delegated min buffer (${target})` 
+                  });
                   state.lastAction = 'RECLAIM_PARTIAL';
                   state.lastActionAt = now;
                   state.currentAllocationCharged = target;
                   bufferActionTaken = true;
-                } catch (e) {
-                  logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'OVERRIDE', reason: 'Partial reclaim failed: ' + (e instanceof Error ? e.message : 'unknown') });
                 }
-              } else {
-                logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'SKIP_LOCK_HELD', reason: 'Throttle partial reclaim' });
+              } catch (e) {
+                logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'OVERRIDE', reason: 'Partial reclaim/delegate failed: ' + (e instanceof Error ? e.message : 'unknown') });
               }
+            } else {
+              logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'SKIP_LOCK_HELD', reason: 'Throttle partial reclaim' });
             }
           }
         } catch (e) {
