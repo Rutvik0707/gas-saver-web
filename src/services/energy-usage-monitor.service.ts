@@ -62,6 +62,9 @@ export class EnergyUsageMonitorService {
       const cycleId = energyMonitoringLogger.startCycle();
       logger.info('[EnergyMonitor] Cycle start', { cycleId });
 
+      // First, sync UserEnergyState with EnergyDelivery records
+      await this.syncWithEnergyDeliveries();
+
       // Fetch active states
       // @ts-ignore - model added via pending migration
       const states: any[] = await (prisma as any).userEnergyState.findMany({
@@ -173,6 +176,17 @@ export class EnergyUsageMonitorService {
       const logs: any[] = [];
       let bufferActionTaken = false;
       
+      // Check delegation info early to detect energy transfers
+      let currentDelegationInfo = { delegatedEnergy: 0, delegatedTrx: 0, canReclaim: false };
+      try {
+        currentDelegationInfo = await energyService.getDelegatedResourceToAddress(state.tronAddress);
+      } catch (e) {
+        logger.debug('[EnergyMonitor] Could not get delegation info', { 
+          address: state.tronAddress,
+          error: e instanceof Error ? e.message : 'unknown'
+        });
+      }
+      
       // Log initial state
       await energyMonitoringLogger.logEnergyCheck(
         state.tronAddress,
@@ -186,8 +200,16 @@ export class EnergyUsageMonitorService {
         }
       );
 
+      // Detect if energy was transferred out vs consumed
+      const prevDelegatedAmount = state.currentAllocationCharged || 0;
+      const delegationReduction = prevDelegatedAmount > currentDelegationInfo.delegatedEnergy ? 
+        prevDelegatedAmount - currentDelegationInfo.delegatedEnergy : 0;
+      const isEnergyTransferredOut = consumed > 0 && delegationReduction === 0;
+      const isManuallyReclaimed = delegationReduction > consumed;
+      
       // Usage detection & transaction decrement logic
-      if (consumed > this.SMALL_USAGE_THRESHOLD) {
+      // Only charge transactions for actual consumption, not transfers
+      if (consumed > this.SMALL_USAGE_THRESHOLD && !isEnergyTransferredOut && !isManuallyReclaimed) {
         await energyMonitoringLogger.logDecision(
           state.tronAddress,
           state.userId,
@@ -423,10 +445,11 @@ export class EnergyUsageMonitorService {
               let reclaimedEnergy = 0;
               let reclaimTxHash: string = '';
               
-              // Step 1: Try to reclaim ALL delegated energy (not just visible energy)
-              // This ensures we reclaim any newly generated energy from staked TRX
-              if (currentEnergy > 0 || true) { // Always attempt reclaim to get ALL delegated energy
-                try {
+              // Step 1: ALWAYS try to reclaim ALL delegated energy
+              // Even if visible energy is 0, there might be delegated energy to reclaim
+              // This handles all edge cases including manual reclaims, transfers, etc.
+              // Always attempt reclaim to ensure clean slate before fresh delegation
+              try {
                   logger.info('[EnergyMonitor] 🔄 Attempting to reclaim ALL delegated energy', {
                     address: state.tronAddress,
                     visibleEnergy: currentEnergy,
@@ -492,11 +515,6 @@ export class EnergyUsageMonitorService {
                   // If reclaim fails, treat as 0 reclaimed
                   reclaimedEnergy = 0;
                 }
-              } else {
-                logger.info('[EnergyMonitor] Checking for delegated energy even with 0 visible', {
-                  address: state.tronAddress
-                });
-              }
               
               // Step 2: ALWAYS delegate exactly 131k energy
               try {
@@ -519,17 +537,35 @@ export class EnergyUsageMonitorService {
                   `Delegated 131k after reclaiming ${reclaimedEnergy} energy`
                 );
                 
-                // Step 3: Calculate transaction cost based on reclaimed energy
-                const transactionCost = this.calculateTransactionCost(reclaimedEnergy);
-                state.transactionsRemaining -= transactionCost;
+                // Step 3: Smart transaction cost calculation
+                // Only charge if energy was consumed (not transferred or manually reclaimed)
+                let transactionCost = 0;
+                const wasEnergyConsumed = consumed > this.SMALL_USAGE_THRESHOLD && !isEnergyTransferredOut;
                 
-                logger.info('[EnergyMonitor] Transaction cost calculation', {
-                  address: state.tronAddress,
-                  reclaimedEnergy,
-                  transactionCost,
-                  reason: reclaimedEnergy >= this.ENERGY_UNIT ? 'Reclaimed >= 65.5k' : 'Reclaimed < 65.5k',
-                  transactionsRemaining: state.transactionsRemaining
-                });
+                if (wasEnergyConsumed) {
+                  // Energy was used for transactions, charge based on reclaimed amount
+                  transactionCost = this.calculateTransactionCost(reclaimedEnergy);
+                  state.transactionsRemaining -= transactionCost;
+                  
+                  logger.info('[EnergyMonitor] Transaction cost for consumption', {
+                    address: state.tronAddress,
+                    consumed,
+                    reclaimedEnergy,
+                    transactionCost,
+                    reason: `Energy consumed, charging ${transactionCost} tx`,
+                    transactionsRemaining: state.transactionsRemaining
+                  });
+                } else {
+                  logger.info('[EnergyMonitor] No transaction cost - energy not consumed', {
+                    address: state.tronAddress,
+                    consumed,
+                    reclaimedEnergy,
+                    isTransferredOut: isEnergyTransferredOut,
+                    isManualReclaim: isManuallyReclaimed,
+                    reason: 'Energy reduced but not consumed (transfer/reclaim)',
+                    transactionsRemaining: state.transactionsRemaining
+                  });
+                }
                 
                 logs.push({
                   tronAddress: state.tronAddress,
@@ -547,7 +583,8 @@ export class EnergyUsageMonitorService {
                 state.lastDelegatedAmount = res.actualEnergy;
                 state.lastAction = 'DELEGATE_131K';
                 state.lastActionAt = now;
-                state.currentAllocationCharged = res.actualEnergy;
+                // Track the actual delegation amount for future comparison
+                state.currentAllocationCharged = this.FULL_BUFFER;
                 
                 // Update current energy to 131k (what we just delegated)
                 currentEnergy = this.FULL_BUFFER;
@@ -725,6 +762,91 @@ export class EnergyUsageMonitorService {
       }
     }
     
+  /**
+   * Sync UserEnergyState with pending EnergyDelivery records
+   * This ensures addresses with pending energy deliveries are tracked
+   */
+  private async syncWithEnergyDeliveries(): Promise<void> {
+    try {
+      // Find addresses with pending deliveries
+      // @ts-ignore - EnergyDelivery model exists
+      const pendingDeliveries = await prisma.energyDelivery.groupBy({
+        by: ['tronAddress', 'userId'],
+        where: {
+          isActive: true
+        },
+        _sum: {
+          totalTransactions: true,
+          deliveredTransactions: true
+        }
+      });
+
+      for (const delivery of pendingDeliveries) {
+        const pendingTransactions = (delivery._sum.totalTransactions || 0) - (delivery._sum.deliveredTransactions || 0);
+        
+        if (pendingTransactions > 0) {
+          // Check if UserEnergyState exists
+          // @ts-ignore
+          const existingState = await (prisma as any).userEnergyState.findUnique({
+            where: { tronAddress: delivery.tronAddress }
+          });
+
+          if (!existingState) {
+            // Create missing UserEnergyState
+            // @ts-ignore
+            await (prisma as any).userEnergyState.create({
+              data: {
+                userId: delivery.userId,
+                tronAddress: delivery.tronAddress,
+                transactionsRemaining: pendingTransactions,
+                status: 'ACTIVE',
+                currentEnergyCached: 0,
+                lastObservedEnergy: 0,
+                totalConsumedToday: 0,
+                cumulativeConsumedSinceLastCharge: 0,
+                monitoringMetadata: {
+                  createdFrom: 'energy_monitor_sync',
+                  syncedAt: new Date().toISOString(),
+                  reason: 'Auto-created from pending EnergyDelivery'
+                }
+              }
+            });
+
+            logger.info('[EnergyMonitor] Created missing UserEnergyState', {
+              address: delivery.tronAddress,
+              transactions: pendingTransactions
+            });
+          } else if (existingState.transactionsRemaining < pendingTransactions) {
+            // Update if EnergyDelivery has more pending transactions
+            // @ts-ignore
+            await (prisma as any).userEnergyState.update({
+              where: { tronAddress: delivery.tronAddress },
+              data: {
+                transactionsRemaining: pendingTransactions,
+                status: 'ACTIVE',
+                monitoringMetadata: {
+                  ...(existingState.monitoringMetadata as any || {}),
+                  lastSyncAt: new Date().toISOString(),
+                  syncedTransactions: pendingTransactions
+                }
+              }
+            });
+
+            logger.info('[EnergyMonitor] Synced UserEnergyState with EnergyDelivery', {
+              address: delivery.tronAddress,
+              oldTransactions: existingState.transactionsRemaining,
+              newTransactions: pendingTransactions
+            });
+          }
+        }
+      }
+    } catch (error) {
+      logger.error('[EnergyMonitor] Failed to sync with EnergyDelivery records', {
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+
   /**
    * Helper method to update EnergyDelivery records when transactions are delivered
    */
