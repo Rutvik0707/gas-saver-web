@@ -39,6 +39,10 @@ const envSchema = z.object({
   TRON_PRIVATE_KEY: z.string().length(64, 'TRON_PRIVATE_KEY must be exactly 64 characters'),
   TRON_ADDRESS: z.string().regex(/^T[A-Za-z1-9]{33}$/, 'Invalid TRON address format'),
   TRON_API_KEY: z.string().optional(),
+  
+  // TronScan API Configuration
+  TRONSCAN_API_URL: z.string().url().optional(),
+  TRONSCAN_API_KEY: z.string().optional(),
 
   // USDT Contract (Shasta testnet)
   USDT_CONTRACT_ADDRESS: z.string().default('TG3XXyExBkPp9nzdajDZsozEu4BkaSJozs'),
@@ -119,6 +123,10 @@ export const config = {
   systemWallet: {
     address: env.SYSTEM_WALLET_ADDRESS,
     privateKey: env.SYSTEM_WALLET_PRIVATE_KEY,
+  },
+  tronscan: {
+    apiUrl: env.TRONSCAN_API_URL,
+    apiKey: env.TRONSCAN_API_KEY,
   },
   logging: {
     level: env.LOG_LEVEL,

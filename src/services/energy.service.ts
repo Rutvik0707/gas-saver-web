@@ -1390,9 +1390,10 @@ export class EnergyService {
    * Reclaim ALL available energy from an address (the entire current balance)
    * This ensures ALL delegated energy is reclaimed, including any newly generated energy
    * @param targetAddress Address to reclaim energy from
+   * @param delegatedSunFromApi Optional: exact delegated SUN amount from TronScan API
    * @returns Reclaim result with transaction hash and recovered energy
    */
-  async reclaimAllEnergyFromAddress(targetAddress: string): Promise<{
+  async reclaimAllEnergyFromAddress(targetAddress: string, delegatedSunFromApi: number = 0): Promise<{
     txHash: string;
     reclaimedEnergy: number;
     reclaimedTrx: number;
@@ -1459,34 +1460,59 @@ export class EnergyService {
     const systemWalletAddress = config.systemWallet.address;
     const energyPerTrx = await this.getCachedEnergyPerTrx();
     
-    // ALWAYS use delegation info as primary source when available
+    // Determine the SUN amount to reclaim - prioritize sources in this order:
+    // 1. Exact delegated SUN from TronScan API (most accurate)
+    // 2. Delegation info from blockchain query
+    // 3. Current energy calculation (fallback)
     let sunAmount = 0;
     let sourceUsed = '';
     
-    if (delegationInfo.canReclaim && delegationInfo.delegatedTrx > 0) {
-      // Use exact delegated amount - this ensures ALL delegated energy is reclaimed
+    if (delegatedSunFromApi > 0) {
+      // PRIORITY 1: Use exact SUN amount from TronScan API
+      sunAmount = delegatedSunFromApi;
+      sourceUsed = 'tronscan_api';
+      
+      logger.info('[EnergyService] Using EXACT delegated SUN from TronScan API', {
+        targetAddress,
+        delegatedSun: delegatedSunFromApi,
+        delegatedTrx: (delegatedSunFromApi / 1_000_000).toFixed(2),
+        note: 'This is the most accurate - will reclaim ALL delegated resources'
+      });
+    } else if (delegationInfo.canReclaim && delegationInfo.delegatedTrx > 0) {
+      // PRIORITY 2: Use delegation info from blockchain
       sunAmount = Math.floor(tronUtils.toSun(delegationInfo.delegatedTrx));
       sourceUsed = 'delegation_info';
       
-      logger.info('[EnergyService] Using EXACT delegation amount for full reclaim', {
+      logger.info('[EnergyService] Using delegation info for reclaim', {
         targetAddress,
         delegatedTrx: delegationInfo.delegatedTrx,
         delegatedEnergy: delegationInfo.delegatedEnergy,
         sunAmount,
-        note: 'This will reclaim ALL delegated energy including any newly generated'
+        note: 'Using blockchain query result'
       });
-    } else {
-      // Fallback: Use current energy (less reliable)
+    } else if (currentEnergy > 0) {
+      // PRIORITY 3: Fallback to current energy calculation
       const trxAmountFromEnergy = currentEnergy / energyPerTrx;
       sunAmount = Math.floor(tronUtils.toSun(trxAmountFromEnergy));
       sourceUsed = 'current_energy';
       
-      logger.warn('[EnergyService] Using current energy as fallback (less reliable)', {
+      logger.warn('[EnergyService] Using current energy as fallback (less accurate)', {
         targetAddress,
         currentEnergy,
         trxAmount: trxAmountFromEnergy,
         sunAmount
       });
+    } else {
+      logger.info('[EnergyService] No energy or delegation to reclaim', {
+        targetAddress,
+        delegatedSunFromApi,
+        currentEnergy
+      });
+      return {
+        txHash: '',
+        reclaimedEnergy: 0,
+        reclaimedTrx: 0
+      };
     }
     
     // Try to reclaim with exact amount first

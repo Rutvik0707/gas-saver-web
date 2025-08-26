@@ -1,6 +1,7 @@
 import { prisma, logger } from '../config';
 import { energyService } from './energy.service';
 import { energyMonitoringLogger } from './energy-monitoring-logger.service';
+import { tronscanService } from './tronscan.service';
 // TODO: After running `prisma generate`, import enums from @prisma/client instead of string literals
 type EnergyAllocationAction =
   | 'DELEGATE_131K'
@@ -81,19 +82,56 @@ export class EnergyUsageMonitorService {
       return;
     }
 
-    // Retrieve current energy balances in parallel (limit concurrency naive)
-    const results: Array<{ tronAddress: string; currentEnergy: number; userId?: string; }> = [];
+    // Retrieve current energy balances and delegation info using TronScan API
+    const results: Array<{ 
+      tronAddress: string; 
+      currentEnergy: number; 
+      delegatedSun: number; 
+      delegatedTrx: number;
+      userId?: string; 
+    }> = [];
+    
     for (const state of states) {
       const apiStartTime = Date.now();
       try {
-        const currentEnergy = await energyService.getEnergyBalance(state.tronAddress);
+        let currentEnergy = 0;
+        let delegatedSun = 0;
+        let delegatedTrx = 0;
+        
+        // Try to use TronScan API first for accurate data
+        if (tronscanService.isConfigured()) {
+          try {
+            const energyInfo = await tronscanService.getAccountEnergyInfo(state.tronAddress);
+            currentEnergy = energyInfo.energyRemaining;
+            delegatedSun = energyInfo.acquiredDelegatedSun;
+            delegatedTrx = energyInfo.acquiredDelegatedTrx;
+            
+            logger.info('[EnergyMonitor] TronScan API data retrieved', {
+              address: state.tronAddress,
+              energyRemaining: currentEnergy,
+              delegatedSun,
+              delegatedTrx: delegatedTrx.toFixed(2),
+              energyLimit: energyInfo.energyLimit
+            });
+          } catch (tronscanError) {
+            logger.warn('[EnergyMonitor] TronScan API failed, falling back to TronWeb', {
+              address: state.tronAddress,
+              error: tronscanError instanceof Error ? tronscanError.message : 'Unknown error'
+            });
+            // Fall back to TronWeb
+            currentEnergy = await energyService.getEnergyBalance(state.tronAddress);
+          }
+        } else {
+          // TronScan not configured, use TronWeb
+          currentEnergy = await energyService.getEnergyBalance(state.tronAddress);
+        }
         
         // Log API call success
         await energyMonitoringLogger.logApiCall(
           state.tronAddress,
-          'getEnergyBalance',
+          'getAccountEnergyInfo',
           apiStartTime,
-          { currentEnergy }
+          { currentEnergy, delegatedSun, delegatedTrx }
         );
         
         // Update energy history
@@ -106,13 +144,15 @@ export class EnergyUsageMonitorService {
         results.push({ 
           tronAddress: state.tronAddress, 
           currentEnergy,
+          delegatedSun,
+          delegatedTrx,
           userId: state.userId 
         });
       } catch (err) {
         // Log API call failure
         await energyMonitoringLogger.logApiCall(
           state.tronAddress,
-          'getEnergyBalance',
+          'getAccountEnergyInfo',
           apiStartTime,
           undefined,
           err instanceof Error ? err : new Error('Unknown error')
@@ -124,7 +164,7 @@ export class EnergyUsageMonitorService {
           data: { apiErrorsCount: { increment: 1 } }
         });
         
-        logger.warn('[EnergyMonitor] Failed to get energy balance', { 
+        logger.warn('[EnergyMonitor] Failed to get energy data', { 
           address: state.tronAddress, 
           error: err instanceof Error ? err.message : 'unknown' 
         });
@@ -134,7 +174,7 @@ export class EnergyUsageMonitorService {
     for (const r of results) {
       const state = states.find((s: any) => s.tronAddress === r.tronAddress);
       if (!state) continue;
-      await this.processState(state, r.currentEnergy);
+      await this.processState(state, r.currentEnergy, r.delegatedSun);
     }
 
     const duration = Date.now() - start;
@@ -168,7 +208,7 @@ export class EnergyUsageMonitorService {
       return true;
     }
 
-    private async processState(state: any, currentEnergyParam: number): Promise<void> {
+    private async processState(state: any, currentEnergyParam: number, delegatedSun: number = 0): Promise<void> {
       let currentEnergy = currentEnergyParam;  // Make it mutable for updates after delegation
       const prev = state.lastObservedEnergy || 0;
       const consumed = prev > currentEnergy ? prev - currentEnergy : 0;
@@ -367,7 +407,7 @@ export class EnergyUsageMonitorService {
             if (this.canRunAction(state.tronAddress, 'RECLAIM_FULL')) {
               try {
                 // Use reclaimAllEnergyFromAddress to ensure ALL delegated energy is reclaimed
-                const result = await energyService.reclaimAllEnergyFromAddress(state.tronAddress);
+                const result = await energyService.reclaimAllEnergyFromAddress(state.tronAddress, delegatedSun);
                 
                 if (result.reclaimedEnergy > 0) {
                   await energyMonitoringLogger.logReclaim(
@@ -446,17 +486,18 @@ export class EnergyUsageMonitorService {
               let reclaimTxHash: string = '';
               
               // Step 1: ALWAYS try to reclaim ALL delegated energy
-              // Even if visible energy is 0, there might be delegated energy to reclaim
-              // This handles all edge cases including manual reclaims, transfers, etc.
-              // Always attempt reclaim to ensure clean slate before fresh delegation
+              // Use the exact delegated SUN amount from TronScan API if available
+              // This ensures we reclaim ALL delegated resources, not just visible energy
               try {
                   logger.info('[EnergyMonitor] 🔄 Attempting to reclaim ALL delegated energy', {
                     address: state.tronAddress,
                     visibleEnergy: currentEnergy,
-                    note: 'Will reclaim ALL delegated energy including newly generated'
+                    delegatedSun,
+                    delegatedTrx: (delegatedSun / 1_000_000).toFixed(2),
+                    note: 'Will reclaim using EXACT delegated SUN amount from TronScan'
                   });
                   
-                  const reclaimResult = await energyService.reclaimAllEnergyFromAddress(state.tronAddress);
+                  const reclaimResult = await energyService.reclaimAllEnergyFromAddress(state.tronAddress, delegatedSun);
                   reclaimedEnergy = reclaimResult.reclaimedEnergy;
                   reclaimTxHash = reclaimResult.txHash;
                   
@@ -636,7 +677,7 @@ export class EnergyUsageMonitorService {
             if (this.canRunAction(state.tronAddress, 'RECLAIM_PARTIAL')) {
               try {
                 // First reclaim ALL delegated energy
-                const reclaimResult = await energyService.reclaimAllEnergyFromAddress(state.tronAddress);
+                const reclaimResult = await energyService.reclaimAllEnergyFromAddress(state.tronAddress, delegatedSun);
                 
                 if (reclaimResult.reclaimedEnergy > 0) {
                   logger.info('[EnergyMonitor] Reclaimed ALL energy after penalty', {

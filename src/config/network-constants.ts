@@ -11,6 +11,9 @@ export const NETWORK_CONSTANTS = {
       solidity: 'https://api.trongrid.io',
       event: 'https://api.trongrid.io',
     },
+    tronscan: {
+      api: 'https://apilist.tronscanapi.com/api',
+    },
     contracts: {
       // Official USDT (TRC-20) contract on TRON mainnet
       usdt: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
@@ -25,6 +28,9 @@ export const NETWORK_CONSTANTS = {
       full: 'https://api.shasta.trongrid.io',
       solidity: 'https://api.shasta.trongrid.io',
       event: 'https://api.shasta.trongrid.io',
+    },
+    tronscan: {
+      api: 'https://shastapi.tronscan.org/api',
     },
     contracts: {
       // Test USDT contract on Shasta testnet
@@ -76,4 +82,11 @@ export function getTransactionUrl(txHash: string, network: 'mainnet' | 'testnet'
  */
 export function getAddressUrl(address: string, network: 'mainnet' | 'testnet'): string {
   return `${NETWORK_CONSTANTS[network].explorer}/#/address/${address}`;
+}
+
+/**
+ * Get TronScan API URL for the network
+ */
+export function getTronScanApiUrl(network: 'mainnet' | 'testnet'): string {
+  return NETWORK_CONSTANTS[network].tronscan.api;
 }

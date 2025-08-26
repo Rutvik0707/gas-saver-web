@@ -119,7 +119,10 @@
       "Bash(DATABASE_URL=\"postgresql://slnexus:SLNEXUS2024@sl-nexus-dev-pg.c9mc0886opd4.ap-south-1.rds.amazonaws.com:5432/energy_broker_db?schema=public\" npx ts-node -e \"\nimport { PrismaClient } from ''@prisma/client'';\nconst prisma = new PrismaClient();\n\nasync function updateEnergyRate() {\n  try {\n    // Update active energy rate\n    const updated = await prisma.energyRate.updateMany({\n      where: {\n        isActive: true\n      },\n      data: {\n        energyPerTransaction: 65500,\n        minEnergy: 65500,\n        updatedAt: new Date()\n      }\n    });\n    \n    console.log(''Energy rate updated successfully:'');\n    console.log(''  Records updated:'', updated.count);\n    \n    // Verify the update\n    const currentRate = await prisma.energyRate.findFirst({\n      where: { isActive: true },\n      orderBy: { createdAt: ''desc'' }\n    });\n    \n    if (currentRate) {\n      console.log(''\\nCurrent active energy rate:'');\n      console.log(''  Energy per transaction:'', currentRate.energyPerTransaction);\n      console.log(''  Min energy:'', currentRate.minEnergy);\n      console.log(''  Max energy:'', currentRate.maxEnergy);\n      console.log(''  Buffer percentage:'', currentRate.bufferPercentage);\n    }\n    \n  } catch (error) {\n    console.error(''Error updating energy rate:'', error);\n  } finally {\n    await prisma.$disconnect();\n  }\n}\n\nupdateEnergyRate();\n\")",
       "Bash(DATABASE_URL:*)",
       "Bash(cd:*)",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(NODE_ENV=production npx ts-node scripts/sync-energy-states.ts)",
+      "Bash(timeout 60 npm run livecoins)",
+      "Bash(NODE_ENV=production npx ts-node scripts/test-energy-scenarios.ts)"
     ],
     "deny": [],
     "defaultMode": "acceptEdits",
