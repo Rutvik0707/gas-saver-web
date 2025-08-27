@@ -102,6 +102,21 @@ export class EnergyMonitorService {
    */
   private async checkAndDeliverEnergy(addressInfo: AddressDeliveryInfo): Promise<void> {
     try {
+      // Check if address is suspended in UserEnergyState
+      const energyState = await prisma.userEnergyState.findUnique({
+        where: { tronAddress: addressInfo.tronAddress },
+        select: { status: true }
+      });
+
+      if (energyState && energyState.status !== 'ACTIVE') {
+        logger.info(`⚡ Address energy delegation suspended`, {
+          address: addressInfo.tronAddress,
+          status: energyState.status,
+          reason: 'Energy delegation is suspended for this address'
+        });
+        return; // Skip energy delegation for suspended addresses
+      }
+
       // Update last check time for all deliveries for this address
       await prisma.energyDelivery.updateMany({
         where: {

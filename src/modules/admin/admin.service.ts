@@ -398,6 +398,349 @@ export class AdminService {
     }
   }
 
+  /**
+   * Suspend energy delegation for a specific TRON address
+   */
+  async suspendAddressEnergy(
+    address: string, 
+    adminId: string, 
+    reason: string
+  ): Promise<{
+    address: string;
+    status: string;
+    energyDeliveriesDeactivated: number;
+    message: string;
+  }> {
+    // Validate TRON address format
+    if (!address || !address.startsWith('T') || address.length !== 34) {
+      throw new ValidationException('Invalid TRON address format');
+    }
+
+    // Check if UserEnergyState exists for this address
+    const energyState = await prisma.userEnergyState.findUnique({
+      where: { tronAddress: address },
+    });
+
+    if (!energyState) {
+      throw new NotFoundException(`No energy state found for address ${address}`);
+    }
+
+    // Start transaction to ensure consistency
+    const result = await prisma.$transaction(async (tx) => {
+      // Update UserEnergyState status to SUSPENDED
+      const updatedState = await tx.userEnergyState.update({
+        where: { tronAddress: address },
+        data: {
+          status: 'SUSPENDED',
+          monitoringMetadata: {
+            ...((energyState.monitoringMetadata as any) || {}),
+            suspendedBy: adminId,
+            suspendedAt: new Date().toISOString(),
+            suspensionReason: reason,
+          },
+        },
+      });
+
+      // Deactivate all EnergyDelivery records for this address
+      const deactivated = await tx.energyDelivery.updateMany({
+        where: {
+          tronAddress: address,
+          isActive: true,
+        },
+        data: {
+          isActive: false,
+        },
+      });
+
+      // Log the admin action
+      await tx.adminActivityLog.create({
+        data: {
+          adminId,
+          adminEmail: '', // Will be filled by the controller
+          action: 'SUSPEND_ADDRESS_ENERGY',
+          entityType: 'UserEnergyState',
+          entityId: energyState.id,
+          beforeState: {
+            status: energyState.status,
+            isActive: true,
+          },
+          afterState: {
+            status: 'SUSPENDED',
+            isActive: false,
+          },
+          metadata: {
+            address,
+            reason,
+            energyDeliveriesDeactivated: deactivated.count,
+            transactionsRemaining: energyState.transactionsRemaining,
+          },
+        },
+      });
+
+      return {
+        updatedState,
+        deactivatedCount: deactivated.count,
+      };
+    });
+
+    logger.info('Address energy suspended', {
+      address,
+      adminId,
+      reason,
+      deactivatedDeliveries: result.deactivatedCount,
+    });
+
+    return {
+      address,
+      status: 'SUSPENDED',
+      energyDeliveriesDeactivated: result.deactivatedCount,
+      message: `Energy delegation suspended for address ${address}. ${result.deactivatedCount} active deliveries deactivated.`,
+    };
+  }
+
+  /**
+   * Resume energy delegation for a specific TRON address
+   */
+  async resumeAddressEnergy(
+    address: string, 
+    adminId: string, 
+    reason: string
+  ): Promise<{
+    address: string;
+    status: string;
+    energyDeliveriesReactivated: number;
+    message: string;
+  }> {
+    // Validate TRON address format
+    if (!address || !address.startsWith('T') || address.length !== 34) {
+      throw new ValidationException('Invalid TRON address format');
+    }
+
+    // Check if UserEnergyState exists for this address
+    const energyState = await prisma.userEnergyState.findUnique({
+      where: { tronAddress: address },
+    });
+
+    if (!energyState) {
+      throw new NotFoundException(`No energy state found for address ${address}`);
+    }
+
+    if (energyState.status === 'ACTIVE') {
+      return {
+        address,
+        status: 'ACTIVE',
+        energyDeliveriesReactivated: 0,
+        message: `Energy delegation is already active for address ${address}`,
+      };
+    }
+
+    // Start transaction to ensure consistency
+    const result = await prisma.$transaction(async (tx) => {
+      // Update UserEnergyState status to ACTIVE
+      const updatedState = await tx.userEnergyState.update({
+        where: { tronAddress: address },
+        data: {
+          status: 'ACTIVE',
+          monitoringMetadata: {
+            ...((energyState.monitoringMetadata as any) || {}),
+            resumedBy: adminId,
+            resumedAt: new Date().toISOString(),
+            resumptionReason: reason,
+          },
+        },
+      });
+
+      // Reactivate EnergyDelivery records that have pending transactions
+      // First get the pending deliveries
+      const pendingDeliveries = await tx.energyDelivery.findMany({
+        where: {
+          tronAddress: address,
+          isActive: false,
+        },
+        select: {
+          id: true,
+          totalTransactions: true,
+          deliveredTransactions: true,
+        },
+      });
+
+      // Filter for ones that still have pending transactions
+      const toReactivate = pendingDeliveries.filter(
+        d => d.deliveredTransactions < d.totalTransactions
+      );
+
+      // Reactivate them
+      const reactivated = await tx.energyDelivery.updateMany({
+        where: {
+          id: {
+            in: toReactivate.map(d => d.id),
+          },
+        },
+        data: {
+          isActive: true,
+        },
+      });
+
+      // Log the admin action
+      await tx.adminActivityLog.create({
+        data: {
+          adminId,
+          adminEmail: '', // Will be filled by the controller
+          action: 'RESUME_ADDRESS_ENERGY',
+          entityType: 'UserEnergyState',
+          entityId: energyState.id,
+          beforeState: {
+            status: energyState.status,
+            isActive: false,
+          },
+          afterState: {
+            status: 'ACTIVE',
+            isActive: true,
+          },
+          metadata: {
+            address,
+            reason,
+            energyDeliveriesReactivated: reactivated.count,
+            transactionsRemaining: energyState.transactionsRemaining,
+          },
+        },
+      });
+
+      return {
+        updatedState,
+        reactivatedCount: reactivated.count,
+      };
+    });
+
+    logger.info('Address energy resumed', {
+      address,
+      adminId,
+      reason,
+      reactivatedDeliveries: result.reactivatedCount,
+    });
+
+    return {
+      address,
+      status: 'ACTIVE',
+      energyDeliveriesReactivated: result.reactivatedCount,
+      message: `Energy delegation resumed for address ${address}. ${result.reactivatedCount} deliveries reactivated.`,
+    };
+  }
+
+  /**
+   * Get energy status for a specific TRON address
+   */
+  async getAddressEnergyStatus(address: string): Promise<any> {
+    // Validate TRON address format
+    if (!address || !address.startsWith('T') || address.length !== 34) {
+      throw new ValidationException('Invalid TRON address format');
+    }
+
+    // Get UserEnergyState
+    const energyState = await prisma.userEnergyState.findUnique({
+      where: { tronAddress: address },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            credits: true,
+            isActive: true,
+          },
+        },
+        logs: {
+          take: 10,
+          orderBy: { createdAt: 'desc' },
+          select: {
+            action: true,
+            requestedEnergy: true,
+            actualDelegatedEnergy: true,
+            reclaimedEnergy: true,
+            consumedEnergy: true,
+            txHash: true,
+            reason: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    if (!energyState) {
+      throw new NotFoundException(`No energy state found for address ${address}`);
+    }
+
+    // Get active energy deliveries
+    const activeDeliveries = await prisma.energyDelivery.findMany({
+      where: {
+        tronAddress: address,
+        isActive: true,
+      },
+      select: {
+        id: true,
+        depositId: true,
+        totalTransactions: true,
+        deliveredTransactions: true,
+        lastDeliveryAt: true,
+        createdAt: true,
+      },
+    });
+
+    // Get all energy deliveries for this address
+    const allDeliveries = await prisma.energyDelivery.findMany({
+      where: {
+        tronAddress: address,
+      },
+      select: {
+        id: true,
+        depositId: true,
+        totalTransactions: true,
+        deliveredTransactions: true,
+        isActive: true,
+        createdAt: true,
+      },
+    });
+
+    // Filter for pending deliveries (ones that still have transactions remaining)
+    const pendingDeliveries = allDeliveries.filter(
+      d => d.deliveredTransactions < d.totalTransactions
+    );
+
+    // Calculate totals
+    const totalPendingTransactions = pendingDeliveries.reduce(
+      (sum, d) => sum + (d.totalTransactions - d.deliveredTransactions),
+      0
+    );
+
+    return {
+      address,
+      status: energyState.status,
+      user: energyState.user,
+      energyState: {
+        id: energyState.id,
+        currentEnergyCached: energyState.currentEnergyCached,
+        transactionsRemaining: energyState.transactionsRemaining,
+        lastDelegatedAmount: energyState.lastDelegatedAmount,
+        lastDelegationTime: energyState.lastDelegationTime,
+        lastObservedEnergy: energyState.lastObservedEnergy,
+        lastBlockchainCheck: energyState.lastBlockchainCheck,
+        status: energyState.status,
+        createdAt: energyState.createdAt,
+        updatedAt: energyState.updatedAt,
+        metadata: energyState.monitoringMetadata,
+      },
+      deliveries: {
+        active: activeDeliveries.length,
+        pending: pendingDeliveries.length,
+        totalPendingTransactions,
+        details: {
+          active: activeDeliveries,
+          pending: pendingDeliveries,
+        },
+      },
+      recentActivity: energyState.logs,
+    };
+  }
+
   // Private methods
   private generateToken(admin: any): string {
     const payload = {

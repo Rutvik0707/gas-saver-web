@@ -205,6 +205,84 @@ export class AdminController {
     
     res.json(apiUtils.success('Energy transfer triggered', result));
   }
+
+  // Address-level energy suspension
+  async suspendAddressEnergy(req: Request, res: Response): Promise<void> {
+    const { address } = req.params;
+    const { reason } = req.body;
+    const adminReq = req as AuthenticatedAdminRequest;
+    const adminId = adminReq.admin!.id;
+    const adminEmail = adminReq.admin!.email;
+
+    if (!reason) {
+      res.status(400).json(apiUtils.error('Reason is required for suspension'));
+      return;
+    }
+
+    // Update the admin email in the service call
+    const result = await adminService.suspendAddressEnergy(address, adminId, reason);
+    
+    // Update the audit log with the correct email
+    await prisma.adminActivityLog.updateMany({
+      where: {
+        adminId,
+        action: 'SUSPEND_ADDRESS_ENERGY',
+        adminEmail: '',
+        createdAt: {
+          gte: new Date(Date.now() - 5000) // Within last 5 seconds
+        }
+      },
+      data: {
+        adminEmail,
+        ipAddress: req.ip || req.connection.remoteAddress || 'unknown',
+        userAgent: req.headers['user-agent'] || 'unknown',
+      }
+    });
+    
+    res.json(apiUtils.success('Address energy suspended', result));
+  }
+
+  async resumeAddressEnergy(req: Request, res: Response): Promise<void> {
+    const { address } = req.params;
+    const { reason } = req.body;
+    const adminReq = req as AuthenticatedAdminRequest;
+    const adminId = adminReq.admin!.id;
+    const adminEmail = adminReq.admin!.email;
+
+    if (!reason) {
+      res.status(400).json(apiUtils.error('Reason is required for resumption'));
+      return;
+    }
+
+    const result = await adminService.resumeAddressEnergy(address, adminId, reason);
+    
+    // Update the audit log with the correct email
+    await prisma.adminActivityLog.updateMany({
+      where: {
+        adminId,
+        action: 'RESUME_ADDRESS_ENERGY',
+        adminEmail: '',
+        createdAt: {
+          gte: new Date(Date.now() - 5000) // Within last 5 seconds
+        }
+      },
+      data: {
+        adminEmail,
+        ipAddress: req.ip || req.connection.remoteAddress || 'unknown',
+        userAgent: req.headers['user-agent'] || 'unknown',
+      }
+    });
+    
+    res.json(apiUtils.success('Address energy resumed', result));
+  }
+
+  async getAddressEnergyStatus(req: Request, res: Response): Promise<void> {
+    const { address } = req.params;
+    
+    const status = await adminService.getAddressEnergyStatus(address);
+    
+    res.json(apiUtils.success('Address energy status retrieved', status));
+  }
 }
 
 export const adminController = new AdminController();

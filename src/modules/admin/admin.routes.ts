@@ -657,6 +657,195 @@ router.get('/dashboard/charts', ...adminAuth(requireViewDashboard), adminControl
  */
 router.get('/dashboard/recent-activity', ...adminAuth(requireViewDashboard), adminController.getRecentActivity);
 
+// Address-level energy control routes
+/**
+ * @swagger
+ * /admin/addresses/{address}/suspend-energy:
+ *   post:
+ *     tags: [Admin]
+ *     summary: Suspend energy delegation for a specific address
+ *     description: Suspends all energy delegation for a specific TRON address while preserving transaction counts
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: address
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: TRON address to suspend
+ *         example: TKjhc5ZXzpBiaAqA2onpiEn3FdvukemeAx
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - reason
+ *             properties:
+ *               reason:
+ *                 type: string
+ *                 description: Reason for suspension
+ *                 example: Suspicious activity detected
+ *     responses:
+ *       200:
+ *         description: Energy delegation suspended successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     address:
+ *                       type: string
+ *                     status:
+ *                       type: string
+ *                     energyDeliveriesDeactivated:
+ *                       type: number
+ *                     message:
+ *                       type: string
+ *       400:
+ *         description: Bad request
+ *       403:
+ *         description: Insufficient permissions
+ */
+router.post('/addresses/:address/suspend-energy', ...adminAuth(requireEditUsers), adminController.suspendAddressEnergy);
+
+/**
+ * @swagger
+ * /admin/addresses/{address}/resume-energy:
+ *   post:
+ *     tags: [Admin]
+ *     summary: Resume energy delegation for a specific address
+ *     description: Resumes energy delegation for a previously suspended TRON address
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: address
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: TRON address to resume
+ *         example: TKjhc5ZXzpBiaAqA2onpiEn3FdvukemeAx
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - reason
+ *             properties:
+ *               reason:
+ *                 type: string
+ *                 description: Reason for resumption
+ *                 example: Issue resolved, resuming normal service
+ *     responses:
+ *       200:
+ *         description: Energy delegation resumed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     address:
+ *                       type: string
+ *                     status:
+ *                       type: string
+ *                     energyDeliveriesReactivated:
+ *                       type: number
+ *                     message:
+ *                       type: string
+ *       400:
+ *         description: Bad request
+ *       403:
+ *         description: Insufficient permissions
+ */
+router.post('/addresses/:address/resume-energy', ...adminAuth(requireEditUsers), adminController.resumeAddressEnergy);
+
+/**
+ * @swagger
+ * /admin/addresses/{address}/energy-status:
+ *   get:
+ *     tags: [Admin]
+ *     summary: Get energy status for a specific address
+ *     description: Get detailed energy delegation status and statistics for a TRON address
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: address
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: TRON address to check
+ *         example: TKjhc5ZXzpBiaAqA2onpiEn3FdvukemeAx
+ *     responses:
+ *       200:
+ *         description: Energy status retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     address:
+ *                       type: string
+ *                     status:
+ *                       type: string
+ *                       enum: [ACTIVE, SUSPENDED, BANNED]
+ *                     user:
+ *                       type: object
+ *                       properties:
+ *                         id:
+ *                           type: string
+ *                         email:
+ *                           type: string
+ *                         credits:
+ *                           type: number
+ *                         isActive:
+ *                           type: boolean
+ *                     energyState:
+ *                       type: object
+ *                     deliveries:
+ *                       type: object
+ *                       properties:
+ *                         active:
+ *                           type: number
+ *                         pending:
+ *                           type: number
+ *                         totalPendingTransactions:
+ *                           type: number
+ *                     recentActivity:
+ *                       type: array
+ *       404:
+ *         description: Address not found
+ *       403:
+ *         description: Insufficient permissions
+ */
+router.get('/addresses/:address/energy-status', ...adminAuth(requireViewUsers), adminController.getAddressEnergyStatus);
+
 // Import and use audit routes
 import { auditRoutes } from './audit/audit.routes';
 router.use('/', auditRoutes);
