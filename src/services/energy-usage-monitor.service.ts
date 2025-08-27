@@ -557,16 +557,21 @@ export class EnergyUsageMonitorService {
                   reclaimedEnergy = 0;
                 }
               
-              // Step 2: ALWAYS delegate exactly 131k energy
+              // Step 2: ALWAYS delegate exactly 131k energy (no buffer)
               try {
-                logger.info('[EnergyMonitor] Delegating energy buffer', {
+                logger.info('[EnergyMonitor] Delegating EXACT energy amount (no buffer)', {
                   address: state.tronAddress,
                   energyToDelegate: this.FULL_BUFFER,
                   reclaimedEnergy,
-                  note: `Requesting ${this.FULL_BUFFER.toLocaleString()} energy units for buffer`
+                  note: `Requesting EXACTLY ${this.FULL_BUFFER.toLocaleString()} energy units (no 5% buffer)`
                 });
                 
-                const res = await energyService.transferEnergyDirect(state.tronAddress, this.FULL_BUFFER);
+                const res = await energyService.transferEnergyDirect(
+                  state.tronAddress, 
+                  this.FULL_BUFFER,
+                  state.userId,
+                  false // No buffer - we want EXACTLY 131k
+                );
                 
                 await energyMonitoringLogger.logDelegation(
                   state.tronAddress,
@@ -686,8 +691,13 @@ export class EnergyUsageMonitorService {
                     txHash: reclaimResult.txHash
                   });
                   
-                  // Then delegate just the minimum buffer
-                  const delegateResult = await energyService.transferEnergyDirect(state.tronAddress, target);
+                  // Then delegate just the minimum buffer (no extra buffer)
+                  const delegateResult = await energyService.transferEnergyDirect(
+                    state.tronAddress, 
+                    target,
+                    state.userId,
+                    false // No buffer - exact amount
+                  );
                   
                   logs.push({ 
                     tronAddress: state.tronAddress, 

@@ -274,7 +274,7 @@ export class EnergyService {
     }
   }
 
-  private async delegateEnergyToAddress(userAddress: string, energyAmount: number): Promise<string> {
+  private async delegateEnergyToAddress(userAddress: string, energyAmount: number, includeBuffer: boolean = true): Promise<string> {
     // Real TRON energy delegation implementation
     // Prerequisites: System wallet must have staked TRX to generate energy
     
@@ -288,6 +288,7 @@ export class EnergyService {
         from: systemWalletAddress,
         to: userAddress,
         requestedEnergyAmount: energyAmount,
+        includeBuffer,
         resourceType: 'ENERGY',
         timestamp: new Date().toISOString(),
       });
@@ -300,8 +301,8 @@ export class EnergyService {
       const trxAmount = energyAmount / energyPerTrx;
       
       // Use precise TRX amount for accurate delegation
-      // Add small buffer (2%) to ensure we meet the energy requirement
-  const bufferMultiplier = 1.05; // 5% buffer to reduce chance of under-delivery
+      // Buffer is optional - for monitor we want exact amounts, for user deposits we add safety margin
+      const bufferMultiplier = includeBuffer ? 1.05 : 1.0; // 5% buffer only if requested
       const bufferedTrxAmount = trxAmount * bufferMultiplier;
       
       // Ensure minimum 1 TRX to meet TRON blockchain requirements
@@ -318,8 +319,14 @@ export class EnergyService {
         step4b_withoutBuffer: trxAmount.toFixed(6),
         step5_delegationAmountSun: delegationAmountSun,
         step6_estimatedEnergyReceived: Math.floor(delegationTrxAmount * energyPerTrx),
-        calculation: `${energyAmount} energy ÷ ${energyPerTrx.toFixed(2)} = ${trxAmount.toFixed(6)} TRX × 1.05 buffer = ${delegationTrxAmount.toFixed(6)} TRX → ${delegationAmountSun} SUN`,
-        note: `Delegating ${delegationTrxAmount.toFixed(2)} TRX to provide ~${Math.floor(delegationTrxAmount * energyPerTrx).toLocaleString()} energy (requested: ${energyAmount.toLocaleString()})`,
+        includeBuffer,
+        bufferMultiplier,
+        calculation: includeBuffer 
+          ? `${energyAmount} energy ÷ ${energyPerTrx.toFixed(2)} = ${trxAmount.toFixed(6)} TRX × ${bufferMultiplier} buffer = ${delegationTrxAmount.toFixed(6)} TRX → ${delegationAmountSun} SUN`
+          : `${energyAmount} energy ÷ ${energyPerTrx.toFixed(2)} = ${delegationTrxAmount.toFixed(6)} TRX → ${delegationAmountSun} SUN (no buffer)`,
+        note: includeBuffer 
+          ? `Delegating ${delegationTrxAmount.toFixed(2)} TRX to provide ~${Math.floor(delegationTrxAmount * energyPerTrx).toLocaleString()} energy (requested: ${energyAmount.toLocaleString()} + 5% buffer)`
+          : `Delegating EXACTLY ${delegationTrxAmount.toFixed(2)} TRX to provide EXACTLY ${energyAmount.toLocaleString()} energy`,
       });
       
       // Check if system wallet has enough STAKED TRX (not balance)
@@ -972,7 +979,8 @@ export class EnergyService {
   async transferEnergyDirect(
     tronAddress: string,
     energyAmount: number,
-    userId?: string
+    userId?: string,
+    includeBuffer: boolean = true
   ): Promise<{ txHash: string; actualEnergy: number; delegatedTrx: number }> {
     const startTime = Date.now();
     const operationId = `transfer_${Date.now()}_${tronAddress.substring(0, 8)}`;
@@ -982,12 +990,13 @@ export class EnergyService {
         tronAddress,
         energyAmount,
         userId: userId || 'anonymous',
+        includeBuffer,
         operationId,
       });
       
       // Check staked balance before attempting delegation
       const energyPerTrx = await this.getCachedEnergyPerTrx();
-      const requiredTrx = (energyAmount / energyPerTrx) * 1.05; // 5% buffer
+      const requiredTrx = (energyAmount / energyPerTrx) * (includeBuffer ? 1.05 : 1.0); // Buffer only if requested
       const stakedBalance = await this.getStakedBalance(config.systemWallet.address);
       const availableStakedTrx = tronUtils.fromSun(stakedBalance.stakedForEnergy);
       
@@ -1055,14 +1064,14 @@ export class EnergyService {
 
       try {
         // Perform the actual energy delegation
-        const txHash = await this.delegateEnergyToAddress(tronAddress, energyAmount);
+        const txHash = await this.delegateEnergyToAddress(tronAddress, energyAmount, includeBuffer);
 
         // Get the energy ratio to calculate actual energy
-        // Note: delegateEnergyToAddress already applies a 5% buffer internally
+        // Note: delegateEnergyToAddress applies buffer based on includeBuffer parameter
         const energyPerTrx = await this.getCachedEnergyPerTrx();
         const trxAmount = energyAmount / energyPerTrx;
-        // delegateEnergyToAddress applies its own 5% buffer, so we calculate the final amount with that buffer
-        const bufferedTrxAmount = trxAmount * 1.05; // This matches what delegateEnergyToAddress uses
+        // Calculate buffered amount based on includeBuffer setting
+        const bufferedTrxAmount = trxAmount * (includeBuffer ? 1.05 : 1.0);
         // Round up to 6 decimals to match internal calculation
         const finalTrxAmount = Math.max(1, Math.ceil(bufferedTrxAmount * 1e6) / 1e6);
         const actualEnergy = Math.floor(finalTrxAmount * energyPerTrx);
