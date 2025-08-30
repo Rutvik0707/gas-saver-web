@@ -88,6 +88,7 @@ export class EnergyUsageMonitorService {
       currentEnergy: number; 
       delegatedSun: number; 
       delegatedTrx: number;
+      ourDelegatedEnergy: number; // Energy WE delegated to this address
       userId?: string; 
     }> = [];
     
@@ -97,6 +98,7 @@ export class EnergyUsageMonitorService {
         let currentEnergy = 0;
         let delegatedSun = 0;
         let delegatedTrx = 0;
+        let ourDelegatedEnergy = 0;
         
         // Try to use TronScan API first for accurate data
         if (tronscanService.isConfigured()) {
@@ -106,11 +108,16 @@ export class EnergyUsageMonitorService {
             delegatedSun = energyInfo.acquiredDelegatedSun;
             delegatedTrx = energyInfo.acquiredDelegatedTrx;
             
+            // CRITICAL: Get how much energy WE specifically delegated to this address
+            ourDelegatedEnergy = await tronscanService.getOurDelegationToAddress(state.tronAddress);
+            
             logger.info('[EnergyMonitor] TronScan API data retrieved', {
               address: state.tronAddress,
               energyRemaining: currentEnergy,
-              delegatedSun,
-              delegatedTrx: delegatedTrx.toFixed(2),
+              totalDelegatedSun: delegatedSun,
+              totalDelegatedTrx: delegatedTrx.toFixed(2),
+              ourDelegatedEnergy,
+              othersEnergy: currentEnergy - ourDelegatedEnergy,
               energyLimit: energyInfo.energyLimit
             });
           } catch (tronscanError) {
@@ -120,10 +127,16 @@ export class EnergyUsageMonitorService {
             });
             // Fall back to TronWeb
             currentEnergy = await energyService.getEnergyBalance(state.tronAddress);
+            // Without TronScan, we can't distinguish our delegation from others
+            // So we assume all energy is ours (old behavior)
+            ourDelegatedEnergy = currentEnergy;
           }
         } else {
           // TronScan not configured, use TronWeb
           currentEnergy = await energyService.getEnergyBalance(state.tronAddress);
+          // Without TronScan, we can't distinguish our delegation from others
+          // So we assume all energy is ours (old behavior)
+          ourDelegatedEnergy = currentEnergy;
         }
         
         // Log API call success
@@ -131,7 +144,7 @@ export class EnergyUsageMonitorService {
           state.tronAddress,
           'getAccountEnergyInfo',
           apiStartTime,
-          { currentEnergy, delegatedSun, delegatedTrx }
+          { currentEnergy, delegatedSun, delegatedTrx, ourDelegatedEnergy }
         );
         
         // Update energy history
@@ -146,6 +159,7 @@ export class EnergyUsageMonitorService {
           currentEnergy,
           delegatedSun,
           delegatedTrx,
+          ourDelegatedEnergy,
           userId: state.userId 
         });
       } catch (err) {
@@ -174,7 +188,7 @@ export class EnergyUsageMonitorService {
     for (const r of results) {
       const state = states.find((s: any) => s.tronAddress === r.tronAddress);
       if (!state) continue;
-      await this.processState(state, r.currentEnergy, r.delegatedSun);
+      await this.processState(state, r.currentEnergy, r.delegatedSun, r.ourDelegatedEnergy);
     }
 
     const duration = Date.now() - start;
@@ -208,7 +222,7 @@ export class EnergyUsageMonitorService {
       return true;
     }
 
-    private async processState(state: any, currentEnergyParam: number, delegatedSun: number = 0): Promise<void> {
+    private async processState(state: any, currentEnergyParam: number, delegatedSun: number = 0, ourDelegatedEnergy: number = 0): Promise<void> {
       let currentEnergy = currentEnergyParam;  // Make it mutable for updates after delegation
       const prev = state.lastObservedEnergy || 0;
       const consumed = prev > currentEnergy ? prev - currentEnergy : 0;
@@ -469,32 +483,34 @@ export class EnergyUsageMonitorService {
               logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'SKIP_LOCK_HELD', reason: 'Throttle reclaim full' });
             }
           }
-          // 2. OVER-DELEGATION CHECK: Energy > 131k -> Reclaim excess and re-delegate exactly 131k
-          else if (currentEnergy > this.FULL_BUFFER && state.transactionsRemaining > 0) {
-            const excessEnergy = currentEnergy - this.FULL_BUFFER;
+          // 2. OVER-DELEGATION CHECK: OUR delegation > 131k -> Reclaim OUR excess and re-delegate exactly 131k
+          else if (ourDelegatedEnergy > this.FULL_BUFFER && state.transactionsRemaining > 0) {
+            const excessEnergy = ourDelegatedEnergy - this.FULL_BUFFER;
             
             await energyMonitoringLogger.logDecision(
               state.tronAddress,
               state.userId,
               'OVER_DELEGATION_DETECTED',
-              `⚠️ OVER-DELEGATION: User has ${currentEnergy.toLocaleString()} energy (${excessEnergy.toLocaleString()} EXCESS). Will reclaim ALL and re-delegate exactly 131k to prevent waste.`,
+              `⚠️ OVER-DELEGATION: We have delegated ${ourDelegatedEnergy.toLocaleString()} energy (${excessEnergy.toLocaleString()} EXCESS). Will reclaim our excess and re-delegate exactly 131k to prevent waste.`,
               { 
-                currentEnergy, 
+                totalEnergy: currentEnergy,
+                ourDelegatedEnergy,
                 threshold: this.FULL_BUFFER,
                 excessEnergy,
                 transactionsRemaining: state.transactionsRemaining,
-                reason: 'User has more than 131k energy delegated - wasting system resources',
-                action: 'Reclaim ALL energy and re-delegate exactly 131k'
+                reason: 'We have delegated more than 131k energy - wasting system resources',
+                action: 'Reclaim our excess and re-delegate exactly 131k'
               }
             );
             
             logger.warn('[EnergyMonitor] 🚨 OVER-DELEGATION DETECTED - Correcting to exactly 131k', {
               address: state.tronAddress,
-              currentEnergy: currentEnergy.toLocaleString(),
+              totalEnergy: currentEnergy.toLocaleString(),
+              ourDelegatedEnergy: ourDelegatedEnergy.toLocaleString(),
               threshold: this.FULL_BUFFER.toLocaleString(),
               excessEnergy: excessEnergy.toLocaleString(),
-              reason: `User has ${excessEnergy.toLocaleString()} excess energy above 131k threshold`,
-              explanation: 'Will reclaim ALL energy and re-delegate exactly 131k to optimize resource usage',
+              reason: `We have delegated ${excessEnergy.toLocaleString()} excess energy above 131k threshold`,
+              explanation: 'Will reclaim our excess and re-delegate exactly 131k to optimize resource usage',
               transactionsRemaining: state.transactionsRemaining
             });
             
@@ -503,12 +519,13 @@ export class EnergyUsageMonitorService {
                 // Step 1: Reclaim ALL delegated energy (including excess)
                 logger.info('[EnergyMonitor] 🔄 RECLAIMING EXCESS - Correcting over-delegation', {
                   address: state.tronAddress,
-                  reason: 'Over-delegation detected - reclaiming ALL energy',
-                  currentEnergy: currentEnergy.toLocaleString(),
+                  reason: 'Over-delegation detected - reclaiming our excess energy',
+                  totalEnergy: currentEnergy.toLocaleString(),
+                  ourDelegatedEnergy: ourDelegatedEnergy.toLocaleString(),
                   excessAmount: excessEnergy.toLocaleString(),
                   delegatedSun,
                   delegatedTrx: (delegatedSun / 1_000_000).toFixed(2),
-                  explanation: `Reclaiming ALL ${currentEnergy.toLocaleString()} energy to correct over-delegation`
+                  explanation: `Reclaiming our ${ourDelegatedEnergy.toLocaleString()} energy to correct over-delegation`
                 });
                 
                 const reclaimResult = await energyService.reclaimAllEnergyFromAddress(state.tronAddress, delegatedSun);
@@ -600,54 +617,63 @@ export class EnergyUsageMonitorService {
               logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'SKIP_LOCK_HELD', reason: 'Throttle over-delegation correction' });
             }
           }
-          // 3. Energy is exactly 131k -> Perfect, do nothing
-          else if (currentEnergy === this.FULL_BUFFER && state.transactionsRemaining > 0) {
-            logger.info('[EnergyMonitor] ✅ ENERGY OPTIMAL - Exactly 131k', {
+          // 3. OUR delegation is exactly 131k -> Perfect, do nothing
+          else if (ourDelegatedEnergy === this.FULL_BUFFER && state.transactionsRemaining > 0) {
+            logger.info('[EnergyMonitor] ✅ OUR DELEGATION OPTIMAL - Exactly 131k from us', {
               address: state.tronAddress,
-              currentEnergy: currentEnergy.toLocaleString(),
+              totalEnergy: currentEnergy.toLocaleString(),
+              ourDelegatedEnergy: ourDelegatedEnergy.toLocaleString(),
+              othersEnergy: (currentEnergy - ourDelegatedEnergy).toLocaleString(),
               threshold: this.FULL_BUFFER.toLocaleString(),
-              reason: 'Energy level is exactly at the optimal 131k threshold',
-              explanation: 'Perfect energy balance - no action needed',
+              reason: 'Our delegation is exactly at the optimal 131k threshold',
+              explanation: 'Perfect delegation balance from our wallet - no action needed',
               transactionsRemaining: state.transactionsRemaining
             });
-            logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'BUFFER_OK', reason: `Energy optimal (exactly ${this.FULL_BUFFER})` });
+            logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'BUFFER_OK', reason: `Our delegation optimal (exactly ${this.FULL_BUFFER})` });
           }
-          // 4. Energy below 131k -> Reclaim ALL current energy, then delegate 131k
-          else if (currentEnergy < this.FULL_BUFFER && state.transactionsRemaining > 0) {
+          // 4. OUR delegation below 131k -> Reclaim ALL our energy, then delegate exactly 131k
+          // This prevents accumulation from staked TRX generation
+          else if (ourDelegatedEnergy < this.FULL_BUFFER && state.transactionsRemaining > 0) {
             await energyMonitoringLogger.logDecision(
               state.tronAddress,
               state.userId,
               'RECLAIM_AND_DELEGATE',
-              `⚠️ REASON: Energy below 131k threshold. Current: ${currentEnergy.toLocaleString()}, Required: ${this.FULL_BUFFER.toLocaleString()}. Will reclaim all existing energy and delegate exactly 131k`,
+              `⚠️ REASON: Our delegation below 131k threshold. Our delegation: ${ourDelegatedEnergy.toLocaleString()}, Required: ${this.FULL_BUFFER.toLocaleString()}. Will reclaim all our energy and delegate exactly 131k to prevent accumulation`,
               { 
-                currentEnergy, 
+                totalEnergy: currentEnergy,
+                ourDelegatedEnergy,
                 requiredEnergy: this.FULL_BUFFER,
-                deficit: this.FULL_BUFFER - currentEnergy,
+                deficit: this.FULL_BUFFER - ourDelegatedEnergy,
                 transactionsRemaining: state.transactionsRemaining,
-                reason: 'Energy insufficient for optimal transaction processing',
-                action: 'Reclaim-then-delegate pattern to maintain exactly 131k energy'
+                reason: 'Our delegation insufficient - need to reclaim and re-delegate to prevent staked TRX accumulation',
+                action: 'Reclaim all our delegation then delegate exactly 131k'
               }
             );
             
             if (this.canRunAction(state.tronAddress, 'DELEGATE_131K')) {
               let reclaimedEnergy = 0;
-              let reclaimTxHash: string = '';
+              let reclaimTxHash = '';
               
-              // Step 1: ALWAYS try to reclaim ALL delegated energy
-              // Use the exact delegated SUN amount from TronScan API if available
-              // This ensures we reclaim ALL delegated resources, not just visible energy
-              try {
-                  logger.info('[EnergyMonitor] 🔄 RECLAIM INITIATED - Preparing for 131k delegation', {
+              // Step 1: ALWAYS reclaim ALL our current delegation first
+              // This clears out any newly generated energy from staked TRX
+              if (ourDelegatedEnergy > 0) {
+                try {
+                  logger.info('[EnergyMonitor] 🔄 RECLAIMING OUR DELEGATION - Clearing before re-delegation', {
                     address: state.tronAddress,
-                    reason: 'Energy below 131k threshold - need to reclaim before delegating',
-                    visibleEnergy: currentEnergy.toLocaleString(),
-                    delegatedSun,
-                    delegatedTrx: (delegatedSun / 1_000_000).toFixed(2),
-                    explanation: `Reclaiming ALL energy to prevent over-delegation. Will delegate exactly 131k after reclaim.`,
-                    note: 'Using EXACT delegated SUN amount from TronScan for accurate reclaim'
+                    ourCurrentDelegation: ourDelegatedEnergy.toLocaleString(),
+                    totalEnergy: currentEnergy.toLocaleString(),
+                    reason: 'Reclaiming our delegation to prevent staked TRX energy accumulation',
+                    explanation: `Reclaiming our ${ourDelegatedEnergy.toLocaleString()} energy before delegating exactly 131k`
                   });
                   
-                  const reclaimResult = await energyService.reclaimAllEnergyFromAddress(state.tronAddress, delegatedSun);
+                  // Get our specific delegation SUN amount for accurate reclaim
+                  const ourDelegationSun = Math.floor((ourDelegatedEnergy / currentEnergy) * delegatedSun);
+                  
+                  const reclaimResult = await energyService.reclaimAllEnergyFromAddress(
+                    state.tronAddress, 
+                    ourDelegationSun > 0 ? ourDelegationSun : delegatedSun
+                  );
+                  
                   reclaimedEnergy = reclaimResult.reclaimedEnergy;
                   reclaimTxHash = reclaimResult.txHash;
                   
@@ -655,233 +681,95 @@ export class EnergyUsageMonitorService {
                     await energyMonitoringLogger.logReclaim(
                       state.tronAddress,
                       state.userId,
-                      currentEnergy,
+                      ourDelegatedEnergy,
                       reclaimedEnergy,
                       reclaimTxHash,
-                      'Reclaimed ALL delegated energy (including newly generated)'
+                      `Reclaimed our ${ourDelegatedEnergy} energy to prevent accumulation`
                     );
                     
-                    logger.info('[EnergyMonitor] ✅ RECLAIM SUCCESS - Ready for 131k delegation', {
+                    logger.info('[EnergyMonitor] ✅ RECLAIM SUCCESS - Ready for fresh 131k delegation', {
                       address: state.tronAddress,
-                      reason: 'Successfully reclaimed all energy to prepare for exact 131k delegation',
-                      visibleEnergyBefore: currentEnergy.toLocaleString(),
-                      actualReclaimed: reclaimedEnergy.toLocaleString(),
-                      difference: reclaimedEnergy - currentEnergy,
-                      txHash: reclaimTxHash,
-                      explanation: `Reclaimed ${reclaimedEnergy.toLocaleString()} energy units to reset address to zero before delegating`,
-                      note: reclaimedEnergy > currentEnergy ? 
-                        `Reclaimed ${(reclaimedEnergy - currentEnergy).toLocaleString()} extra energy (newly generated from staked TRX)` : 
-                        'Reclaimed matches visible energy'
-                    });
-                    
-                    logs.push({
-                      tronAddress: state.tronAddress,
-                      userId: state.userId,
-                      action: 'RECLAIM_FULL',
-                      reclaimedEnergy,
-                      txHash: reclaimTxHash,
-                      reason: `Reclaimed ALL ${reclaimedEnergy} energy (visible was ${currentEnergy})`
-                    });
-                  } else {
-                    logger.info('[EnergyMonitor] No delegated energy to reclaim', {
-                      address: state.tronAddress,
-                      visibleEnergy: currentEnergy
+                      reclaimedEnergy: reclaimedEnergy.toLocaleString(),
+                      previousOurDelegation: ourDelegatedEnergy.toLocaleString(),
+                      txHash: reclaimTxHash
                     });
                   }
                 } catch (e) {
-                  logger.warn('[EnergyMonitor] Energy reclaim failed, continuing with delegation', {
+                  logger.warn('[EnergyMonitor] Reclaim failed, will still attempt delegation', {
                     address: state.tronAddress,
-                    visibleEnergy: currentEnergy,
+                    ourDelegatedEnergy,
                     error: e instanceof Error ? e.message : 'Unknown error'
                   });
-                  
-                  await energyMonitoringLogger.logReclaim(
-                    state.tronAddress,
-                    state.userId,
-                    currentEnergy,
-                    0,
-                    undefined,
-                    'Reclaim failed',
-                    e instanceof Error ? e : new Error('Unknown error')
-                  );
-                  
-                  // If reclaim fails, treat as 0 reclaimed
-                  reclaimedEnergy = 0;
                 }
-              
-              // Step 2: Check current delegation before delegating to prevent over-delegation
-              // Get current delegation info to prevent stacking
-              let currentDelegationCheck = { delegatedEnergy: 0, delegatedTrx: 0, canReclaim: false };
-              try {
-                currentDelegationCheck = await energyService.getDelegatedResourceToAddress(state.tronAddress);
-              } catch (e) {
-                logger.debug('[EnergyMonitor] Could not check delegation before delegating', { 
-                  address: state.tronAddress,
-                  error: e instanceof Error ? e.message : 'unknown'
-                });
               }
               
-              // IMPORTANT: Check if address already has sufficient delegation
-              if (currentDelegationCheck.delegatedEnergy >= this.FULL_BUFFER) {
-                logger.warn('[EnergyMonitor] ⚠️ Address already has sufficient delegation, skipping', {
+              // Step 2: Delegate EXACTLY 131k fresh
+              try {
+                logger.info('[EnergyMonitor] 🔋 DELEGATING EXACT 131K - Maintaining precise energy level', {
                   address: state.tronAddress,
-                  currentDelegation: currentDelegationCheck.delegatedEnergy,
-                  threshold: this.FULL_BUFFER,
-                  preventedOverDelegation: true
+                  previousOurDelegation: ourDelegatedEnergy.toLocaleString(),
+                  reclaimedEnergy: reclaimedEnergy.toLocaleString(),
+                  targetDelegation: this.FULL_BUFFER.toLocaleString(),
+                  reason: 'Delegating exactly 131k after reclaim to maintain precise energy amount',
+                  explanation: 'This prevents accumulation from staked TRX generation'
+                });
+                
+                const delegateResult = await energyService.transferEnergyDirect(
+                  state.tronAddress, 
+                  this.FULL_BUFFER, // Always delegate exactly 131k
+                  state.userId,
+                  false // No buffer - exact amount
+                );
+                
+                await energyMonitoringLogger.logDelegation(
+                  state.tronAddress,
+                  state.userId,
+                  0, // Energy is 0 after reclaim
+                  this.FULL_BUFFER,
+                  delegateResult.actualEnergy,
+                  delegateResult.txHash,
+                  `Delegated exactly 131k after reclaiming ${reclaimedEnergy} (had ${ourDelegatedEnergy})`
+                );
+                
+                logger.info('[EnergyMonitor] ✅ DELEGATION COMPLETE - Now at exactly 131k', {
+                  address: state.tronAddress,
+                  previousDelegation: ourDelegatedEnergy.toLocaleString(),
+                  reclaimedEnergy: reclaimedEnergy.toLocaleString(),
+                  newDelegation: delegateResult.actualEnergy.toLocaleString(),
+                  txHash: delegateResult.txHash,
+                  result: 'Successfully maintained exact 131k delegation'
                 });
                 
                 logs.push({
                   tronAddress: state.tronAddress,
                   userId: state.userId,
-                  action: 'SKIP_LOCK_HELD',
-                  reason: `Already has ${currentDelegationCheck.delegatedEnergy} energy delegated (>= ${this.FULL_BUFFER})`
+                  action: 'DELEGATE_131K',
+                  reclaimedEnergy,
+                  actualDelegatedEnergy: delegateResult.actualEnergy,
+                  txHash: delegateResult.txHash,
+                  reason: `Reclaimed ${reclaimedEnergy}, delegated 131k (was ${ourDelegatedEnergy})`
                 });
                 
-                state.lastAction = 'SKIP_DELEGATION';
+                state.lastAction = 'DELEGATE_131K';
                 state.lastActionAt = now;
+                state.lastDelegationTime = now;
+                state.currentAllocationCharged = delegateResult.actualEnergy;
                 bufferActionTaken = true;
-              }
-              // If reclaim failed and there's existing delegation, abort to prevent stacking
-              else if (reclaimedEnergy === 0 && currentDelegationCheck.delegatedEnergy > 0) {
-                logger.error('[EnergyMonitor] ❌ Reclaim failed with existing delegation, aborting to prevent stacking', {
+              } catch (e) {
+                logger.error('[EnergyMonitor] Failed to delegate after reclaim', {
                   address: state.tronAddress,
-                  existingDelegation: currentDelegationCheck.delegatedEnergy,
-                  wouldResultIn: currentDelegationCheck.delegatedEnergy + this.FULL_BUFFER,
-                  aborted: true
+                  ourDelegatedEnergy,
+                  reclaimedEnergy,
+                  error: e instanceof Error ? e.message : 'unknown'
                 });
                 
                 logs.push({
                   tronAddress: state.tronAddress,
                   userId: state.userId,
                   action: 'OVERRIDE',
-                  reason: `Aborted delegation: reclaim failed with ${currentDelegationCheck.delegatedEnergy} existing delegation`
+                  reason: `Delegation failed after reclaim: ${e instanceof Error ? e.message : 'unknown'}`
                 });
-                
-                state.lastAction = 'ABORT_DELEGATION';
-                state.lastActionAt = now;
-                bufferActionTaken = true;
               }
-              // Safe to delegate - either reclaim succeeded or no existing delegation
-              else {
-                // Additional safety check: ensure total won't exceed 131k
-                const totalAfterDelegation = currentDelegationCheck.delegatedEnergy + this.FULL_BUFFER;
-                if (totalAfterDelegation > this.FULL_BUFFER) {
-                  logger.error('[EnergyMonitor] ❌ Delegation would exceed 131k limit, reducing amount', {
-                    address: state.tronAddress,
-                    currentDelegation: currentDelegationCheck.delegatedEnergy,
-                    requested: this.FULL_BUFFER,
-                    wouldBe: totalAfterDelegation,
-                    adjustedTo: this.FULL_BUFFER - currentDelegationCheck.delegatedEnergy
-                  });
-                  
-                  // Only delegate the difference to reach exactly 131k
-                  const amountToDelegate = Math.max(0, this.FULL_BUFFER - currentDelegationCheck.delegatedEnergy);
-                  
-                  if (amountToDelegate > 0) {
-                    try {
-                      logger.info('[EnergyMonitor] Delegating adjusted amount to reach 131k total', {
-                        address: state.tronAddress,
-                        currentDelegation: currentDelegationCheck.delegatedEnergy,
-                        delegating: amountToDelegate,
-                        totalAfter: currentDelegationCheck.delegatedEnergy + amountToDelegate
-                      });
-                      
-                      const res = await energyService.transferEnergyDirect(
-                        state.tronAddress, 
-                        amountToDelegate,
-                        state.userId,
-                        false // No buffer
-                      );
-                      
-                      await energyMonitoringLogger.logDelegation(
-                        state.tronAddress,
-                        state.userId,
-                        currentDelegationCheck.delegatedEnergy,
-                        amountToDelegate,
-                        res.actualEnergy,
-                        res.txHash,
-                        `Delegated ${amountToDelegate} to reach 131k total (had ${currentDelegationCheck.delegatedEnergy})`
-                      );
-                      
-                      logs.push({
-                        tronAddress: state.tronAddress,
-                        userId: state.userId,
-                        action: 'TOP_UP_65K',
-                        actualDelegatedEnergy: res.actualEnergy,
-                        txHash: res.txHash,
-                        reason: `Topped up ${amountToDelegate} to reach 131k total`
-                      });
-                    } catch (e) {
-                      logger.error('[EnergyMonitor] Adjusted delegation failed', {
-                        address: state.tronAddress,
-                        error: e instanceof Error ? e.message : 'unknown'
-                      });
-                      logs.push({
-                        tronAddress: state.tronAddress,
-                        userId: state.userId,
-                        action: 'OVERRIDE',
-                        reason: 'Adjusted delegation failed: ' + (e instanceof Error ? e.message : 'unknown')
-                      });
-                    }
-                  }
-                } else {
-                  // Normal delegation - safe to delegate full amount
-                  try {
-                    logger.info('[EnergyMonitor] 🔋 DELEGATING 131K - Maintaining optimal energy level', {
-                      address: state.tronAddress,
-                      reason: 'Energy below threshold, delegating exactly 131k for optimal transaction processing',
-                      energyToDelegate: this.FULL_BUFFER.toLocaleString(),
-                      reclaimedEnergy: reclaimedEnergy.toLocaleString(),
-                      currentDelegation: currentDelegationCheck.delegatedEnergy,
-                      explanation: `Delegating exactly ${this.FULL_BUFFER.toLocaleString()} energy units (131k threshold) to ensure user can process transactions efficiently`,
-                      note: `131k energy = ~2 USDT transactions on mainnet. No buffer added for exact amount.`
-                    });
-                    
-                    const res = await energyService.transferEnergyDirect(
-                      state.tronAddress, 
-                      this.FULL_BUFFER,
-                      state.userId,
-                      false // No buffer - we want EXACTLY 131k
-                    );
-                    
-                    await energyMonitoringLogger.logDelegation(
-                      state.tronAddress,
-                      state.userId,
-                      0, // Current energy is 0 after reclaim
-                      this.FULL_BUFFER,
-                      res.actualEnergy,
-                      res.txHash,
-                      `Delegated 131k after reclaiming ${reclaimedEnergy} energy`
-                    );
-                    
-                    logs.push({
-                      tronAddress: state.tronAddress,
-                      userId: state.userId,
-                      action: 'DELEGATE_131K',
-                      actualDelegatedEnergy: res.actualEnergy,
-                      txHash: res.txHash,
-                      reason: `Delegated 131k after reclaiming ${reclaimedEnergy} energy`
-                    });
-                    
-                    state.lastAction = 'DELEGATE_131K';
-                    state.lastActionAt = now;
-                    bufferActionTaken = true;
-                    state.currentAllocationCharged = res.actualEnergy;
-                  } catch (e) {
-                    logger.error('[EnergyMonitor] Standard delegation failed', {
-                      address: state.tronAddress,
-                      error: e instanceof Error ? e.message : 'unknown'
-                    });
-                    logs.push({
-                      tronAddress: state.tronAddress,
-                      userId: state.userId,
-                      action: 'OVERRIDE',
-                      reason: 'Standard delegation failed: ' + (e instanceof Error ? e.message : 'unknown')
-                    });
-                  }
-                }
-                
-              } // End of else block for delegation logic
             } else {
               logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'SKIP_LOCK_HELD', reason: 'Throttle delegate 131k' });
             }

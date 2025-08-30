@@ -196,6 +196,82 @@ class TronScanService {
   }
 
   /**
+   * Get the energy amount OUR system wallet has delegated to a specific address
+   * @param toAddress The address receiving the delegation
+   * @returns The energy amount we delegated, or 0 if none
+   */
+  async getOurDelegationToAddress(toAddress: string): Promise<number> {
+    if (!this.baseUrl) {
+      logger.warn('[TronScan] API not configured, returning 0 for our delegation check');
+      return 0;
+    }
+
+    try {
+      const systemWalletAddress = config.systemWallet.address;
+      
+      logger.info('[TronScan] Fetching our delegation to address', { 
+        fromAddress: systemWalletAddress, 
+        toAddress 
+      });
+      
+      // Call resourcev2 endpoint to get delegations FROM our wallet
+      const response = await this.axiosInstance.get<TronScanResourceData>('/account/resourcev2', {
+        params: {
+          limit: 20,
+          start: 0,
+          address: systemWalletAddress,
+          type: 2, // Energy type
+          from: 'wallet',
+          sort: 'time',
+          order: 'desc'
+        }
+      });
+      
+      const data = response.data;
+      
+      if (!data || !data.data || data.data.length === 0) {
+        logger.info('[TronScan] No delegations from our wallet found');
+        return 0;
+      }
+      
+      // Find delegation to the specific address
+      const ourDelegation = data.data.find(
+        d => d.receiverAddress === toAddress && 
+            d.ownerAddress === systemWalletAddress &&
+            d.resource === 1 // Energy resource
+      );
+      
+      if (!ourDelegation) {
+        logger.info('[TronScan] No delegation from our wallet to this address', { 
+          toAddress,
+          checkedDelegations: data.data.length 
+        });
+        return 0;
+      }
+      
+      const delegatedEnergy = Math.floor(ourDelegation.resourceValue || 0);
+      
+      logger.info('[TronScan] Our delegation to address found', {
+        toAddress,
+        delegatedSun: ourDelegation.balance,
+        delegatedTrx: (ourDelegation.balance / 1_000_000).toFixed(2),
+        delegatedEnergy,
+        operationTime: new Date(ourDelegation.operationTime).toISOString()
+      });
+      
+      return delegatedEnergy;
+    } catch (error) {
+      logger.error('[TronScan] Failed to get our delegation to address', {
+        toAddress,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        response: (error as any)?.response?.data
+      });
+      // Return 0 instead of throwing to allow fallback
+      return 0;
+    }
+  }
+
+  /**
    * Check if TronScan service is configured and available
    */
   isConfigured(): boolean {
