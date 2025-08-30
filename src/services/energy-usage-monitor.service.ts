@@ -400,8 +400,13 @@ export class EnergyUsageMonitorService {
               state.tronAddress,
               state.userId,
               'RECLAIM_ALL',
-              'No transactions remaining, reclaiming ALL delegated energy',
-              { currentEnergy, transactionsRemaining: state.transactionsRemaining }
+              `🔴 REASON: No transactions remaining (${state.transactionsRemaining}), reclaiming ALL delegated energy. Current energy: ${currentEnergy.toLocaleString()} units`,
+              { 
+                currentEnergy, 
+                transactionsRemaining: state.transactionsRemaining,
+                reason: 'No credits left - user has consumed all allocated transactions',
+                action: 'Reclaiming all delegated energy to free up resources'
+              }
             );
             
             if (this.canRunAction(state.tronAddress, 'RECLAIM_FULL')) {
@@ -419,13 +424,15 @@ export class EnergyUsageMonitorService {
                     'No transactions remaining - reclaimed ALL delegated energy'
                   );
                   
-                  logger.info('[EnergyMonitor] ✅ Reclaimed ALL energy - no transactions remaining', {
+                  logger.info('[EnergyMonitor] ✅ RECLAIM COMPLETE - No transactions remaining', {
                     address: state.tronAddress,
-                    visibleEnergy: currentEnergy,
+                    reason: 'User has no remaining transaction credits',
+                    visibleEnergyBefore: currentEnergy,
                     reclaimedEnergy: result.reclaimedEnergy,
                     difference: result.reclaimedEnergy - currentEnergy,
                     txHash: result.txHash,
-                    note: 'All delegated energy including newly generated has been reclaimed'
+                    explanation: `Reclaimed ${result.reclaimedEnergy.toLocaleString()} energy units because user has 0 transactions remaining`,
+                    note: 'All delegated energy including newly generated has been reclaimed to free system resources'
                   });
                   
                   logs.push({ 
@@ -462,23 +469,164 @@ export class EnergyUsageMonitorService {
               logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'SKIP_LOCK_HELD', reason: 'Throttle reclaim full' });
             }
           }
-          // 2. Energy is sufficient (>= 131k) -> do nothing
-          else if (currentEnergy >= this.FULL_BUFFER && state.transactionsRemaining > 0) {
-            logger.info('[EnergyMonitor] Energy sufficient, no action needed', {
+          // 2. OVER-DELEGATION CHECK: Energy > 131k -> Reclaim excess and re-delegate exactly 131k
+          else if (currentEnergy > this.FULL_BUFFER && state.transactionsRemaining > 0) {
+            const excessEnergy = currentEnergy - this.FULL_BUFFER;
+            
+            await energyMonitoringLogger.logDecision(
+              state.tronAddress,
+              state.userId,
+              'OVER_DELEGATION_DETECTED',
+              `⚠️ OVER-DELEGATION: User has ${currentEnergy.toLocaleString()} energy (${excessEnergy.toLocaleString()} EXCESS). Will reclaim ALL and re-delegate exactly 131k to prevent waste.`,
+              { 
+                currentEnergy, 
+                threshold: this.FULL_BUFFER,
+                excessEnergy,
+                transactionsRemaining: state.transactionsRemaining,
+                reason: 'User has more than 131k energy delegated - wasting system resources',
+                action: 'Reclaim ALL energy and re-delegate exactly 131k'
+              }
+            );
+            
+            logger.warn('[EnergyMonitor] 🚨 OVER-DELEGATION DETECTED - Correcting to exactly 131k', {
               address: state.tronAddress,
-              currentEnergy,
-              threshold: this.FULL_BUFFER
+              currentEnergy: currentEnergy.toLocaleString(),
+              threshold: this.FULL_BUFFER.toLocaleString(),
+              excessEnergy: excessEnergy.toLocaleString(),
+              reason: `User has ${excessEnergy.toLocaleString()} excess energy above 131k threshold`,
+              explanation: 'Will reclaim ALL energy and re-delegate exactly 131k to optimize resource usage',
+              transactionsRemaining: state.transactionsRemaining
             });
-            logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'BUFFER_OK', reason: `Energy sufficient (${currentEnergy} >= ${this.FULL_BUFFER})` });
+            
+            if (this.canRunAction(state.tronAddress, 'RECLAIM_FULL')) {
+              try {
+                // Step 1: Reclaim ALL delegated energy (including excess)
+                logger.info('[EnergyMonitor] 🔄 RECLAIMING EXCESS - Correcting over-delegation', {
+                  address: state.tronAddress,
+                  reason: 'Over-delegation detected - reclaiming ALL energy',
+                  currentEnergy: currentEnergy.toLocaleString(),
+                  excessAmount: excessEnergy.toLocaleString(),
+                  delegatedSun,
+                  delegatedTrx: (delegatedSun / 1_000_000).toFixed(2),
+                  explanation: `Reclaiming ALL ${currentEnergy.toLocaleString()} energy to correct over-delegation`
+                });
+                
+                const reclaimResult = await energyService.reclaimAllEnergyFromAddress(state.tronAddress, delegatedSun);
+                
+                if (reclaimResult.reclaimedEnergy > 0) {
+                  await energyMonitoringLogger.logReclaim(
+                    state.tronAddress,
+                    state.userId,
+                    currentEnergy,
+                    reclaimResult.reclaimedEnergy,
+                    reclaimResult.txHash,
+                    `Over-delegation correction: Reclaimed ${reclaimResult.reclaimedEnergy} energy (had ${excessEnergy} excess)`
+                  );
+                  
+                  logger.info('[EnergyMonitor] ✅ EXCESS RECLAIMED - Ready to delegate exactly 131k', {
+                    address: state.tronAddress,
+                    reclaimedEnergy: reclaimResult.reclaimedEnergy.toLocaleString(),
+                    previousEnergy: currentEnergy.toLocaleString(),
+                    excessReclaimed: excessEnergy.toLocaleString(),
+                    txHash: reclaimResult.txHash,
+                    explanation: 'Successfully reclaimed excess energy, now delegating exactly 131k'
+                  });
+                  
+                  // Step 2: Delegate exactly 131k
+                  logger.info('[EnergyMonitor] 🔋 DELEGATING EXACT 131K - Correcting to optimal amount', {
+                    address: state.tronAddress,
+                    reason: 'Re-delegating exactly 131k after reclaiming excess',
+                    energyToDelegate: this.FULL_BUFFER.toLocaleString(),
+                    previousExcess: excessEnergy.toLocaleString(),
+                    explanation: 'Delegating exactly 131k to maintain optimal energy level without waste'
+                  });
+                  
+                  const delegateResult = await energyService.transferEnergyDirect(
+                    state.tronAddress, 
+                    this.FULL_BUFFER,
+                    state.userId,
+                    false // No buffer - exactly 131k
+                  );
+                  
+                  await energyMonitoringLogger.logDelegation(
+                    state.tronAddress,
+                    state.userId,
+                    0, // Energy is 0 after reclaim
+                    this.FULL_BUFFER,
+                    delegateResult.actualEnergy,
+                    delegateResult.txHash,
+                    `Over-delegation corrected: Delegated exactly 131k (removed ${excessEnergy} excess)`
+                  );
+                  
+                  logs.push({
+                    tronAddress: state.tronAddress,
+                    userId: state.userId,
+                    action: 'DELEGATE_131K',
+                    reclaimedEnergy: reclaimResult.reclaimedEnergy,
+                    actualDelegatedEnergy: delegateResult.actualEnergy,
+                    txHash: delegateResult.txHash,
+                    reason: `Over-delegation corrected: Reclaimed ${reclaimResult.reclaimedEnergy}, re-delegated 131k (removed ${excessEnergy} excess)`
+                  });
+                  
+                  state.lastAction = 'DELEGATE_131K';
+                  state.lastActionAt = now;
+                  state.currentAllocationCharged = delegateResult.actualEnergy;
+                  bufferActionTaken = true;
+                  
+                  logger.info('[EnergyMonitor] ✅ OVER-DELEGATION CORRECTED', {
+                    address: state.tronAddress,
+                    previousEnergy: currentEnergy.toLocaleString(),
+                    excessRemoved: excessEnergy.toLocaleString(),
+                    newEnergy: this.FULL_BUFFER.toLocaleString(),
+                    result: 'Successfully corrected to exactly 131k energy'
+                  });
+                }
+              } catch (e) {
+                logger.error('[EnergyMonitor] Failed to correct over-delegation', {
+                  address: state.tronAddress,
+                  currentEnergy,
+                  excessEnergy,
+                  error: e instanceof Error ? e.message : 'unknown'
+                });
+                
+                logs.push({
+                  tronAddress: state.tronAddress,
+                  userId: state.userId,
+                  action: 'OVERRIDE',
+                  reason: `Over-delegation correction failed: ${e instanceof Error ? e.message : 'unknown'}`
+                });
+              }
+            } else {
+              logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'SKIP_LOCK_HELD', reason: 'Throttle over-delegation correction' });
+            }
           }
-          // 3. Energy below 131k -> Reclaim ALL current energy, then delegate 131k
+          // 3. Energy is exactly 131k -> Perfect, do nothing
+          else if (currentEnergy === this.FULL_BUFFER && state.transactionsRemaining > 0) {
+            logger.info('[EnergyMonitor] ✅ ENERGY OPTIMAL - Exactly 131k', {
+              address: state.tronAddress,
+              currentEnergy: currentEnergy.toLocaleString(),
+              threshold: this.FULL_BUFFER.toLocaleString(),
+              reason: 'Energy level is exactly at the optimal 131k threshold',
+              explanation: 'Perfect energy balance - no action needed',
+              transactionsRemaining: state.transactionsRemaining
+            });
+            logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'BUFFER_OK', reason: `Energy optimal (exactly ${this.FULL_BUFFER})` });
+          }
+          // 4. Energy below 131k -> Reclaim ALL current energy, then delegate 131k
           else if (currentEnergy < this.FULL_BUFFER && state.transactionsRemaining > 0) {
             await energyMonitoringLogger.logDecision(
               state.tronAddress,
               state.userId,
               'RECLAIM_AND_DELEGATE',
-              `Energy below 131k (${currentEnergy}), will reclaim all and delegate 131k`,
-              { currentEnergy, transactionsRemaining: state.transactionsRemaining }
+              `⚠️ REASON: Energy below 131k threshold. Current: ${currentEnergy.toLocaleString()}, Required: ${this.FULL_BUFFER.toLocaleString()}. Will reclaim all existing energy and delegate exactly 131k`,
+              { 
+                currentEnergy, 
+                requiredEnergy: this.FULL_BUFFER,
+                deficit: this.FULL_BUFFER - currentEnergy,
+                transactionsRemaining: state.transactionsRemaining,
+                reason: 'Energy insufficient for optimal transaction processing',
+                action: 'Reclaim-then-delegate pattern to maintain exactly 131k energy'
+              }
             );
             
             if (this.canRunAction(state.tronAddress, 'DELEGATE_131K')) {
@@ -489,12 +637,14 @@ export class EnergyUsageMonitorService {
               // Use the exact delegated SUN amount from TronScan API if available
               // This ensures we reclaim ALL delegated resources, not just visible energy
               try {
-                  logger.info('[EnergyMonitor] 🔄 Attempting to reclaim ALL delegated energy', {
+                  logger.info('[EnergyMonitor] 🔄 RECLAIM INITIATED - Preparing for 131k delegation', {
                     address: state.tronAddress,
-                    visibleEnergy: currentEnergy,
+                    reason: 'Energy below 131k threshold - need to reclaim before delegating',
+                    visibleEnergy: currentEnergy.toLocaleString(),
                     delegatedSun,
                     delegatedTrx: (delegatedSun / 1_000_000).toFixed(2),
-                    note: 'Will reclaim using EXACT delegated SUN amount from TronScan'
+                    explanation: `Reclaiming ALL energy to prevent over-delegation. Will delegate exactly 131k after reclaim.`,
+                    note: 'Using EXACT delegated SUN amount from TronScan for accurate reclaim'
                   });
                   
                   const reclaimResult = await energyService.reclaimAllEnergyFromAddress(state.tronAddress, delegatedSun);
@@ -511,14 +661,16 @@ export class EnergyUsageMonitorService {
                       'Reclaimed ALL delegated energy (including newly generated)'
                     );
                     
-                    logger.info('[EnergyMonitor] ✅ ALL energy reclaimed successfully', {
+                    logger.info('[EnergyMonitor] ✅ RECLAIM SUCCESS - Ready for 131k delegation', {
                       address: state.tronAddress,
-                      visibleEnergyBefore: currentEnergy,
-                      actualReclaimed: reclaimedEnergy,
+                      reason: 'Successfully reclaimed all energy to prepare for exact 131k delegation',
+                      visibleEnergyBefore: currentEnergy.toLocaleString(),
+                      actualReclaimed: reclaimedEnergy.toLocaleString(),
                       difference: reclaimedEnergy - currentEnergy,
                       txHash: reclaimTxHash,
+                      explanation: `Reclaimed ${reclaimedEnergy.toLocaleString()} energy units to reset address to zero before delegating`,
                       note: reclaimedEnergy > currentEnergy ? 
-                        `Reclaimed ${reclaimedEnergy - currentEnergy} extra energy (newly generated)` : 
+                        `Reclaimed ${(reclaimedEnergy - currentEnergy).toLocaleString()} extra energy (newly generated from staked TRX)` : 
                         'Reclaimed matches visible energy'
                     });
                     
@@ -675,12 +827,14 @@ export class EnergyUsageMonitorService {
                 } else {
                   // Normal delegation - safe to delegate full amount
                   try {
-                    logger.info('[EnergyMonitor] Delegating standard 131k energy', {
+                    logger.info('[EnergyMonitor] 🔋 DELEGATING 131K - Maintaining optimal energy level', {
                       address: state.tronAddress,
-                      energyToDelegate: this.FULL_BUFFER,
-                      reclaimedEnergy,
+                      reason: 'Energy below threshold, delegating exactly 131k for optimal transaction processing',
+                      energyToDelegate: this.FULL_BUFFER.toLocaleString(),
+                      reclaimedEnergy: reclaimedEnergy.toLocaleString(),
                       currentDelegation: currentDelegationCheck.delegatedEnergy,
-                      note: `Requesting EXACTLY ${this.FULL_BUFFER.toLocaleString()} energy units`
+                      explanation: `Delegating exactly ${this.FULL_BUFFER.toLocaleString()} energy units (131k threshold) to ensure user can process transactions efficiently`,
+                      note: `131k energy = ~2 USDT transactions on mainnet. No buffer added for exact amount.`
                     });
                     
                     const res = await energyService.transferEnergyDirect(
