@@ -305,31 +305,50 @@ export class EnergyService {
       const bufferMultiplier = includeBuffer ? 1.05 : 1.0; // 5% buffer only if requested
       const bufferedTrxAmount = trxAmount * bufferMultiplier;
       
-      // Add tiny buffer (0.01 TRX) to account for rounding when not using buffer
-      // This ensures we always get at least the requested energy, never 1 less
-      const roundingBuffer = includeBuffer ? 0 : 0.01; // 0.01 TRX = 0.1 energy buffer
+      // For exact energy delegation (especially 131,050 on mainnet), we need to account for rounding
+      // Mainnet ratio is 10.01, so 131,050 / 10.01 = 13,091.91 TRX
+      // We need to delegate slightly more TRX to ensure we get at least the requested energy
+      // For mainnet: add 1 TRX buffer to ensure we hit 131,050 energy exactly
+      const isMainnet = config.tron.network === 'mainnet';
+      const roundingBuffer = includeBuffer ? 0 : (isMainnet ? 1.0 : 0.01); // 1 TRX for mainnet, 0.01 for testnet
       const delegationTrxAmount = Math.max(1, bufferedTrxAmount + roundingBuffer);
       
       // Convert to SUN and ensure it's an integer
       // Use Math.ceil to round up, ensuring we never under-delegate
       const delegationAmountSun = Math.ceil(tronUtils.toSun(delegationTrxAmount));
       
+      // For mainnet with 131,050 energy target, validate the calculation
+      const expectedEnergy = Math.floor(delegationTrxAmount * energyPerTrx);
+      const isExactTarget = energyAmount === 131050 && !includeBuffer;
+      
+      if (isExactTarget && expectedEnergy < energyAmount) {
+        logger.warn('⚠️ Energy delegation may be insufficient!', {
+          requested: energyAmount,
+          expected: expectedEnergy,
+          shortfall: energyAmount - expectedEnergy,
+          suggestion: `Need to delegate ${Math.ceil(energyAmount / energyPerTrx) + 1} TRX`
+        });
+      }
+      
       logger.info('📐 Delegation amounts calculated', {
+        network: config.tron.network,
         step1_requestedEnergy: energyAmount,
         step2_energyPerTrx: energyPerTrx,
         step3_calculatedTrxAmount: trxAmount,
         step4_delegationTrxAmount: delegationTrxAmount.toFixed(6),
         step4b_withoutBuffer: trxAmount.toFixed(6),
         step5_delegationAmountSun: delegationAmountSun,
-        step6_estimatedEnergyReceived: Math.floor(delegationTrxAmount * energyPerTrx),
+        step6_estimatedEnergyReceived: expectedEnergy,
         includeBuffer,
         bufferMultiplier,
+        roundingBuffer,
         calculation: includeBuffer 
           ? `${energyAmount} energy ÷ ${energyPerTrx.toFixed(2)} = ${trxAmount.toFixed(6)} TRX × ${bufferMultiplier} buffer = ${delegationTrxAmount.toFixed(6)} TRX → ${delegationAmountSun} SUN`
-          : `${energyAmount} energy ÷ ${energyPerTrx.toFixed(2)} = ${delegationTrxAmount.toFixed(6)} TRX → ${delegationAmountSun} SUN (no buffer)`,
+          : `${energyAmount} energy ÷ ${energyPerTrx.toFixed(2)} = ${trxAmount.toFixed(6)} TRX + ${roundingBuffer} buffer = ${delegationTrxAmount.toFixed(6)} TRX → ${delegationAmountSun} SUN`,
         note: includeBuffer 
-          ? `Delegating ${delegationTrxAmount.toFixed(2)} TRX to provide ~${Math.floor(delegationTrxAmount * energyPerTrx).toLocaleString()} energy (requested: ${energyAmount.toLocaleString()} + 5% buffer)`
-          : `Delegating EXACTLY ${delegationTrxAmount.toFixed(2)} TRX to provide EXACTLY ${energyAmount.toLocaleString()} energy`,
+          ? `Delegating ${delegationTrxAmount.toFixed(2)} TRX to provide ~${expectedEnergy.toLocaleString()} energy (requested: ${energyAmount.toLocaleString()} + 5% buffer)`
+          : `Delegating ${delegationTrxAmount.toFixed(2)} TRX to provide ${expectedEnergy.toLocaleString()} energy (target: ${energyAmount.toLocaleString()})`,
+        validation: expectedEnergy >= energyAmount ? '✅ SUFFICIENT' : '⚠️ MAY BE INSUFFICIENT'
       });
       
       // Check if system wallet has enough STAKED TRX (not balance)
@@ -996,6 +1015,22 @@ export class EnergyService {
    */
   async getCurrentEnergyPerTrx(): Promise<number> {
     try {
+      // Check if we're on mainnet or testnet
+      const isMainnet = config.tron.network === 'mainnet';
+      
+      // For mainnet, use the fixed ratio of 10.01 energy per TRX
+      // This is the actual mainnet ratio as observed in production
+      if (isMainnet) {
+        const MAINNET_ENERGY_PER_TRX = 10.01;
+        logger.info('Using fixed mainnet energy per TRX ratio', {
+          network: 'mainnet',
+          ratio: MAINNET_ENERGY_PER_TRX,
+          timestamp: new Date().toISOString()
+        });
+        return MAINNET_ENERGY_PER_TRX;
+      }
+      
+      // For testnet, calculate dynamically from system wallet
       const systemAddress = config.systemWallet.address;
       
       // Get account resources and account info
@@ -1026,7 +1061,8 @@ export class EnergyService {
       // Calculate ratio (energy per TRX)
       if (stakedTrx > 0 && totalEnergy > 0) {
         const ratio = totalEnergy / stakedTrx;
-        logger.info('Calculated energy per TRX ratio', {
+        logger.info('Calculated energy per TRX ratio for testnet', {
+          network: 'testnet',
           totalEnergy,
           stakedTrx,
           stakedForEnergySun,
@@ -1037,18 +1073,26 @@ export class EnergyService {
         return ratio;
       }
       
-      // Fallback to observed ratio if calculation fails
-      logger.warn('Could not calculate energy ratio, using fallback', {
+      // Fallback to testnet ratio if calculation fails
+      const TESTNET_FALLBACK_RATIO = 11.36;
+      logger.warn('Could not calculate energy ratio, using testnet fallback', {
         totalEnergy,
         stakedTrx,
-        stakedForEnergySun
+        stakedForEnergySun,
+        fallbackRatio: TESTNET_FALLBACK_RATIO
       });
-      return 14.5; // Based on observed test results
+      return TESTNET_FALLBACK_RATIO;
     } catch (error) {
-      logger.error('Failed to calculate energy ratio, using fallback', {
-        error: error instanceof Error ? error.message : 'Unknown error'
+      // Use network-specific fallback
+      const isMainnet = config.tron.network === 'mainnet';
+      const fallbackRatio = isMainnet ? 10.01 : 11.36;
+      
+      logger.error('Failed to calculate energy ratio, using network fallback', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        network: config.tron.network,
+        fallbackRatio
       });
-      return 14.5; // Fallback ratio based on test results
+      return fallbackRatio;
     }
   }
 
