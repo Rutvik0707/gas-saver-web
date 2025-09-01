@@ -305,11 +305,14 @@ export class EnergyService {
       const bufferMultiplier = includeBuffer ? 1.05 : 1.0; // 5% buffer only if requested
       const bufferedTrxAmount = trxAmount * bufferMultiplier;
       
-      // Ensure minimum 1 TRX to meet TRON blockchain requirements
-      const delegationTrxAmount = Math.max(1, bufferedTrxAmount);
+      // Add tiny buffer (0.01 TRX) to account for rounding when not using buffer
+      // This ensures we always get at least the requested energy, never 1 less
+      const roundingBuffer = includeBuffer ? 0 : 0.01; // 0.01 TRX = 0.1 energy buffer
+      const delegationTrxAmount = Math.max(1, bufferedTrxAmount + roundingBuffer);
       
       // Convert to SUN and ensure it's an integer
-      const delegationAmountSun = Math.floor(tronUtils.toSun(delegationTrxAmount));
+      // Use Math.ceil to round up, ensuring we never under-delegate
+      const delegationAmountSun = Math.ceil(tronUtils.toSun(delegationTrxAmount));
       
       logger.info('📐 Delegation amounts calculated', {
         step1_requestedEnergy: energyAmount,
