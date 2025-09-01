@@ -272,6 +272,94 @@ class TronScanService {
   }
 
   /**
+   * Get complete delegation details from our system wallet to a specific address
+   * This returns the ACTUAL delegation data from the blockchain, not calculated values
+   * @param toAddress The address receiving the delegation
+   * @returns Complete delegation details including SUN amount, or null if not found
+   */
+  async getOurDelegationDetails(toAddress: string): Promise<{
+    delegatedEnergy: number;
+    delegatedSun: number;
+    delegatedTrx: number;
+    operationTime: number;
+  } | null> {
+    if (!this.baseUrl) {
+      logger.warn('[TronScan] API not configured, returning null for delegation details');
+      return null;
+    }
+
+    try {
+      const systemWalletAddress = config.systemWallet.address;
+      
+      logger.info('[TronScan] Fetching complete delegation details', { 
+        fromAddress: systemWalletAddress, 
+        toAddress 
+      });
+      
+      // Call resourcev2 endpoint to get delegations FROM our wallet
+      const response = await this.axiosInstance.get<TronScanResourceData>('/account/resourcev2', {
+        params: {
+          limit: 20,
+          start: 0,
+          address: systemWalletAddress,
+          type: 2, // Energy type
+          from: 'wallet',
+          sort: 'time',
+          order: 'desc'
+        }
+      });
+      
+      const data = response.data;
+      
+      if (!data || !data.data || data.data.length === 0) {
+        logger.info('[TronScan] No delegations from our wallet found');
+        return null;
+      }
+      
+      // Find delegation to the specific address
+      const ourDelegation = data.data.find(
+        d => d.receiverAddress === toAddress && 
+            d.ownerAddress === systemWalletAddress &&
+            d.resource === 1 // Energy resource
+      );
+      
+      if (!ourDelegation) {
+        logger.info('[TronScan] No delegation from our wallet to this address', { 
+          toAddress,
+          checkedDelegations: data.data.length 
+        });
+        return null;
+      }
+      
+      const result = {
+        delegatedEnergy: Math.floor(ourDelegation.resourceValue || 0),
+        delegatedSun: ourDelegation.balance || 0,
+        delegatedTrx: (ourDelegation.balance || 0) / 1_000_000,
+        operationTime: ourDelegation.operationTime || 0
+      };
+      
+      logger.info('[TronScan] Complete delegation details retrieved', {
+        toAddress,
+        delegatedEnergy: result.delegatedEnergy.toLocaleString(),
+        delegatedSun: result.delegatedSun.toLocaleString(),
+        delegatedTrx: result.delegatedTrx.toFixed(2),
+        operationTime: new Date(result.operationTime).toISOString(),
+        note: 'Using ACTUAL blockchain data, not calculated values'
+      });
+      
+      return result;
+    } catch (error) {
+      logger.error('[TronScan] Failed to get delegation details', {
+        toAddress,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        response: (error as any)?.response?.data
+      });
+      // Return null instead of throwing to allow fallback
+      return null;
+    }
+  }
+
+  /**
    * Check if TronScan service is configured and available
    */
   isConfigured(): boolean {
