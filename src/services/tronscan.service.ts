@@ -235,10 +235,11 @@ class TronScanService {
       }
       
       // Find delegation to the specific address
+      // Note: TronScan API returns resource=1 for energy on mainnet (despite type=2 in params)
       const ourDelegation = data.data.find(
         d => d.receiverAddress === toAddress && 
             d.ownerAddress === systemWalletAddress &&
-            d.resource === 1 // Energy resource
+            d.resource === 1 // Energy resource (API returns 1 for energy despite type=2 param)
       );
       
       if (!ourDelegation) {
@@ -317,10 +318,11 @@ class TronScanService {
       }
       
       // Find delegation to the specific address
+      // Note: TronScan API returns resource=1 for energy on mainnet (despite type=2 in params)
       const ourDelegation = data.data.find(
         d => d.receiverAddress === toAddress && 
             d.ownerAddress === systemWalletAddress &&
-            d.resource === 1 // Energy resource
+            d.resource === 1 // Energy resource (API returns 1 for energy despite type=2 param)
       );
       
       if (!ourDelegation) {

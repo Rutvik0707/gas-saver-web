@@ -492,7 +492,138 @@ export class EnergyUsageMonitorService {
               logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'SKIP_LOCK_HELD', reason: 'Throttle reclaim full' });
             }
           }
-          // 2. OVER-DELEGATION CHECK: OUR delegation > 131k + 1% tolerance -> Reclaim OUR excess and re-delegate exactly 131k
+          // 2. LOW ENERGY CHECK: Current energy < 131k due to consumption -> Reclaim ALL and re-delegate 131k
+          // This ensures users always maintain full energy allocation after consuming energy
+          else if (currentEnergy < this.FULL_BUFFER && ourDelegatedEnergy > 0 && state.transactionsRemaining > 0) {
+            const energyConsumed = ourDelegatedEnergy - currentEnergy;
+            
+            await energyMonitoringLogger.logDecision(
+              state.tronAddress,
+              state.userId,
+              'LOW_ENERGY_REPLENISH',
+              `⚡ LOW ENERGY DETECTED: Current energy (${currentEnergy.toLocaleString()}) is below 131k threshold. User consumed ${energyConsumed.toLocaleString()} energy. Will reclaim ALL delegated energy and re-delegate exactly 131k to replenish.`,
+              { 
+                currentEnergy,
+                ourDelegatedEnergy,
+                energyConsumed,
+                threshold: this.FULL_BUFFER,
+                transactionsRemaining: state.transactionsRemaining,
+                reason: 'Energy consumed by user - need to replenish to maintain 131k',
+                action: 'Reclaim all delegation (including staked TRX generation) then delegate exactly 131k'
+              }
+            );
+            
+            if (this.canRunAction(state.tronAddress, 'DELEGATE_131K')) {
+              try {
+                // Step 1: Reclaim ALL delegated energy (including any staked TRX generation)
+                logger.info('[EnergyMonitor] 🔄 RECLAIMING FOR REPLENISHMENT - User consumed energy', {
+                  address: state.tronAddress,
+                  currentEnergy: currentEnergy.toLocaleString(),
+                  ourDelegatedEnergy: ourDelegatedEnergy.toLocaleString(),
+                  consumed: energyConsumed.toLocaleString(),
+                  reason: 'Reclaiming all energy to replenish after consumption'
+                });
+                
+                // Get ACTUAL delegation details from TronScan API
+                const delegationDetails = await tronscanService.getOurDelegationDetails(state.tronAddress);
+                
+                if (delegationDetails) {
+                  logger.info('[EnergyMonitor] 📊 Using ACTUAL delegation for reclaim', {
+                    address: state.tronAddress,
+                    apiDelegatedEnergy: delegationDetails.delegatedEnergy.toLocaleString(),
+                    apiDelegatedSun: delegationDetails.delegatedSun.toLocaleString(),
+                    apiDelegatedTrx: delegationDetails.delegatedTrx.toFixed(2)
+                  });
+                }
+                
+                const actualDelegationSun = delegationDetails ? delegationDetails.delegatedSun : delegatedSun;
+                
+                const reclaimResult = await energyService.reclaimAllEnergyFromAddress(state.tronAddress, actualDelegationSun);
+                
+                if (reclaimResult.reclaimedEnergy > 0) {
+                  await energyMonitoringLogger.logReclaim(
+                    state.tronAddress,
+                    state.userId,
+                    currentEnergy,
+                    reclaimResult.reclaimedEnergy,
+                    reclaimResult.txHash,
+                    `Energy replenishment: Reclaimed ${reclaimResult.reclaimedEnergy} (user had consumed ${energyConsumed})`
+                  );
+                  
+                  logger.info('[EnergyMonitor] ✅ RECLAIM COMPLETE - Ready to replenish', {
+                    address: state.tronAddress,
+                    reclaimedEnergy: reclaimResult.reclaimedEnergy.toLocaleString(),
+                    previousEnergy: currentEnergy.toLocaleString(),
+                    txHash: reclaimResult.txHash
+                  });
+                  
+                  // Step 2: Delegate exactly 131k to replenish
+                  logger.info('[EnergyMonitor] 🔋 REPLENISHING ENERGY - Delegating 131k', {
+                    address: state.tronAddress,
+                    reason: 'Replenishing energy after consumption',
+                    energyToDelegate: this.FULL_BUFFER.toLocaleString()
+                  });
+                  
+                  const delegateResult = await energyService.transferEnergyDirect(
+                    state.tronAddress, 
+                    this.FULL_BUFFER,
+                    state.userId,
+                    false // No buffer - exactly 131k
+                  );
+                  
+                  await energyMonitoringLogger.logDelegation(
+                    state.tronAddress,
+                    state.userId,
+                    0, // Energy is 0 after reclaim
+                    this.FULL_BUFFER,
+                    delegateResult.actualEnergy,
+                    delegateResult.txHash,
+                    `Energy replenished: User consumed ${energyConsumed}, delegated fresh 131k`
+                  );
+                  
+                  logs.push({
+                    tronAddress: state.tronAddress,
+                    userId: state.userId,
+                    action: 'DELEGATE_131K',
+                    reclaimedEnergy: reclaimResult.reclaimedEnergy,
+                    actualDelegatedEnergy: delegateResult.actualEnergy,
+                    txHash: delegateResult.txHash,
+                    reason: `Energy replenished: Reclaimed ${reclaimResult.reclaimedEnergy}, delegated 131k (user consumed ${energyConsumed})`
+                  });
+                  
+                  state.lastAction = 'DELEGATE_131K';
+                  state.lastActionAt = now;
+                  state.currentAllocationCharged = delegateResult.actualEnergy;
+                  bufferActionTaken = true;
+                  currentEnergy = this.FULL_BUFFER; // Update current energy after delegation
+                  
+                  logger.info('[EnergyMonitor] ✅ ENERGY REPLENISHED', {
+                    address: state.tronAddress,
+                    previousEnergy: currentEnergy.toLocaleString(),
+                    newEnergy: this.FULL_BUFFER.toLocaleString(),
+                    consumed: energyConsumed.toLocaleString(),
+                    result: 'Successfully replenished to 131k energy'
+                  });
+                }
+              } catch (e) {
+                logger.error('[EnergyMonitor] Failed to replenish energy', {
+                  address: state.tronAddress,
+                  currentEnergy,
+                  error: e instanceof Error ? e.message : 'unknown'
+                });
+                
+                logs.push({
+                  tronAddress: state.tronAddress,
+                  userId: state.userId,
+                  action: 'OVERRIDE',
+                  reason: `Energy replenishment failed: ${e instanceof Error ? e.message : 'unknown'}`
+                });
+              }
+            } else {
+              logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'SKIP_LOCK_HELD', reason: 'Throttle energy replenishment' });
+            }
+          }
+          // 3. OVER-DELEGATION CHECK: OUR delegation > 131k + 1% tolerance -> Reclaim OUR excess and re-delegate exactly 131k
           // Adding 1% tolerance (1,310 energy) to prevent constant reclaim/delegate cycles from natural energy generation
           else if (ourDelegatedEnergy > (this.FULL_BUFFER * 1.01) && state.transactionsRemaining > 0) {
             const excessEnergy = ourDelegatedEnergy - this.FULL_BUFFER;
@@ -648,7 +779,7 @@ export class EnergyUsageMonitorService {
               logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'SKIP_LOCK_HELD', reason: 'Throttle over-delegation correction' });
             }
           }
-          // 3. OUR delegation is within tolerance range (130.5k ± 1%) -> Optimal, do nothing
+          // 4. OUR delegation is within tolerance range (130.5k ± 1%) -> Optimal, do nothing
           else if (Math.abs(ourDelegatedEnergy - this.FULL_BUFFER) <= (this.FULL_BUFFER * 0.01) && state.transactionsRemaining > 0) {
             const variance = ourDelegatedEnergy - this.FULL_BUFFER;
             const variancePercent = (variance / this.FULL_BUFFER * 100).toFixed(2);
@@ -670,7 +801,7 @@ export class EnergyUsageMonitorService {
             });
             logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'BUFFER_OK', reason: `Our delegation optimal (${ourDelegatedEnergy} within tolerance of ${this.FULL_BUFFER})` });
           }
-          // 4. OUR delegation below 130.5k -> Reclaim ALL our energy, then delegate exactly 130.5k
+          // 5. OUR delegation below 130.5k -> Reclaim ALL our energy, then delegate exactly 130.5k
           // This prevents accumulation from staked TRX generation
           else if (ourDelegatedEnergy < this.FULL_BUFFER && state.transactionsRemaining > 0) {
             await energyMonitoringLogger.logDecision(
@@ -826,7 +957,7 @@ export class EnergyUsageMonitorService {
               logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'SKIP_LOCK_HELD', reason: 'Throttle delegate 131k' });
             }
           }
-          // 5. After inactivity penalty, reclaim ALL and re-delegate minimum buffer
+          // 6. After inactivity penalty, reclaim ALL and re-delegate minimum buffer
           else if (state.lastPenaltyTime && currentEnergy > this.MIN_BUFFER_AFTER_PENALTY && state.transactionsRemaining > 0) {
             const target = this.MIN_BUFFER_AFTER_PENALTY;
             if (this.canRunAction(state.tronAddress, 'RECLAIM_PARTIAL')) {
