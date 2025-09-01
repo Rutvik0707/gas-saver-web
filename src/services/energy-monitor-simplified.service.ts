@@ -94,27 +94,29 @@ export class SimplifiedEnergyMonitor {
       // Log system bandwidth status at the start of each cycle
       const initialBandwidth = await energyService.getSystemBandwidthStatus();
       
-      // Check TRX balance for transaction fees
-      const systemWallet = await systemTronWeb.trx.getAccount(config.systemWallet.address);
-      const trxBalance = tronUtils.fromSun(systemWallet.balance || 0);
-      
       logger.info('[SimplifiedEnergyMonitor] System resource status', {
         bandwidth: {
           available: initialBandwidth.available,
           required: 700,
-          canDelegate: initialBandwidth.canDelegate,
           freeAvailable: initialBandwidth.freeAvailable,
           totalUsed: initialBandwidth.used,
           total: initialBandwidth.total
         },
-        trxBalance: parseFloat(trxBalance),
-        hasTrxForFees: parseFloat(trxBalance) > 0.1,
-        status: initialBandwidth.canDelegate ? 'CAN DELEGATE - Sufficient bandwidth' : 'CANNOT DELEGATE - Insufficient bandwidth (need 700)',
+        trxBalance: initialBandwidth.trxBalance,
+        canBurnTrx: initialBandwidth.canBurnTrx,
+        delegationMethod: initialBandwidth.delegationMethod,
+        estimatedTrxCost: initialBandwidth.estimatedTrxCost,
+        canDelegate: initialBandwidth.canDelegate,
+        status: initialBandwidth.canDelegate 
+          ? initialBandwidth.delegationMethod === 'bandwidth' 
+            ? 'CAN DELEGATE - Using bandwidth (free)' 
+            : `CAN DELEGATE - Will burn ~${initialBandwidth.estimatedTrxCost} TRX per transaction`
+          : 'CANNOT DELEGATE - Insufficient bandwidth and TRX',
         note: !initialBandwidth.canDelegate 
-          ? 'Energy delegations will be skipped due to insufficient bandwidth' 
-          : parseFloat(trxBalance) < 0.1 
-            ? 'Warning: Low TRX balance for transaction fees'
-            : 'Ready for delegations'
+          ? 'Need either 700+ bandwidth OR 1+ TRX to delegate energy' 
+          : initialBandwidth.delegationMethod === 'trx_burn'
+            ? `Will use TRX burn (~${initialBandwidth.estimatedTrxCost} TRX) due to low bandwidth`
+            : 'Ready for delegations using bandwidth'
       });
       
       // Step 1: Initialize array for addresses needing adjustment
@@ -292,24 +294,35 @@ export class SimplifiedEnergyMonitor {
             const bandwidthStatus = await energyService.getSystemBandwidthStatus();
             
             if (!bandwidthStatus.canDelegate) {
-              logger.warn('[SimplifiedEnergyMonitor] CANNOT DELEGATE - Insufficient bandwidth', {
+              logger.warn('[SimplifiedEnergyMonitor] CANNOT DELEGATE - Insufficient resources', {
                 address,
                 availableBandwidth: bandwidthStatus.available,
                 requiredBandwidth: 700,
-                freeAvailable: bandwidthStatus.freeAvailable,
-                totalUsed: bandwidthStatus.used,
-                totalBandwidth: bandwidthStatus.total,
-                reason: 'Delegation requires 700 bandwidth for transaction',
-                solution: 'Wait for bandwidth to regenerate (resets daily) or stake TRX for bandwidth'
+                trxBalance: bandwidthStatus.trxBalance,
+                minTrxRequired: 1,
+                reason: 'Need either 700+ bandwidth OR 1+ TRX for delegation',
+                solution: 'Wait for bandwidth regeneration, stake TRX for bandwidth, or add TRX to wallet'
               });
-              continue; // Skip this address until bandwidth regenerates
+              continue; // Skip this address until resources available
+            }
+            
+            // Log delegation method
+            if (bandwidthStatus.delegationMethod === 'trx_burn') {
+              logger.info('[SimplifiedEnergyMonitor] Using TRX burn for delegation', {
+                address,
+                trxBalance: bandwidthStatus.trxBalance,
+                estimatedCost: bandwidthStatus.estimatedTrxCost,
+                reason: 'Insufficient bandwidth - will burn TRX instead'
+              });
             }
             
             logger.info('[SimplifiedEnergyMonitor] Resource checks passed', {
               address,
               availableEnergy,
+              delegationMethod: bandwidthStatus.delegationMethod,
               availableBandwidth: bandwidthStatus.available,
-              freeAvailableBandwidth: bandwidthStatus.freeAvailable
+              trxBalance: bandwidthStatus.trxBalance,
+              estimatedTrxCost: bandwidthStatus.estimatedTrxCost
             });
             
             // Find the user ID for this address

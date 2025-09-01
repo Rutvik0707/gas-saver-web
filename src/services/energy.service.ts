@@ -344,21 +344,31 @@ export class EnergyService {
       const bandwidthStatus = await this.getSystemBandwidthStatus();
       
       if (!bandwidthStatus.canDelegate) {
-        logger.error('Insufficient bandwidth for delegation', {
+        logger.error('Insufficient resources for delegation', {
           available: bandwidthStatus.available,
-          required: 400,
-          freeAvailable: bandwidthStatus.freeAvailable,
-          totalUsed: bandwidthStatus.used,
+          required: 700,
+          trxBalance: bandwidthStatus.trxBalance,
+          minTrxRequired: 1,
           systemWallet: systemWalletAddress
         });
-        throw new Error(`Insufficient bandwidth for delegation. Available: ${bandwidthStatus.available}, Required: 400. Wait for bandwidth to regenerate.`);
+        throw new Error(`Insufficient resources for delegation. Bandwidth: ${bandwidthStatus.available}/700, TRX: ${bandwidthStatus.trxBalance}. Need either 700+ bandwidth OR 1+ TRX.`);
       }
       
-      logger.info('Bandwidth check passed', {
-        available: bandwidthStatus.available,
-        freeAvailable: bandwidthStatus.freeAvailable,
-        canDelegate: bandwidthStatus.canDelegate
-      });
+      // Log delegation method
+      if (bandwidthStatus.delegationMethod === 'trx_burn') {
+        logger.info('Using TRX burn for delegation (low bandwidth)', {
+          available: bandwidthStatus.available,
+          trxBalance: bandwidthStatus.trxBalance,
+          estimatedCost: bandwidthStatus.estimatedTrxCost,
+          delegationMethod: 'trx_burn'
+        });
+      } else {
+        logger.info('Using bandwidth for delegation (free)', {
+          available: bandwidthStatus.available,
+          freeAvailable: bandwidthStatus.freeAvailable,
+          delegationMethod: 'bandwidth'
+        });
+      }
 
       // Build delegation transaction with correct parameter order
       let delegationTx;
@@ -505,6 +515,10 @@ export class EnergyService {
     freeUsed: number;
     freeTotal: number;
     canDelegate: boolean;
+    trxBalance: number;
+    canBurnTrx: boolean;
+    delegationMethod: 'bandwidth' | 'trx_burn' | 'none';
+    estimatedTrxCost?: number;
   }> {
     try {
       const systemAddress = config.systemWallet.address;
@@ -519,9 +533,25 @@ export class EnergyService {
       const freeAvailable = Math.max(0, freeNetLimit - freeNetUsed);
       const totalAvailable = stakedAvailable + freeAvailable;
       
+      // Check TRX balance for burn option
+      const account = await systemTronWeb.trx.getAccount(systemAddress);
+      const trxBalance = parseFloat(tronUtils.fromSun(account.balance || 0));
+      const canBurnTrx = trxBalance > 1; // Need at least 1 TRX for safety margin
+      
       // Delegation transaction requires approximately 500-700 bandwidth
-      // Increased threshold to prevent failed transactions
+      // Or can burn ~0.3 TRX if bandwidth insufficient
       const DELEGATION_BANDWIDTH_REQUIRED = 700;
+      const TRX_BURN_COST = 0.3; // Approximate TRX cost for delegation transaction
+      
+      const hasSufficientBandwidth = totalAvailable >= DELEGATION_BANDWIDTH_REQUIRED;
+      const canDelegate = hasSufficientBandwidth || canBurnTrx;
+      
+      let delegationMethod: 'bandwidth' | 'trx_burn' | 'none' = 'none';
+      if (hasSufficientBandwidth) {
+        delegationMethod = 'bandwidth';
+      } else if (canBurnTrx) {
+        delegationMethod = 'trx_burn';
+      }
       
       return {
         available: totalAvailable,
@@ -530,7 +560,11 @@ export class EnergyService {
         freeAvailable,
         freeUsed: freeNetUsed,
         freeTotal: freeNetLimit,
-        canDelegate: totalAvailable >= DELEGATION_BANDWIDTH_REQUIRED
+        canDelegate,
+        trxBalance,
+        canBurnTrx,
+        delegationMethod,
+        estimatedTrxCost: delegationMethod === 'trx_burn' ? TRX_BURN_COST : undefined
       };
     } catch (error) {
       logger.error('Failed to get system bandwidth status', {
@@ -543,7 +577,10 @@ export class EnergyService {
         freeAvailable: 0,
         freeUsed: 0,
         freeTotal: 0,
-        canDelegate: false
+        canDelegate: false,
+        trxBalance: 0,
+        canBurnTrx: false,
+        delegationMethod: 'none'
       };
     }
   }
