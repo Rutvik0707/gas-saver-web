@@ -28,17 +28,17 @@ export class CronService {
       await this.runDepositExpirer();
     });
 
-  // Unified energy usage monitoring & delegation every 1 minute
-    this.scheduleJob('energy-usage-monitor', '0 * * * * *', async () => {
-      const { energyUsageMonitorService } = await import('./energy-usage-monitor.service');
-      await energyUsageMonitorService.runCycle();
+  // Simplified energy monitoring & delegation every 1 minute
+    this.scheduleJob('simplified-energy-monitor', '0 * * * * *', async () => {
+      const { simplifiedEnergyMonitor } = await import('./energy-monitor-simplified.service');
+      await simplifiedEnergyMonitor.runCycle();
     });
 
     logger.info('🔄 Transaction detector started - scanning every 30 seconds');
     logger.info('💰 Deposit processor started - processing every minute');
     logger.info('📍 Address pool maintenance started - running every hour');
     logger.info('⏳ Deposit expirer started - cleanup every 5 minutes');
-  logger.info('🔍 Energy usage monitor started - unified delegation & reclaim every 1 minute');
+  logger.info('⚡ Simplified energy monitor started - checking and adjusting energy every 1 minute');
     logger.info('✅ All background services initialized successfully');
   }
 

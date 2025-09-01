@@ -230,6 +230,27 @@ export class EnergyUsageMonitorService {
       const logs: any[] = [];
       let bufferActionTaken = false;
       
+      // Early exit: Skip processing for addresses with no transactions and no delegated energy
+      // This prevents unnecessary API calls and reclaim attempts
+      if (state.transactionsRemaining <= 0 && ourDelegatedEnergy === 0) {
+        logger.debug('[EnergyMonitor] Skipping address - no transactions and no delegated energy', {
+          address: state.tronAddress,
+          transactionsRemaining: state.transactionsRemaining,
+          ourDelegatedEnergy
+        });
+        
+        // Just update the last observed energy and return
+        await prisma.userEnergyState.update({
+          where: { tronAddress: state.tronAddress },
+          data: {
+            lastObservedEnergy: currentEnergy,
+            currentEnergyCached: currentEnergy,
+            updatedAt: now
+          }
+        });
+        return;
+      }
+      
       // Check delegation info early to detect energy transfers
       let currentDelegationInfo = { delegatedEnergy: 0, delegatedTrx: 0, canReclaim: false };
       try {
@@ -417,8 +438,8 @@ export class EnergyUsageMonitorService {
 
       if (this.ACTIVE_MODE) {
         try {
-          // 1. No transactions remaining -> reclaim ALL delegated energy
-          if (state.transactionsRemaining <= 0) {
+          // 1. No transactions remaining -> reclaim ALL delegated energy (only if we have energy delegated)
+          if (state.transactionsRemaining <= 0 && ourDelegatedEnergy > 0) {
             await energyMonitoringLogger.logDecision(
               state.tronAddress,
               state.userId,
@@ -427,6 +448,7 @@ export class EnergyUsageMonitorService {
               { 
                 currentEnergy, 
                 transactionsRemaining: state.transactionsRemaining,
+                ourDelegatedEnergy,
                 reason: 'No credits left - user has consumed all allocated transactions',
                 action: 'Reclaiming all delegated energy to free up resources'
               }
@@ -491,6 +513,16 @@ export class EnergyUsageMonitorService {
             } else {
               logs.push({ tronAddress: state.tronAddress, userId: state.userId, action: 'SKIP_LOCK_HELD', reason: 'Throttle reclaim full' });
             }
+          }
+          // Early exit if no transactions and no energy delegated - nothing more to do
+          else if (state.transactionsRemaining <= 0 && ourDelegatedEnergy === 0) {
+            // Already handled - user has no transactions and we've already reclaimed everything
+            logs.push({ 
+              tronAddress: state.tronAddress, 
+              userId: state.userId, 
+              action: 'BUFFER_OK', 
+              reason: 'No transactions and no delegated energy - already optimized' 
+            });
           }
           // 2. LOW ENERGY CHECK: Current energy < 131k due to consumption -> Reclaim ALL and re-delegate 131k
           // This ensures users always maintain full energy allocation after consuming energy
