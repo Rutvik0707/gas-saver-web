@@ -3,6 +3,7 @@ import { prisma } from '../config/database';
 import { TransactionType, TransactionStatus } from '@prisma/client';
 import { energyRateService } from '../modules/energy-rate';
 import { energyMonitoringLogger } from './energy-monitoring-logger.service';
+import { chainParametersService } from './chain-parameters.service';
 
 export class EnergyService {
   private readonly ENERGY_AMOUNT_TRX = 1; // 1 TRX worth of energy per deposit (deprecated)
@@ -1015,22 +1016,21 @@ export class EnergyService {
    */
   async getCurrentEnergyPerTrx(): Promise<number> {
     try {
-      // Check if we're on mainnet or testnet
-      const isMainnet = config.tron.network === 'mainnet';
+      // First try to get energy ratio from chain parameters (most accurate)
+      const networkEnergyInfo = await chainParametersService.calculateEnergyPerTrx();
       
-      // For mainnet, use the fixed ratio of 10.01 energy per TRX
-      // This is the actual mainnet ratio as observed in production
-      if (isMainnet) {
-        const MAINNET_ENERGY_PER_TRX = 10.01;
-        logger.info('Using fixed mainnet energy per TRX ratio', {
-          network: 'mainnet',
-          ratio: MAINNET_ENERGY_PER_TRX,
+      if (networkEnergyInfo && networkEnergyInfo.source === 'chain_parameters') {
+        logger.info('Using energy per TRX from chain parameters', {
+          network: config.tron.network,
+          ratio: networkEnergyInfo.energyPerTrx.toFixed(2),
+          energyFee: networkEnergyInfo.energyFee,
+          source: 'chain_parameters',
           timestamp: new Date().toISOString()
         });
-        return MAINNET_ENERGY_PER_TRX;
+        return networkEnergyInfo.energyPerTrx;
       }
       
-      // For testnet, calculate dynamically from system wallet
+      // If chain parameters failed, try calculating from system wallet (second best)
       const systemAddress = config.systemWallet.address;
       
       // Get account resources and account info
@@ -1061,38 +1061,96 @@ export class EnergyService {
       // Calculate ratio (energy per TRX)
       if (stakedTrx > 0 && totalEnergy > 0) {
         const ratio = totalEnergy / stakedTrx;
-        logger.info('Calculated energy per TRX ratio for testnet', {
-          network: 'testnet',
+        logger.info('Calculated energy per TRX ratio from system wallet', {
+          network: config.tron.network,
           totalEnergy,
           stakedTrx,
           stakedForEnergySun,
           ratio: ratio.toFixed(2),
           method: frozenV2.length > 0 ? 'Stake 2.0' : 'Stake 1.0',
+          source: 'calculated',
           timestamp: new Date().toISOString()
         });
         return ratio;
       }
       
-      // Fallback to testnet ratio if calculation fails
-      const TESTNET_FALLBACK_RATIO = 11.36;
-      logger.warn('Could not calculate energy ratio, using testnet fallback', {
-        totalEnergy,
-        stakedTrx,
-        stakedForEnergySun,
-        fallbackRatio: TESTNET_FALLBACK_RATIO
-      });
-      return TESTNET_FALLBACK_RATIO;
-    } catch (error) {
-      // Use network-specific fallback
-      const isMainnet = config.tron.network === 'mainnet';
-      const fallbackRatio = isMainnet ? 10.01 : 11.36;
+      // If both methods failed, use fallback from chain parameters service
+      if (networkEnergyInfo && networkEnergyInfo.source === 'fallback') {
+        logger.warn('Using fallback energy ratio', {
+          network: config.tron.network,
+          ratio: networkEnergyInfo.energyPerTrx.toFixed(2),
+          source: 'fallback',
+          reason: 'Both chain parameters and wallet calculation failed'
+        });
+        return networkEnergyInfo.energyPerTrx;
+      }
       
-      logger.error('Failed to calculate energy ratio, using network fallback', {
-        error: error instanceof Error ? error.message : 'Unknown error',
+      // Final fallback - hardcoded values
+      const fallbackRatio = 10.01; // Same for both mainnet and testnet
+      logger.warn('Using hardcoded fallback energy ratio', {
         network: config.tron.network,
-        fallbackRatio
+        ratio: fallbackRatio,
+        source: 'hardcoded_fallback'
       });
       return fallbackRatio;
+      
+    } catch (error) {
+      // Use fallback on error - same for both networks
+      const fallbackRatio = 10.01;
+      
+      logger.error('Failed to get energy ratio, using hardcoded fallback', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        network: config.tron.network,
+        fallbackRatio,
+        source: 'error_fallback'
+      });
+      return fallbackRatio;
+    }
+  }
+
+  /**
+   * Get detailed network energy information including chain parameters
+   * Useful for monitoring and debugging energy calculations
+   */
+  async getNetworkEnergyInfo(): Promise<{
+    energyPerTrx: number;
+    energyFee: number;
+    energyFeeInTrx: number;
+    source: string;
+    network: string;
+    dynamicEnergyEnabled?: boolean;
+    timestamp: string;
+  }> {
+    try {
+      const networkInfo = await chainParametersService.calculateEnergyPerTrx();
+      const dynamicParams = await chainParametersService.getDynamicEnergyParams();
+      
+      return {
+        energyPerTrx: networkInfo.energyPerTrx,
+        energyFee: networkInfo.energyFee,
+        energyFeeInTrx: networkInfo.energyFee / 1_000_000,
+        source: networkInfo.source,
+        network: config.tron.network,
+        dynamicEnergyEnabled: dynamicParams?.enabled,
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      logger.error('Failed to get network energy info', {
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      
+      // Return fallback values
+      const fallbackRatio = 10.01; // Same for both networks
+      const fallbackFee = 1_000_000 / fallbackRatio;
+      
+      return {
+        energyPerTrx: fallbackRatio,
+        energyFee: fallbackFee,
+        energyFeeInTrx: fallbackFee / 1_000_000,
+        source: 'fallback',
+        network: config.tron.network,
+        timestamp: new Date().toISOString()
+      };
     }
   }
 
