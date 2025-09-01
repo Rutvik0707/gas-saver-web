@@ -340,6 +340,26 @@ export class EnergyService {
         throw new Error(`Insufficient staked TRX for delegation. Required: ${delegationTrxAmount.toFixed(2)} TRX, Staked: ${stakedTrx.toFixed(2)} TRX`);
       }
       
+      // Check bandwidth before attempting delegation
+      const bandwidthStatus = await this.getSystemBandwidthStatus();
+      
+      if (!bandwidthStatus.canDelegate) {
+        logger.error('Insufficient bandwidth for delegation', {
+          available: bandwidthStatus.available,
+          required: 400,
+          freeAvailable: bandwidthStatus.freeAvailable,
+          totalUsed: bandwidthStatus.used,
+          systemWallet: systemWalletAddress
+        });
+        throw new Error(`Insufficient bandwidth for delegation. Available: ${bandwidthStatus.available}, Required: 400. Wait for bandwidth to regenerate.`);
+      }
+      
+      logger.info('Bandwidth check passed', {
+        available: bandwidthStatus.available,
+        freeAvailable: bandwidthStatus.freeAvailable,
+        canDelegate: bandwidthStatus.canDelegate
+      });
+
       // Build delegation transaction with correct parameter order
       let delegationTx;
       try {
@@ -457,13 +477,74 @@ export class EnergyService {
   async getBandwidthBalance(address: string): Promise<number> {
     try {
       const accountResources = await systemTronWeb.trx.getAccountResources(address);
-      return accountResources.NetLimit || 0;
+      const netLimit = accountResources.NetLimit || 0;
+      const netUsed = accountResources.NetUsed || 0;
+      const freeNetLimit = accountResources.freeNetLimit || 600; // TRON gives 600 free bandwidth daily
+      const freeNetUsed = accountResources.freeNetUsed || 0;
+      
+      // Calculate total available bandwidth
+      const stakedBandwidth = Math.max(0, netLimit - netUsed);
+      const freeBandwidth = Math.max(0, freeNetLimit - freeNetUsed);
+      const totalAvailable = stakedBandwidth + freeBandwidth;
+      
+      return totalAvailable;
     } catch (error) {
       logger.error('Failed to get bandwidth balance', {
         error: error instanceof Error ? error.message : 'Unknown error',
         address,
       });
       return 0;
+    }
+  }
+  
+  async getSystemBandwidthStatus(): Promise<{
+    available: number;
+    used: number;
+    total: number;
+    freeAvailable: number;
+    freeUsed: number;
+    freeTotal: number;
+    canDelegate: boolean;
+  }> {
+    try {
+      const systemAddress = config.systemWallet.address;
+      const accountResources = await systemTronWeb.trx.getAccountResources(systemAddress);
+      
+      const netLimit = accountResources.NetLimit || 0;
+      const netUsed = accountResources.NetUsed || 0;
+      const freeNetLimit = accountResources.freeNetLimit || 600;
+      const freeNetUsed = accountResources.freeNetUsed || 0;
+      
+      const stakedAvailable = Math.max(0, netLimit - netUsed);
+      const freeAvailable = Math.max(0, freeNetLimit - freeNetUsed);
+      const totalAvailable = stakedAvailable + freeAvailable;
+      
+      // Delegation transaction requires approximately 500-700 bandwidth
+      // Increased threshold to prevent failed transactions
+      const DELEGATION_BANDWIDTH_REQUIRED = 700;
+      
+      return {
+        available: totalAvailable,
+        used: netUsed + freeNetUsed,
+        total: netLimit + freeNetLimit,
+        freeAvailable,
+        freeUsed: freeNetUsed,
+        freeTotal: freeNetLimit,
+        canDelegate: totalAvailable >= DELEGATION_BANDWIDTH_REQUIRED
+      };
+    } catch (error) {
+      logger.error('Failed to get system bandwidth status', {
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      return {
+        available: 0,
+        used: 0,
+        total: 0,
+        freeAvailable: 0,
+        freeUsed: 0,
+        freeTotal: 0,
+        canDelegate: false
+      };
     }
   }
 
@@ -1036,6 +1117,18 @@ export class EnergyService {
 
       if (energyAmount > 150000) {
         throw new Error('Energy amount cannot exceed 150,000');
+      }
+      
+      // CRITICAL: For simplified energy monitor, only allow exactly 131,050
+      // This prevents any rounding issues or incorrect delegations
+      const isSimplifiedMonitor = !includeBuffer && energyAmount > 130000 && energyAmount < 132000;
+      if (isSimplifiedMonitor && energyAmount !== 131050) {
+        logger.error('[EnergyService] Invalid delegation amount from monitor', {
+          requested: energyAmount,
+          required: 131050,
+          error: 'Simplified monitor must delegate exactly 131,050'
+        });
+        throw new Error(`Energy monitor must delegate exactly 131,050, not ${energyAmount}`);
       }
 
       // Check if system has enough energy

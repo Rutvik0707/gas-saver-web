@@ -1,4 +1,4 @@
-import { prisma, logger, config } from '../config';
+import { prisma, logger, config, systemTronWeb, tronUtils } from '../config';
 import { energyService } from './energy.service';
 import axios from 'axios';
 
@@ -13,7 +13,7 @@ import axios from 'axios';
  */
 export class SimplifiedEnergyMonitor {
   private readonly TARGET_ENERGY = 130000;    // Threshold for triggering replenishment
-  private readonly DELEGATION_AMOUNT = 131050; // Amount to delegate (with buffer)
+  private readonly DELEGATION_AMOUNT = 131050; // FIXED amount - ALWAYS delegate exactly this
   private readonly MAX_ENERGY = 135000;       // Max before considering over-delegation
   private readonly TRON_API_URL = 'https://apilist.tronscanapi.com/api';
   private readonly SYSTEM_WALLET = config.systemWallet.address;
@@ -90,6 +90,32 @@ export class SimplifiedEnergyMonitor {
     
     try {
       logger.info('[SimplifiedEnergyMonitor] Starting energy monitoring cycle');
+      
+      // Log system bandwidth status at the start of each cycle
+      const initialBandwidth = await energyService.getSystemBandwidthStatus();
+      
+      // Check TRX balance for transaction fees
+      const systemWallet = await systemTronWeb.trx.getAccount(config.systemWallet.address);
+      const trxBalance = tronUtils.fromSun(systemWallet.balance || 0);
+      
+      logger.info('[SimplifiedEnergyMonitor] System resource status', {
+        bandwidth: {
+          available: initialBandwidth.available,
+          required: 700,
+          canDelegate: initialBandwidth.canDelegate,
+          freeAvailable: initialBandwidth.freeAvailable,
+          totalUsed: initialBandwidth.used,
+          total: initialBandwidth.total
+        },
+        trxBalance: parseFloat(trxBalance),
+        hasTrxForFees: parseFloat(trxBalance) > 0.1,
+        status: initialBandwidth.canDelegate ? 'CAN DELEGATE - Sufficient bandwidth' : 'CANNOT DELEGATE - Insufficient bandwidth (need 700)',
+        note: !initialBandwidth.canDelegate 
+          ? 'Energy delegations will be skipped due to insufficient bandwidth' 
+          : parseFloat(trxBalance) < 0.1 
+            ? 'Warning: Low TRX balance for transaction fees'
+            : 'Ready for delegations'
+      });
       
       // Step 1: Initialize array for addresses needing adjustment
       const reclaimDelegateAddresses = new Set<string>();
@@ -214,40 +240,101 @@ export class SimplifiedEnergyMonitor {
             );
             
             if (delegation && delegation.balance > 0) {
-              // Step 1: Reclaim ALL energy
-              logger.info('[SimplifiedEnergyMonitor] Reclaiming energy', {
-                address,
-                delegatedSun: delegation.balance,
-                delegatedEnergy: delegation.resourceValue
-              });
-              
-              const reclaimResult = await energyService.reclaimAllEnergyFromAddress(
-                address,
-                delegation.balance
-              );
-              
-              if (reclaimResult.reclaimedEnergy > 0) {
-                logger.info('[SimplifiedEnergyMonitor] Energy reclaimed successfully', {
+              // Step 1: Try to reclaim ALL energy (but handle failures gracefully)
+              try {
+                logger.info('[SimplifiedEnergyMonitor] Attempting to reclaim energy', {
                   address,
-                  reclaimedEnergy: reclaimResult.reclaimedEnergy,
-                  txHash: reclaimResult.txHash
+                  delegatedSun: delegation.balance,
+                  delegatedEnergy: delegation.resourceValue
                 });
+                
+                const reclaimResult = await energyService.reclaimAllEnergyFromAddress(
+                  address,
+                  delegation.balance
+                );
+                
+                if (reclaimResult.reclaimedEnergy > 0) {
+                  logger.info('[SimplifiedEnergyMonitor] Energy reclaimed successfully', {
+                    address,
+                    reclaimedEnergy: reclaimResult.reclaimedEnergy,
+                    txHash: reclaimResult.txHash
+                  });
+                }
+              } catch (reclaimError) {
+                logger.warn('[SimplifiedEnergyMonitor] Reclaim failed - continuing with delegation', {
+                  address,
+                  error: reclaimError instanceof Error ? reclaimError.message : 'Unknown error',
+                  note: 'Will proceed with delegation anyway'
+                });
+                // Continue with delegation even if reclaim fails
               }
+            } else {
+              logger.info('[SimplifiedEnergyMonitor] No delegation found to reclaim', {
+                address,
+                note: 'Proceeding directly to delegation'
+              });
             }
             
-            // Step 2: Delegate exactly 131,050
+            // Step 2: Delegate exactly 131,050 (NEVER any other amount)
+            // First check if system has enough energy
+            const availableEnergy = await energyService.getAvailableEnergyForDelegation();
+            
+            if (availableEnergy < this.DELEGATION_AMOUNT) {
+              logger.warn('[SimplifiedEnergyMonitor] Insufficient system energy - skipping delegation', {
+                address,
+                required: this.DELEGATION_AMOUNT,
+                available: availableEnergy
+              });
+              continue; // Skip this address
+            }
+            
+            // Check bandwidth availability
+            const bandwidthStatus = await energyService.getSystemBandwidthStatus();
+            
+            if (!bandwidthStatus.canDelegate) {
+              logger.warn('[SimplifiedEnergyMonitor] CANNOT DELEGATE - Insufficient bandwidth', {
+                address,
+                availableBandwidth: bandwidthStatus.available,
+                requiredBandwidth: 700,
+                freeAvailable: bandwidthStatus.freeAvailable,
+                totalUsed: bandwidthStatus.used,
+                totalBandwidth: bandwidthStatus.total,
+                reason: 'Delegation requires 700 bandwidth for transaction',
+                solution: 'Wait for bandwidth to regenerate (resets daily) or stake TRX for bandwidth'
+              });
+              continue; // Skip this address until bandwidth regenerates
+            }
+            
+            logger.info('[SimplifiedEnergyMonitor] Resource checks passed', {
+              address,
+              availableEnergy,
+              availableBandwidth: bandwidthStatus.available,
+              freeAvailableBandwidth: bandwidthStatus.freeAvailable
+            });
+            
             // Find the user ID for this address
             const userState = activeStates.find(s => s.tronAddress === address);
             const userId = userState?.userId || '';
             
-            logger.info('[SimplifiedEnergyMonitor] Delegating target energy', {
+            // CRITICAL: Only delegate EXACTLY 131,050 - never any other amount
+            if (this.DELEGATION_AMOUNT !== 131050) {
+              logger.error('[SimplifiedEnergyMonitor] INVALID DELEGATION AMOUNT', {
+                configured: this.DELEGATION_AMOUNT,
+                required: 131050,
+                error: 'System must delegate exactly 131,050 energy'
+              });
+              throw new Error('Invalid delegation amount - must be exactly 131,050');
+            }
+            
+            logger.info('[SimplifiedEnergyMonitor] Delegating exact target energy', {
               address,
-              targetEnergy: this.DELEGATION_AMOUNT
+              targetEnergy: this.DELEGATION_AMOUNT,
+              note: 'Always delegating exactly 131,050'
             });
             
             const delegateResult = await energyService.transferEnergyDirect(
               address,
-              this.DELEGATION_AMOUNT,
+              131050, // Hard-coded to ensure EXACT amount
               userId,
               false // No buffer, exact amount
             );
@@ -262,9 +349,9 @@ export class SimplifiedEnergyMonitor {
             await prisma.userEnergyState.update({
               where: { tronAddress: address },
               data: {
-                lastObservedEnergy: this.DELEGATION_AMOUNT,
-                currentEnergyCached: this.DELEGATION_AMOUNT,
-                currentAllocationCharged: this.DELEGATION_AMOUNT,
+                lastObservedEnergy: 131050,
+                currentEnergyCached: 131050,
+                currentAllocationCharged: 131050,
                 lastAction: 'DELEGATE_131050',
                 lastActionAt: new Date(),
                 lastDelegationTime: new Date(),
