@@ -158,9 +158,13 @@ export class SimplifiedEnergyMonitor {
             await this.delay(this.API_DELAY_MS);
           }
           
-          const data = await this.makeApiCall(`${this.TRON_API_URL}/accountv2`, {
-            address: state.tronAddress
-          });
+          const data = await this.makeApiCallWithHeaders(
+            `${this.TRON_API_URL}/accountv2`,
+            { address: state.tronAddress },
+            config.tronscan?.apiKey ? { 
+              'TRON-PRO-API-KEY': config.tronscan.apiKey 
+            } : {}
+          );
           
           const currentEnergy = data?.bandwidth?.energyRemaining || 0;
           

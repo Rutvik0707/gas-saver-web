@@ -18,27 +18,29 @@ export class CronService {
       await this.runAddressPoolMaintenance();
     });
 
-    // Process confirmed deposits every minute
-    this.scheduleJob('deposit-processor', '0 * * * * *', async () => {
+    // Process confirmed deposits at 15 seconds past every minute
+    // Staggered to avoid running simultaneously with other services
+    this.scheduleJob('deposit-processor', '15 * * * * *', async () => {
       await this.runDepositProcessor();
     });
 
-    // Expire old deposits every 5 minutes
-    this.scheduleJob('deposit-expirer', '0 */5 * * * *', async () => {
+    // Expire old deposits every 5 minutes at 45 seconds past
+    this.scheduleJob('deposit-expirer', '45 */5 * * * *', async () => {
       await this.runDepositExpirer();
     });
 
-  // Simplified energy monitoring & delegation every 1 minute
-    this.scheduleJob('simplified-energy-monitor', '0 * * * * *', async () => {
+  // Simplified energy monitoring & delegation at 30 seconds past every minute
+    // Staggered to avoid rate limiting conflicts with transaction detector
+    this.scheduleJob('simplified-energy-monitor', '30 * * * * *', async () => {
       const { simplifiedEnergyMonitor } = await import('./energy-monitor-simplified.service');
       await simplifiedEnergyMonitor.runCycle();
     });
 
     logger.info('🔄 Transaction detector started - scanning every 30 seconds');
-    logger.info('💰 Deposit processor started - processing every minute');
+    logger.info('💰 Deposit processor started - processing at :15 past every minute');
     logger.info('📍 Address pool maintenance started - running every hour');
-    logger.info('⏳ Deposit expirer started - cleanup every 5 minutes');
-  logger.info('⚡ Simplified energy monitor started - checking and adjusting energy every 1 minute');
+    logger.info('⏳ Deposit expirer started - cleanup at :45 past every 5 minutes');
+    logger.info('⚡ Simplified energy monitor started - checking at :30 past every minute');
     logger.info('✅ All background services initialized successfully');
   }
 

@@ -271,7 +271,14 @@ export class DepositService {
 
       logger.info(`📍 Monitoring ${assignedAddresses.length} assigned addresses for transactions`);
 
-      for (const addressInfo of assignedAddresses) {
+      for (let i = 0; i < assignedAddresses.length; i++) {
+        const addressInfo = assignedAddresses[i];
+        
+        // Add delay between address checks to avoid rate limiting (except for first address)
+        if (i > 0) {
+          await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
+        }
+        
         try {
           // Get USDT transactions for this specific address
           const transactions = await this.getUSDTTransactionsForAddress(addressInfo.address);
@@ -874,37 +881,57 @@ export class DepositService {
    * Get USDT transactions for a specific address using TronGrid API
    */
   private async getUSDTTransactionsForAddress(address: string): Promise<USDTTransferEvent[]> {
-    try {
-      const usdtContractAddress = config.tron.usdtContract;
-      const baseUrl = config.tron.fullNode.replace('/jsonrpc', ''); // Remove jsonrpc suffix if present
-      const tronGridUrl = `${baseUrl}/v1/accounts/${address}/transactions/trc20`;
-      
-      const params = new URLSearchParams({
-        limit: '50',
-        contract_address: usdtContractAddress,
-        only_to: 'true' // Only incoming transactions
-      });
+    const maxRetries = 3;
+    let lastError: Error | null = null;
+    
+    // Retry with exponential backoff
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const usdtContractAddress = config.tron.usdtContract;
+        const baseUrl = config.tron.fullNode.replace('/jsonrpc', ''); // Remove jsonrpc suffix if present
+        const tronGridUrl = `${baseUrl}/v1/accounts/${address}/transactions/trc20`;
+        
+        const params = new URLSearchParams({
+          limit: '50',
+          contract_address: usdtContractAddress,
+          only_to: 'true' // Only incoming transactions
+        });
 
-      const response = await fetch(`${tronGridUrl}?${params}`, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-        },
-      });
+        const response = await fetch(`${tronGridUrl}?${params}`, {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json',
+          },
+        });
 
-      if (!response.ok) {
-        throw new Error(`TronGrid API error: ${response.status} ${response.statusText}`);
-      }
+        // Handle rate limiting
+        if (response.status === 429) {
+          const backoffMs = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
+          logger.warn(`TronGrid rate limited, retrying after ${backoffMs}ms`, {
+            address: address.substring(0, 10) + '...',
+            attempt: attempt + 1,
+            maxRetries
+          });
+          
+          if (attempt < maxRetries - 1) {
+            await new Promise(resolve => setTimeout(resolve, backoffMs));
+            continue;
+          }
+        }
 
-      const data: any = await response.json();
-      
-      if (!data.success || !data.data) {
-        logger.warn('TronGrid API returned no data', { address, response: data });
-        return [];
-      }
+        if (!response.ok) {
+          throw new Error(`TronGrid API error: ${response.status} ${response.statusText}`);
+        }
 
-      // Transform TronGrid response to our USDTTransferEvent format
-      const transactions: USDTTransferEvent[] = data.data.map((tx: any) => ({
+        const data: any = await response.json();
+        
+        if (!data.success || !data.data) {
+          logger.warn('TronGrid API returned no data', { address, response: data });
+          return [];
+        }
+
+        // Transform TronGrid response to our USDTTransferEvent format
+        const transactions: USDTTransferEvent[] = data.data.map((tx: any) => ({
         transaction_id: tx.transaction_id,
         block_number: tx.block_timestamp ? Math.floor(tx.block_timestamp / 1000) : 0, // Convert ms to block number approximation
         block_timestamp: tx.block_timestamp,
@@ -912,18 +939,27 @@ export class DepositService {
         from: tx.from,
         to: tx.to,
         value: tx.value
-      }));
+        }));
 
-      logger.debug(`Found ${transactions.length} USDT transactions for address ${address.substring(0, 10)}...`);
-      
-      return transactions;
-    } catch (error) {
-      logger.error('Failed to fetch USDT transactions for address', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-        address
-      });
-      return [];
+        logger.debug(`Found ${transactions.length} USDT transactions for address ${address.substring(0, 10)}...`);
+        
+        return transactions;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('Unknown error');
+        
+        // If not rate limiting or last attempt, break
+        if (!lastError.message.includes('429') || attempt === maxRetries - 1) {
+          break;
+        }
+      }
     }
+    
+    // All retries failed
+    logger.error('Failed to fetch USDT transactions for address', {
+      error: lastError?.message || 'Unknown error',
+      address
+    });
+    return [];
   }
 
   /**
