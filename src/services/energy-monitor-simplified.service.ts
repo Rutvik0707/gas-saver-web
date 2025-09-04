@@ -168,14 +168,21 @@ export class SimplifiedEnergyMonitor {
           
           const currentEnergy = data?.bandwidth?.energyRemaining || 0;
           
-          // If energy < 130k, needs replenishment
-          if (currentEnergy < this.TARGET_ENERGY) {
-            logger.info('[SimplifiedEnergyMonitor] Low energy detected', {
+          // Only add to replenishment list if user has transactions remaining
+          if (currentEnergy < this.TARGET_ENERGY && state.transactionsRemaining > 0) {
+            logger.info('[SimplifiedEnergyMonitor] Low energy detected (user has credits)', {
               address: state.tronAddress,
               currentEnergy,
-              threshold: this.TARGET_ENERGY
+              threshold: this.TARGET_ENERGY,
+              transactionsRemaining: state.transactionsRemaining
             });
             reclaimDelegateAddresses.add(state.tronAddress);
+          } else if (currentEnergy < this.TARGET_ENERGY && state.transactionsRemaining === 0) {
+            logger.info('[SimplifiedEnergyMonitor] Low energy but no transactions remaining - skipping', {
+              address: state.tronAddress,
+              currentEnergy,
+              transactionsRemaining: 0
+            });
           }
         } catch (error) {
           logger.error('[SimplifiedEnergyMonitor] Failed to check energy', {
@@ -186,7 +193,22 @@ export class SimplifiedEnergyMonitor {
         }
       }
       
-      // Step 3: Check for over-delegations (> 135k)
+      // Step 3: Check for addresses with 0 transactions (need to reclaim energy)
+      const zeroTransactionAddresses = activeStates
+        .filter(state => state.transactionsRemaining === 0)
+        .map(state => state.tronAddress);
+      
+      if (zeroTransactionAddresses.length > 0) {
+        logger.info('[SimplifiedEnergyMonitor] Found addresses with 0 transactions - will reclaim energy', {
+          count: zeroTransactionAddresses.length,
+          addresses: zeroTransactionAddresses
+        });
+        
+        // Add to reclaim list
+        zeroTransactionAddresses.forEach(addr => reclaimDelegateAddresses.add(addr));
+      }
+      
+      // Step 4: Check for over-delegations (> 135k)
       try {
         // Add delay before checking delegations
         await this.delay(this.API_DELAY_MS);
@@ -332,6 +354,16 @@ export class SimplifiedEnergyMonitor {
             // Find the user ID for this address
             const userState = activeStates.find(s => s.tronAddress === address);
             const userId = userState?.userId || '';
+            const transactionsRemaining = userState?.transactionsRemaining || 0;
+            
+            // Check if user has transaction credits
+            if (transactionsRemaining === 0) {
+              logger.info('[SimplifiedEnergyMonitor] Skipping delegation - user has no transaction credits', {
+                address,
+                reason: 'Only reclaiming energy, not delegating new energy'
+              });
+              continue; // Skip delegation for this address
+            }
             
             // CRITICAL: Only delegate EXACTLY 131,050 - never any other amount
             if (this.DELEGATION_AMOUNT !== 131050) {
@@ -346,6 +378,7 @@ export class SimplifiedEnergyMonitor {
             logger.info('[SimplifiedEnergyMonitor] Delegating exact target energy', {
               address,
               targetEnergy: this.DELEGATION_AMOUNT,
+              transactionsRemaining,
               note: 'Always delegating exactly 131,050'
             });
             

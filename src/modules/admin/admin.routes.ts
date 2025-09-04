@@ -854,4 +854,8 @@ router.use('/', auditRoutes);
 import { energyMonitoringRoutes } from './energy-monitoring/energy-monitoring.routes';
 router.use('/', energyMonitoringRoutes);
 
+// Import and use transaction management routes
+import { transactionManagementRoutes } from './transaction-management/transaction-management.routes';
+router.use('/transactions', transactionManagementRoutes);
+
 export const adminRoutes = router;

@@ -28,6 +28,8 @@
     "seed": "ts-node prisma/seed.ts",
     "seed:admin": "ts-node scripts/seed-admin.ts",
     "migrate:energy-deliveries": "ts-node scripts/migrate-energy-deliveries.ts",
+    "audit:fix": "ts-node src/scripts/fix-transaction-counts.script.ts",
+    "audit:fix:production": "NODE_ENV=production ts-node src/scripts/fix-transaction-counts.script.ts",
     "test:energy-reclaim": "ts-node scripts/test-energy-reclaim.ts",
     "studio": "prisma studio",
     "generate-keys": "ts-node scripts/generate-tron-keys.ts",
