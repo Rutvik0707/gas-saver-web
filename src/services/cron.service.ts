@@ -36,19 +36,21 @@ export class CronService {
       await simplifiedEnergyMonitor.runCycle();
     });
 
-    // Transaction usage tracker - runs every 45 seconds to detect USDT transfers
-    // Staggered to avoid conflicts with other services
-    this.scheduleJob('transaction-usage-tracker', '*/45 * * * * *', async () => {
-      const { transactionUsageTracker } = await import('./transaction-usage-tracker.service');
-      await transactionUsageTracker.checkAllAddresses();
-    });
+    // Transaction usage tracker - DISABLED IN PRODUCTION
+    // This service was incorrectly decrementing transaction counts even when energy delegation failed
+    // Transaction counts should only be reduced when energy is successfully delegated
+    // TODO: Implement proper fix to coordinate with SimplifiedEnergyMonitor
+    // this.scheduleJob('transaction-usage-tracker', '*/45 * * * * *', async () => {
+    //   const { transactionUsageTracker } = await import('./transaction-usage-tracker.service');
+    //   await transactionUsageTracker.checkAllAddresses();
+    // });
 
     logger.info('🔄 Transaction detector started - scanning every 30 seconds');
     logger.info('💰 Deposit processor started - processing at :15 past every minute');
     logger.info('📍 Address pool maintenance started - running every hour');
     logger.info('⏳ Deposit expirer started - cleanup at :45 past every 5 minutes');
     logger.info('⚡ Simplified energy monitor started - checking at :30 past every minute');
-    logger.info('📊 Transaction usage tracker started - checking every 45 seconds');
+    // logger.info('📊 Transaction usage tracker started - checking every 45 seconds'); // DISABLED
     logger.info('✅ All background services initialized successfully');
   }
 

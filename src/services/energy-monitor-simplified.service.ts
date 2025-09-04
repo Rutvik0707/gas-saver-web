@@ -395,8 +395,9 @@ export class SimplifiedEnergyMonitor {
               txHash: delegateResult.txHash
             });
             
-            // Update the state
-            await prisma.userEnergyState.update({
+            // Update the state AND decrement transaction count by 1
+            // This is the ONLY place where transaction count should be decremented
+            const updatedState = await prisma.userEnergyState.update({
               where: { tronAddress: address },
               data: {
                 lastObservedEnergy: 131050,
@@ -405,8 +406,54 @@ export class SimplifiedEnergyMonitor {
                 lastAction: 'DELEGATE_131050',
                 lastActionAt: new Date(),
                 lastDelegationTime: new Date(),
+                transactionsRemaining: Math.max(0, transactionsRemaining - 1), // Decrement by 1 for successful delegation
                 updatedAt: new Date()
               }
+            });
+            
+            // Update EnergyDelivery records to track the delivered transaction
+            const activeDeliveries = await prisma.energyDelivery.findMany({
+              where: {
+                tronAddress: address,
+                isActive: true
+              },
+              orderBy: { createdAt: 'asc' }
+            });
+            
+            if (activeDeliveries.length > 0) {
+              const delivery = activeDeliveries[0];
+              await prisma.energyDelivery.update({
+                where: { id: delivery.id },
+                data: {
+                  deliveredTransactions: Math.min(delivery.deliveredTransactions + 1, delivery.totalTransactions),
+                  lastDeliveryAt: new Date(),
+                  isActive: (delivery.deliveredTransactions + 1) < delivery.totalTransactions
+                }
+              });
+            }
+            
+            // Log the transaction count update
+            await prisma.energyMonitoringLog.create({
+              data: {
+                userId,
+                tronAddress: address,
+                action: 'ENERGY_DELEGATED',
+                logLevel: 'INFO',
+                metadata: {
+                  delegatedEnergy: delegateResult.actualEnergy,
+                  txHash: delegateResult.txHash,
+                  previousTransactionCount: transactionsRemaining,
+                  newTransactionCount: Math.max(0, transactionsRemaining - 1),
+                  reason: 'Energy successfully delegated - 1 transaction credit consumed'
+                }
+              }
+            });
+            
+            logger.info('[SimplifiedEnergyMonitor] Transaction count updated after successful delegation', {
+              address,
+              previousCount: transactionsRemaining,
+              newCount: Math.max(0, transactionsRemaining - 1),
+              energyDelegated: delegateResult.actualEnergy
             });
             
           } catch (error) {
