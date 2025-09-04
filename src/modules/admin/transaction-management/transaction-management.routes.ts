@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { transactionManagementController } from './transaction-management.controller';
 import { adminAuth } from '../../../middleware/admin-auth.middleware';
-import { asyncHandler } from '../../../middleware/async-handler.middleware';
 
 const router = Router();
 
@@ -11,31 +10,31 @@ router.use(adminAuth);
 // Get transaction status for all addresses
 router.get(
   '/status',
-  asyncHandler(async (req, res) => transactionManagementController.getTransactionStatus(req, res))
+  transactionManagementController.getTransactionStatus
 );
 
 // Manually adjust transaction count for an address
 router.post(
   '/adjust',
-  asyncHandler(async (req, res) => transactionManagementController.adjustTransactionCount(req, res))
+  transactionManagementController.adjustTransactionCount
 );
 
 // Audit and fix transaction count for a specific address
 router.post(
   '/audit',
-  asyncHandler(async (req, res) => transactionManagementController.auditAddress(req, res))
+  transactionManagementController.auditAddress
 );
 
 // Get transaction logs for an address
 router.get(
   '/logs/:tronAddress',
-  asyncHandler(async (req, res) => transactionManagementController.getTransactionLogs(req, res))
+  transactionManagementController.getTransactionLogs
 );
 
 // Run full audit for all addresses (admin only)
 router.post(
   '/audit/full',
-  asyncHandler(async (req, res) => transactionManagementController.runFullAudit(req, res))
+  transactionManagementController.runFullAudit
 );
 
 export const transactionManagementRoutes = router;
