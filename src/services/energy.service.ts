@@ -310,8 +310,11 @@ export class EnergyService {
       const isSimplifiedMonitor = !includeBuffer && energyAmount > 130000 && energyAmount < 132000;
 
       let delegationTrxAmount: number;
+      let roundingBuffer: number; // Declare here for proper scope
+
       if (isSimplifiedMonitor) {
         // For simplified monitor, use exact calculation without any buffers
+        roundingBuffer = 0; // No buffer for monitor
         delegationTrxAmount = trxAmount; // Exact amount, no rounding buffer
         logger.info('[EnergyService] Simplified monitor exact delegation - no buffers', {
           requestedEnergy: energyAmount,
@@ -322,7 +325,7 @@ export class EnergyService {
       } else {
         // For normal delegations, add small buffer for safety
         const isMainnet = config.tron.network === 'mainnet';
-        const roundingBuffer = includeBuffer ? 0 : (isMainnet ? 0.01 : 0.01); // Small buffer only
+        roundingBuffer = includeBuffer ? 0 : (isMainnet ? 0.01 : 0.01); // Small buffer only
         delegationTrxAmount = Math.max(1, bufferedTrxAmount + roundingBuffer);
       }
       
