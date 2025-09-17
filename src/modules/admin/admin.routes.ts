@@ -846,6 +846,146 @@ router.post('/addresses/:address/resume-energy', ...adminAuth(requireEditUsers),
  */
 router.get('/addresses/:address/energy-status', ...adminAuth(requireViewUsers), adminController.getAddressEnergyStatus);
 
+// Energy Rate Management Routes
+import { energyRateController } from './energy-rate.controller';
+
+/**
+ * @swagger
+ * /admin/energy-rates/current:
+ *   get:
+ *     tags: [Admin]
+ *     summary: Get current energy rate configuration
+ *     description: Retrieve the active energy rate configuration with thresholds
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Energy rate retrieved successfully
+ *       404:
+ *         description: No active energy rate found
+ *       401:
+ *         description: Unauthorized
+ */
+router.get('/energy-rates/current', ...adminAuth(requireAnyAdmin), energyRateController.getCurrentRate);
+
+/**
+ * @swagger
+ * /admin/energy-rates:
+ *   get:
+ *     tags: [Admin]
+ *     summary: Get energy rate history
+ *     description: Retrieve all energy rate configurations (last 50)
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Energy rates retrieved successfully
+ *       401:
+ *         description: Unauthorized
+ */
+router.get('/energy-rates', ...adminAuth(requireAdminOrAbove), energyRateController.getAllRates);
+
+/**
+ * @swagger
+ * /admin/energy-rates/thresholds:
+ *   put:
+ *     tags: [Admin]
+ *     summary: Update energy thresholds
+ *     description: Update the one and two transaction energy thresholds
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - oneTransactionThreshold
+ *               - twoTransactionThreshold
+ *             properties:
+ *               oneTransactionThreshold:
+ *                 type: number
+ *                 minimum: 1000
+ *                 maximum: 200000
+ *                 description: Energy threshold for one transaction
+ *                 example: 65000
+ *               twoTransactionThreshold:
+ *                 type: number
+ *                 minimum: 1000
+ *                 maximum: 400000
+ *                 description: Energy threshold for two transactions
+ *                 example: 131000
+ *     responses:
+ *       200:
+ *         description: Thresholds updated successfully
+ *       400:
+ *         description: Invalid input or threshold validation failed
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Insufficient permissions
+ */
+router.put('/energy-rates/thresholds', ...adminAuth(requireSuperAdmin), energyRateController.updateThresholds);
+
+/**
+ * @swagger
+ * /admin/energy-rates:
+ *   put:
+ *     tags: [Admin]
+ *     summary: Update full energy rate configuration
+ *     description: Update all energy rate parameters (Super Admin only)
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               energyPerTransaction:
+ *                 type: number
+ *                 minimum: 1000
+ *                 description: Energy per transaction
+ *               bufferPercentage:
+ *                 type: number
+ *                 minimum: 0
+ *                 maximum: 100
+ *                 description: Buffer percentage
+ *               minEnergy:
+ *                 type: number
+ *                 minimum: 0
+ *                 description: Minimum energy
+ *               maxEnergy:
+ *                 type: number
+ *                 minimum: 0
+ *                 description: Maximum energy
+ *               oneTransactionThreshold:
+ *                 type: number
+ *                 minimum: 1000
+ *                 description: One transaction threshold
+ *               twoTransactionThreshold:
+ *                 type: number
+ *                 minimum: 1000
+ *                 description: Two transaction threshold
+ *               description:
+ *                 type: string
+ *                 description: Description of the change
+ *     responses:
+ *       200:
+ *         description: Energy rate updated successfully
+ *       400:
+ *         description: Invalid input
+ *       404:
+ *         description: No active energy rate found
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Insufficient permissions
+ */
+router.put('/energy-rates', ...adminAuth(requireSuperAdmin), energyRateController.updateFullRate);
+
 // Import and use audit routes
 import { auditRoutes } from './audit/audit.routes';
 router.use('/', auditRoutes);

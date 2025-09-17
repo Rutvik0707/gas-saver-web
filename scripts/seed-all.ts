@@ -140,14 +140,16 @@ async function seedEnergyRate(adminId: string) {
       return;
     }
 
-    // Create initial energy rate
+    // Create initial energy rate with thresholds
     const energyRate = await prisma.energyRate.create({
       data: {
         energyPerTransaction: 65500,
         bufferPercentage: 0, // No buffer for exact pricing
         minEnergy: 65500,
         maxEnergy: 131000,
-        description: 'Initial energy rate configuration',
+        oneTransactionThreshold: 65000,  // Energy threshold for 1 transaction deduction
+        twoTransactionThreshold: 131000, // Energy threshold for 2 transaction deduction (exact delegation amount)
+        description: 'Initial energy rate configuration with transaction thresholds',
         updatedBy: adminId,
         isActive: true,
       }
@@ -158,6 +160,8 @@ async function seedEnergyRate(adminId: string) {
     console.log(`   Buffer percentage: ${energyRate.bufferPercentage}%`);
     console.log(`   Min energy: ${energyRate.minEnergy}`);
     console.log(`   Max energy: ${energyRate.maxEnergy}`);
+    console.log(`   One transaction threshold: ${energyRate.oneTransactionThreshold}`);
+    console.log(`   Two transaction threshold: ${energyRate.twoTransactionThreshold}`);
 
   } catch (error) {
     console.error('❌ Failed to seed energy rate:', error);

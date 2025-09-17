@@ -32,6 +32,8 @@
     "db:setup:production": "npm run db:push:production && npm run seed:production",
     "db:push:production": "node scripts/prisma-production.js db push",
     "migrate:energy-deliveries": "ts-node scripts/migrate-energy-deliveries.ts",
+    "migrate:thresholds": "ts-node scripts/migrate-production-thresholds.ts",
+    "migrate:thresholds:prod": "NODE_ENV=production ts-node scripts/migrate-production-thresholds.ts",
     "audit:fix": "ts-node src/scripts/fix-transaction-counts.script.ts",
     "audit:fix:production": "NODE_ENV=production ts-node src/scripts/fix-transaction-counts.script.ts",
     "test:energy-reclaim": "ts-node scripts/test-energy-reclaim.ts",

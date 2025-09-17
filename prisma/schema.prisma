@@ -233,16 +233,18 @@ model UserTronAddress {
 }
 
 model EnergyRate {
-  id                   String   @id @default(cuid())
-  energyPerTransaction Int      @map("energy_per_transaction")
-  bufferPercentage     Decimal  @map("buffer_percentage") @db.Decimal(5, 2)
-  minEnergy            Int      @map("min_energy")
-  maxEnergy            Int      @map("max_energy")
-  description          String?
-  updatedBy            String   @map("updated_by")
-  isActive             Boolean  @default(true) @map("is_active")
-  createdAt            DateTime @default(now()) @map("created_at")
-  updatedAt            DateTime @updatedAt @map("updated_at")
+  id                      String   @id @default(cuid())
+  energyPerTransaction    Int      @map("energy_per_transaction")
+  bufferPercentage        Decimal  @map("buffer_percentage") @db.Decimal(5, 2)
+  minEnergy               Int      @map("min_energy")
+  maxEnergy               Int      @map("max_energy")
+  oneTransactionThreshold Int      @default(65000) @map("one_transaction_threshold")
+  twoTransactionThreshold Int      @default(131000) @map("two_transaction_threshold")
+  description             String?
+  updatedBy               String   @map("updated_by")
+  isActive                Boolean  @default(true) @map("is_active")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
 
   @@index([isActive, createdAt(sort: Desc)])
   @@map("energy_rates")

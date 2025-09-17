@@ -1,220 +1,160 @@
-# Production Deployment Guide
+# Production Deployment Guide - Energy Thresholds
 
 ## Overview
-This guide covers the deployment process for the Energy Broker API to production, including database migrations and the recent transaction tracking feature.
+This guide covers the deployment of the new energy threshold features to production. The thresholds control how many transaction credits are deducted based on user's energy levels after delegation.
 
-## Prerequisites
-- Node.js 18+ installed
-- PostgreSQL database access
-- Production environment variables configured in `.env.production`
-- TRON mainnet wallet with sufficient TRX for energy delegation
+## Key Changes
+1. **New Database Fields**: Added `one_transaction_threshold` and `two_transaction_threshold` to `energy_rates` table
+2. **Updated Energy Monitor Logic**: System now uses dynamic thresholds from database
+3. **Smart Transaction Counting**: Deducts 1 or 2 transactions based on energy levels
 
-## Recent Changes - Transaction Tracking Feature
+## Threshold Logic
+- **Two Transaction Threshold (131,000)**: When user's energy < this value, delegate exactly this amount
+- **One Transaction Threshold (65,000)**:
+  - If energy ≥ this after delegation: deduct 1 transaction
+  - If energy < this after delegation: deduct 2 transactions
 
-### New Database Migration
-The latest update adds transaction tracking statistics to TRON addresses. A new migration file has been created:
-- `20250125000000_add_transaction_toaddress_index/migration.sql`
+## Production Deployment Steps
 
-This migration adds indexes to improve query performance for transaction statistics.
+### For NEW Production Deployments
 
-## Deployment Steps
-
-### 1. Pre-deployment Checks
-
+1. **Deploy code with updated schema**
 ```bash
-# Verify production environment file exists
-ls -la .env.production
-
-# Check current migration status
-NODE_ENV=production npx prisma migrate status
-
-# Verify database connection
-NODE_ENV=production npx prisma db pull
-```
-
-### 2. Run Database Migrations
-
-#### Option A: Using the Migration Script (Recommended)
-```bash
-# Run the production migration script
-./scripts/migrate-production.sh
-```
-
-#### Option B: Manual Migration
-```bash
-# Set production environment
-export NODE_ENV=production
-
-# Deploy migrations (doesn't create new ones, only applies existing)
-npx prisma migrate deploy
-
-# Check migration status
-npx prisma migrate status
-```
-
-### 3. Verify Migration Success
-
-```bash
-# Connect to production database and verify indexes
-psql $DATABASE_URL -c "
-SELECT indexname, indexdef 
-FROM pg_indexes 
-WHERE tablename = 'transactions' 
-AND indexname LIKE '%to_address%';
-"
-```
-
-Expected output should show:
-- `transactions_to_address_idx`
-- `transactions_to_address_type_status_idx`
-
-### 4. Start Production Server
-
-```bash
-# Start with production configuration
-npm run livecoins
-
-# Or using PM2 for process management
-pm2 start ecosystem.config.js --env production
-```
-
-### 5. Post-deployment Verification
-
-#### Check API Health
-```bash
-curl https://your-domain.com/health
-```
-
-#### Test Transaction Statistics
-```bash
-# Get user addresses with transaction stats
-curl -H "Authorization: Bearer <token>" \
-  https://your-domain.com/api/v1/users/tron-addresses
-```
-
-## Production Environment Variables
-
-Ensure these are properly set in `.env.production`:
-
-```env
-# Database
-DATABASE_URL="postgresql://user:pass@host:5432/dbname"
-
-# TRON Mainnet Configuration
-TRON_NETWORK=mainnet
-TRON_FULL_NODE=https://api.trongrid.io
-TRON_API_KEY=your-trongrid-api-key
-
-# System Wallet (holds real funds!)
-SYSTEM_WALLET_ADDRESS=TXxx...
-SYSTEM_WALLET_PRIVATE_KEY=xxx...
-
-# Security
-JWT_SECRET=minimum-32-character-secret
-ENCRYPTION_SECRET=minimum-32-character-secret
-```
-
-## Monitoring & Maintenance
-
-### Database Performance
-Monitor query performance for the new transaction statistics:
-
-```sql
--- Check index usage
-SELECT 
-  schemaname,
-  tablename,
-  indexname,
-  idx_scan,
-  idx_tup_read,
-  idx_tup_fetch
-FROM pg_stat_user_indexes
-WHERE tablename = 'transactions';
-
--- Analyze table for query optimizer
-ANALYZE transactions;
-```
-
-### Log Monitoring
-```bash
-# Watch production logs
-pm2 logs energy-broker-api
-
-# Check for errors
-pm2 logs energy-broker-api --err
-```
-
-## Rollback Procedure
-
-If issues arise after deployment:
-
-### 1. Database Rollback
-```bash
-# List recent migrations
-NODE_ENV=production npx prisma migrate status
-
-# Note: Prisma doesn't support automatic rollback
-# Manual rollback of indexes if needed:
-psql $DATABASE_URL -c "
-DROP INDEX IF EXISTS transactions_to_address_idx;
-DROP INDEX IF EXISTS transactions_to_address_type_status_idx;
-"
-```
-
-### 2. Code Rollback
-```bash
-# Revert to previous git tag/commit
-git checkout <previous-version>
-
-# Reinstall dependencies
+git pull origin main
 npm install
-
-# Restart server
-pm2 restart energy-broker-api
+npm run generate
 ```
 
-## Security Considerations
+2. **Run production seeding** (includes thresholds)
+```bash
+npm run seed:production
+```
 
-1. **Private Keys**: Never commit private keys. Use environment variables.
-2. **Database Access**: Restrict database access to application servers only.
-3. **API Keys**: Rotate TronGrid API keys regularly.
-4. **SSL/TLS**: Ensure HTTPS is enabled for all API endpoints.
-5. **Rate Limiting**: Monitor and adjust rate limits based on usage.
+This will create:
+- Admin user
+- Transaction packages
+- Energy rates WITH threshold values
 
-## Performance Optimization
+### For EXISTING Production Database
 
-### Database Indexes
-The new indexes improve performance for:
-- Address transaction count queries
-- Transaction status filtering
-- Energy amount aggregations
+1. **Deploy the updated code**
+```bash
+git pull origin main
+npm install
+npm run generate
+```
 
-### Query Optimization Tips
-1. Use batch queries for multiple addresses
-2. Consider caching transaction stats with 1-minute TTL
-3. Monitor slow query logs
+2. **Run the threshold migration**
+```bash
+# This adds the columns and sets default values
+npm run migrate:thresholds:prod
+```
 
-## Troubleshooting
+3. **Verify the migration**
+```bash
+# Check the database state
+NODE_ENV=production npx prisma studio
+```
 
-### Migration Fails
-- Check database connection string
-- Verify database user has CREATE INDEX permission
-- Check for existing indexes with same name
+Look for:
+- `one_transaction_threshold` = 65000
+- `two_transaction_threshold` = 131000
 
-### Transaction Stats Not Showing
-- Verify transactions have correct `toAddress` values
-- Check transaction type is `ENERGY_TRANSFER`
-- Run `ANALYZE transactions;` to update statistics
+## Available Commands
 
-### High Database Load
-- Check pg_stat_activity for long-running queries
-- Consider adding read replicas for statistics queries
-- Implement caching layer (Redis)
+### Migration Commands
+- `npm run migrate:thresholds` - Run migration in development
+- `npm run migrate:thresholds:prod` - Run migration in production
+- `npm run migrate:status:prod` - Check production migration status
+
+### Seeding Commands
+- `npm run seed:production` - Seed production with all data including thresholds
+- `npm run seed:all` - Development seeding
+
+### Running Production Mode Locally (for testing)
+```bash
+# Use production config locally
+npm run livecoins
+```
+
+## Admin API Endpoints
+
+The admin can now manage thresholds via API:
+
+### Get Current Thresholds
+```bash
+GET /api/v1/admin/energy-rates/current
+Authorization: Bearer <admin-token>
+```
+
+### Update Thresholds
+```bash
+PUT /api/v1/admin/energy-rates/thresholds
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{
+  "oneTransactionThreshold": 65000,
+  "twoTransactionThreshold": 131000
+}
+```
+
+## Validation Rules
+- `twoTransactionThreshold` must be > `oneTransactionThreshold`
+- Both values must be positive integers
+- Recommended defaults: 65,000 and 131,000
+
+## Monitoring
+
+After deployment, monitor:
+
+1. **Energy Monitor Logs**: Look for threshold loading
+```
+[SimplifiedEnergyMonitor] Energy thresholds loaded {
+  oneTransactionThreshold: 65000,
+  twoTransactionThreshold: 131000
+}
+```
+
+2. **Transaction Count Updates**: Verify correct deduction logic
+```
+[SimplifiedEnergyMonitor] Transaction count updated {
+  transactionsDeducted: 1 or 2,
+  logic: "Energy >= oneTransactionThreshold" or "Energy < oneTransactionThreshold"
+}
+```
+
+## Rollback Plan
+
+If issues occur:
+
+1. **Revert code deployment**
+```bash
+git checkout <previous-version>
+npm install
+npm run build:production
+```
+
+2. **Keep database changes** (columns with defaults won't break old code)
+
+## Testing Checklist
+
+- [ ] Migration script runs without errors
+- [ ] Thresholds visible in database
+- [ ] Energy monitor loads thresholds on startup
+- [ ] Transaction count deducts correctly (1 or 2)
+- [ ] Admin API can update thresholds
+- [ ] Admin UI displays threshold configuration
 
 ## Support
 
-For production issues:
-1. Check logs: `pm2 logs energy-broker-api`
-2. Monitor database: `pg_stat_activity`
-3. Review error tracking service
-4. Contact DevOps team if needed
+For issues:
+1. Check logs: `[SimplifiedEnergyMonitor]` entries
+2. Verify database: `SELECT * FROM energy_rates WHERE is_active = true`
+3. Test API: `/api/v1/admin/energy-rates/current`
+
+## Notes
+
+- The system will use exactly `twoTransactionThreshold` amount for delegation
+- Old hardcoded value (131,050) is replaced with database value
+- All energy amounts are in standard TRON energy units
