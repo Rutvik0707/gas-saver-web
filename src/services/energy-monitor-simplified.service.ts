@@ -14,7 +14,7 @@ import axios from 'axios';
 export class SimplifiedEnergyMonitor {
   private readonly TRON_API_URL = 'https://apilist.tronscanapi.com/api';
   private readonly SYSTEM_WALLET = config.systemWallet.address;
-  private readonly API_DELAY_MS = 500;    // 500ms between API calls to prevent rate limiting
+  private readonly API_DELAY_MS = 1500;    // 1.5s between API calls to avoid rate limiting
   private isRunning = false;
   private energyThresholds: {
     oneTransactionThreshold: number;
@@ -200,15 +200,15 @@ export class SimplifiedEnergyMonitor {
           const currentEnergy = data?.bandwidth?.energyRemaining || 0;
           
           // Only add to replenishment list if user has transactions remaining
-          if (currentEnergy < this.TARGET_ENERGY && state.transactionsRemaining > 0) {
+          if (currentEnergy < thresholds.twoTransactionThreshold && state.transactionsRemaining > 0) {
             logger.info('[SimplifiedEnergyMonitor] Low energy detected (user has credits)', {
               address: state.tronAddress,
               currentEnergy,
-              threshold: this.TARGET_ENERGY,
+              threshold: thresholds.twoTransactionThreshold,
               transactionsRemaining: state.transactionsRemaining
             });
             reclaimDelegateAddresses.add(state.tronAddress);
-          } else if (currentEnergy < this.TARGET_ENERGY && state.transactionsRemaining === 0) {
+          } else if (currentEnergy < thresholds.twoTransactionThreshold && state.transactionsRemaining === 0) {
             logger.info('[SimplifiedEnergyMonitor] Low energy but no transactions remaining - skipping', {
               address: state.tronAddress,
               currentEnergy,
@@ -261,17 +261,9 @@ export class SimplifiedEnergyMonitor {
         
         const delegations = delegationData?.data || [];
         
-        // Check for over-delegations
-        for (const delegation of delegations) {
-          if (delegation.resourceValue > this.MAX_ENERGY) {
-            logger.info('[SimplifiedEnergyMonitor] Over-delegation detected', {
-              address: delegation.receiverAddress,
-              delegatedEnergy: delegation.resourceValue,
-              threshold: this.MAX_ENERGY
-            });
-            reclaimDelegateAddresses.add(delegation.receiverAddress);
-          }
-        }
+        // Note: We don't check for over-delegations anymore
+        // Addresses with sufficient energy (even if > threshold) should be left alone
+        // Only addresses with LOW energy need delegation
         
         // Step 4: Process all addresses needing adjustment
         if (reclaimDelegateAddresses.size === 0) {
@@ -338,10 +330,10 @@ export class SimplifiedEnergyMonitor {
             // First check if system has enough energy
             const availableEnergy = await energyService.getAvailableEnergyForDelegation();
             
-            if (availableEnergy < this.DELEGATION_AMOUNT) {
+            if (availableEnergy < thresholds.twoTransactionThreshold) {
               logger.warn('[SimplifiedEnergyMonitor] Insufficient system energy - skipping delegation', {
                 address,
-                required: this.DELEGATION_AMOUNT,
+                required: thresholds.twoTransactionThreshold,
                 available: availableEnergy
               });
               continue; // Skip this address
@@ -403,7 +395,7 @@ export class SimplifiedEnergyMonitor {
             
             logger.info('[SimplifiedEnergyMonitor] Delegating exact target energy', {
               address,
-              targetEnergy: this.DELEGATION_AMOUNT,
+              targetEnergy: thresholds.twoTransactionThreshold,
               transactionsRemaining,
               note: `Delegating exactly ${thresholds.twoTransactionThreshold}`
             });

@@ -306,21 +306,37 @@ export class EnergyService {
       const bufferMultiplier = includeBuffer ? 1.05 : 1.0; // 5% buffer only if requested
       const bufferedTrxAmount = trxAmount * bufferMultiplier;
       
-      // For exact energy delegation (especially 131,050 on mainnet), we need to account for rounding
-      // Mainnet ratio is 10.01, so 131,050 / 10.01 = 13,091.91 TRX
-      // We need to delegate slightly more TRX to ensure we get at least the requested energy
-      // For mainnet: add 1 TRX buffer to ensure we hit 131,050 energy exactly
-      const isMainnet = config.tron.network === 'mainnet';
-      const roundingBuffer = includeBuffer ? 0 : (isMainnet ? 1.0 : 0.01); // 1 TRX for mainnet, 0.01 for testnet
-      const delegationTrxAmount = Math.max(1, bufferedTrxAmount + roundingBuffer);
+      // For exact energy delegation, check if this is from simplified monitor
+      const isSimplifiedMonitor = !includeBuffer && energyAmount > 130000 && energyAmount < 132000;
+
+      let delegationTrxAmount: number;
+      if (isSimplifiedMonitor) {
+        // For simplified monitor, use exact calculation without any buffers
+        delegationTrxAmount = trxAmount; // Exact amount, no rounding buffer
+        logger.info('[EnergyService] Simplified monitor exact delegation - no buffers', {
+          requestedEnergy: energyAmount,
+          energyPerTrx,
+          exactTrxAmount: trxAmount,
+          expectedEnergy: Math.floor(trxAmount * energyPerTrx)
+        });
+      } else {
+        // For normal delegations, add small buffer for safety
+        const isMainnet = config.tron.network === 'mainnet';
+        const roundingBuffer = includeBuffer ? 0 : (isMainnet ? 0.01 : 0.01); // Small buffer only
+        delegationTrxAmount = Math.max(1, bufferedTrxAmount + roundingBuffer);
+      }
       
       // Convert to SUN and ensure it's an integer
       // Use Math.ceil to round up, ensuring we never under-delegate
       const delegationAmountSun = Math.ceil(tronUtils.toSun(delegationTrxAmount));
       
-      // For mainnet with 131,050 energy target, validate the calculation
+      // For mainnet with configured energy target, validate the calculation
+      const activeRate = await prisma.energyRate.findFirst({
+        where: { isActive: true },
+        orderBy: { createdAt: 'desc' }
+      });
       const expectedEnergy = Math.floor(delegationTrxAmount * energyPerTrx);
-      const isExactTarget = energyAmount === 131050 && !includeBuffer;
+      const isExactTarget = energyAmount === activeRate?.twoTransactionThreshold && !includeBuffer;
       
       if (isExactTarget && expectedEnergy < energyAmount) {
         logger.warn('⚠️ Energy delegation may be insufficient!', {
@@ -393,6 +409,16 @@ export class EnergyService {
       // Build delegation transaction with correct parameter order
       let delegationTx;
       try {
+        // Log exact values being sent to TRON
+        logger.info('[EnergyService] CRITICAL - Exact delegation parameters', {
+          delegationAmountSun,
+          delegationTrxAmount: delegationTrxAmount.toFixed(6),
+          userAddress,
+          systemWalletAddress,
+          calculatedEnergy: Math.floor((delegationAmountSun / 1000000) * energyPerTrx),
+          note: 'These exact values are being sent to TRON delegateResource'
+        });
+
         delegationTx = await (systemTronWeb as any).transactionBuilder.delegateResource(
           delegationAmountSun, // Amount in SUN to delegate - FIRST parameter
           userAddress,         // Recipient address - SECOND parameter
@@ -400,10 +426,11 @@ export class EnergyService {
           systemWalletAddress, // Owner address (delegator) - FOURTH parameter
           false               // Lock (false for unlocked delegation) - FIFTH parameter
         );
-        
+
         logger.info('Delegation transaction built successfully', {
           txId: delegationTx.txID,
-          rawDataHex: delegationTx.raw_data_hex
+          rawDataHex: delegationTx.raw_data_hex,
+          delegationAmountSun
         });
       } catch (buildError) {
         logger.error('Failed to build delegation transaction', {
@@ -1258,16 +1285,28 @@ export class EnergyService {
         throw new Error('Energy amount cannot exceed 150,000');
       }
       
-      // CRITICAL: For simplified energy monitor, only allow exactly 131,050
+      // CRITICAL: For simplified energy monitor, only allow exactly the configured threshold
       // This prevents any rounding issues or incorrect delegations
       const isSimplifiedMonitor = !includeBuffer && energyAmount > 130000 && energyAmount < 132000;
-      if (isSimplifiedMonitor && energyAmount !== 131050) {
-        logger.error('[EnergyService] Invalid delegation amount from monitor', {
-          requested: energyAmount,
-          required: 131050,
-          error: 'Simplified monitor must delegate exactly 131,050'
+      if (isSimplifiedMonitor) {
+        // Get the active energy rate configuration
+        const activeRate = await prisma.energyRate.findFirst({
+          where: { isActive: true },
+          orderBy: { createdAt: 'desc' }
         });
-        throw new Error(`Energy monitor must delegate exactly 131,050, not ${energyAmount}`);
+
+        if (!activeRate) {
+          throw new Error('No active energy rate configuration found');
+        }
+
+        if (energyAmount !== activeRate.twoTransactionThreshold) {
+          logger.error('[EnergyService] Invalid delegation amount from monitor', {
+            requested: energyAmount,
+            required: activeRate.twoTransactionThreshold,
+            error: `Simplified monitor must delegate exactly ${activeRate.twoTransactionThreshold}`
+          });
+          throw new Error(`Energy monitor must delegate exactly ${activeRate.twoTransactionThreshold}, not ${energyAmount}`);
+        }
       }
 
       // Check if system has enough energy
