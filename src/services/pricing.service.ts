@@ -422,7 +422,31 @@ export class PricingService {
     timestamp: Date;
   }> {
     try {
-      // Step 1: First check if there's a database package for this transaction count
+      // Hardcoded package prices as per requirement
+      const hardcodedPackages: { [key: number]: number } = {
+        50: 50,
+        100: 100,
+        200: 200,
+        300: 300,
+        400: 400,
+        500: 500
+      };
+
+      // Check if this is a hardcoded package
+      if (hardcodedPackages[numberOfTransactions]) {
+        logger.info('Using hardcoded transaction package', {
+          numberOfTransactions,
+          usdtCost: hardcodedPackages[numberOfTransactions]
+        });
+
+        return {
+          numberOfTransactions,
+          costInUSDT: hardcodedPackages[numberOfTransactions],
+          timestamp: new Date()
+        };
+      }
+
+      // Step 1: Try to check database package (keeping for future fix)
       const transactionPackage = await transactionPackagesService.getPackageByTransactionCount(numberOfTransactions);
 
       if (transactionPackage && transactionPackage.isActive) {
