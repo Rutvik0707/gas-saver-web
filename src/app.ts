@@ -17,6 +17,7 @@ import { validationRoutes } from './modules/validation';
 import { tronAddressRoutes } from './modules/tron-address';
 import { createSystemStatusRoutes } from './modules/admin/system-status.routes';
 import { energyRateRoutes } from './modules/energy-rate';
+import { transactionPackagesRoutes } from './modules/transaction-packages';
 
 export function createApp(): express.Application {
   const app = express();
@@ -149,6 +150,7 @@ export function createApp(): express.Application {
   apiRouter.use('/feedback', feedbackRoutes);
   apiRouter.use('/energy', energyRoutes);
   apiRouter.use('/energy-rates', energyRateRoutes);
+  apiRouter.use('/transaction-packages', transactionPackagesRoutes);
   apiRouter.use('/pricing', pricingRoutes);
   apiRouter.use('/validation', validationRoutes);
   apiRouter.use('/users/tron-addresses', tronAddressRoutes);

@@ -2,6 +2,7 @@ import axios from 'axios';
 import { logger, config } from '../config';
 import { energyService } from './energy.service';
 import { energyRateService } from '../modules/energy-rate';
+import { transactionPackagesService } from '../modules/transaction-packages';
 
 interface PriceData {
   usdtPrice: number;
@@ -421,34 +422,57 @@ export class PricingService {
     timestamp: Date;
   }> {
     try {
-      // Step 1: Get live market prices
+      // Step 1: First check if there's a database package for this transaction count
+      const transactionPackage = await transactionPackagesService.getPackageByTransactionCount(numberOfTransactions);
+
+      if (transactionPackage && transactionPackage.isActive) {
+        // Use the database-defined pricing
+        logger.info('Using database-defined transaction package', {
+          numberOfTransactions,
+          packageId: transactionPackage.id,
+          usdtCost: transactionPackage.usdtCost
+        });
+
+        return {
+          numberOfTransactions,
+          costInUSDT: Number(transactionPackage.usdtCost),
+          timestamp: new Date()
+        };
+      }
+
+      // Step 2: If no package found, fall back to calculation (existing logic)
+      logger.info('No transaction package found, calculating price', {
+        numberOfTransactions
+      });
+
+      // Get live market prices
       const prices = await this.getPrices();
-      
+
       // Get current rate from database
       const currentRate = await energyRateService.getCurrentRate();
-      
-      // Step 2: Calculate energy requirements
+
+      // Calculate energy requirements
       // Using exact energy without buffer to match tr.energy pricing
       const baseEnergy = currentRate.energyPerTransaction;
       const energyPerTransaction = baseEnergy; // No buffer for accurate pricing
       const totalEnergyRequired = energyPerTransaction * numberOfTransactions;
-      
-      // Step 3: Convert energy to TRX using live energy price
+
+      // Convert energy to TRX using live energy price
       // Instead of using static config price, use the live market price
       const sunAmount = totalEnergyRequired * prices.energyPriceSun;
       const energyCostInTRX = sunAmount / 1_000_000; // Convert SUN to TRX
-      
-      // Step 4: Convert TRX to USDT using live rates
+
+      // Convert TRX to USDT using live rates
       const energyCostInUSDT = energyCostInTRX * prices.trxPrice / prices.usdtPrice;
-      
-      // Step 5: Apply no service markup for 1:1 pricing
+
+      // Apply no service markup for 1:1 pricing
       // Removed markup to achieve 1 USDT per transaction pricing
       const serviceMarkup = 1.0; // 0% markup
       const totalUSDTValue = energyCostInUSDT * serviceMarkup;
-      
-      // Step 6: Round up to nearest whole number for clean pricing
+
+      // Round up to nearest whole number for clean pricing
       const roundedCostInUSDT = Math.ceil(totalUSDTValue);
-      
+
       logger.info('Calculated transaction USDT cost', {
         numberOfTransactions,
         rawUSDTValue: totalUSDTValue,
@@ -458,7 +482,7 @@ export class PricingService {
         trxPrice: prices.trxPrice,
         usdtPrice: prices.usdtPrice
       });
-      
+
       return {
         numberOfTransactions,
         costInUSDT: roundedCostInUSDT,
@@ -469,7 +493,7 @@ export class PricingService {
         error: error instanceof Error ? error.message : 'Unknown error',
         numberOfTransactions
       });
-      
+
       throw error;
     }
   }

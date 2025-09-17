@@ -7,7 +7,7 @@ export const initiateDepositSchema = z.object({
     .int('Must be a whole number')
     .positive('Must be positive')
     .min(1, 'Minimum is 1 transaction')
-    .max(100, 'Maximum is 100 transactions per deposit'),
+    .max(500, 'Maximum is 500 transactions per deposit'),
   tronAddress: z.string().optional().refine(
     (address) => !address || /^T[A-Za-z1-9]{33}$/.test(address),
     'Invalid TRON address format'
