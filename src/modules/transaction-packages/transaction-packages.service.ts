@@ -4,9 +4,81 @@ import { InternalServerException, NotFoundException, ConflictException } from '.
 import { logger } from '../../config';
 
 export class TransactionPackagesService {
+  private getDefaultPackages() {
+    return [
+      {
+        id: 'default-50',
+        numberOfTxs: 50,
+        usdtCost: 50,
+        description: 'Basic package - 50 transactions',
+        isActive: true,
+        createdBy: 'system',
+        createdAt: new Date(),
+        updatedAt: new Date()
+      },
+      {
+        id: 'default-100',
+        numberOfTxs: 100,
+        usdtCost: 100,
+        description: 'Standard package - 100 transactions',
+        isActive: true,
+        createdBy: 'system',
+        createdAt: new Date(),
+        updatedAt: new Date()
+      },
+      {
+        id: 'default-200',
+        numberOfTxs: 200,
+        usdtCost: 200,
+        description: 'Pro package - 200 transactions',
+        isActive: true,
+        createdBy: 'system',
+        createdAt: new Date(),
+        updatedAt: new Date()
+      },
+      {
+        id: 'default-300',
+        numberOfTxs: 300,
+        usdtCost: 300,
+        description: 'Business package - 300 transactions',
+        isActive: true,
+        createdBy: 'system',
+        createdAt: new Date(),
+        updatedAt: new Date()
+      },
+      {
+        id: 'default-400',
+        numberOfTxs: 400,
+        usdtCost: 400,
+        description: 'Enterprise package - 400 transactions',
+        isActive: true,
+        createdBy: 'system',
+        createdAt: new Date(),
+        updatedAt: new Date()
+      },
+      {
+        id: 'default-500',
+        numberOfTxs: 500,
+        usdtCost: 500,
+        description: 'Ultimate package - 500 transactions',
+        isActive: true,
+        createdBy: 'system',
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    ];
+  }
+
   async getAllPackages(includeInactive: boolean = false) {
     try {
       const packages = await transactionPackagesRepository.findAll(includeInactive);
+
+      // If no packages found, return default packages
+      if (packages.length === 0) {
+        logger.info('No packages in database, returning default packages');
+        const defaultPackages = this.getDefaultPackages();
+        return includeInactive ? defaultPackages : defaultPackages.filter(p => p.isActive);
+      }
 
       logger.info('Fetched transaction packages', {
         count: packages.length,
@@ -16,7 +88,9 @@ export class TransactionPackagesService {
       return packages;
     } catch (error) {
       logger.error('Failed to fetch transaction packages', { error });
-      throw new InternalServerException('Failed to fetch transaction packages');
+      // Return default packages on error
+      const defaultPackages = this.getDefaultPackages();
+      return includeInactive ? defaultPackages : defaultPackages.filter(p => p.isActive);
     }
   }
 
@@ -25,6 +99,14 @@ export class TransactionPackagesService {
       const pkg = await transactionPackagesRepository.findById(id);
 
       if (!pkg) {
+        // Check if it's a default package ID
+        if (id.startsWith('default-')) {
+          const defaultPackages = this.getDefaultPackages();
+          const defaultPkg = defaultPackages.find(p => p.id === id);
+          if (defaultPkg) {
+            return defaultPkg;
+          }
+        }
         throw new NotFoundException('Transaction package not found');
       }
 
@@ -33,6 +115,16 @@ export class TransactionPackagesService {
       if (error instanceof NotFoundException || error instanceof ConflictException || error instanceof InternalServerException) throw error;
 
       logger.error('Failed to fetch transaction package', { id, error });
+
+      // Try to return from default packages on error
+      if (id.startsWith('default-')) {
+        const defaultPackages = this.getDefaultPackages();
+        const defaultPkg = defaultPackages.find(p => p.id === id);
+        if (defaultPkg) {
+          return defaultPkg;
+        }
+      }
+
       throw new InternalServerException('Failed to fetch transaction package');
     }
   }
@@ -40,6 +132,20 @@ export class TransactionPackagesService {
   async getPackageByTransactionCount(numberOfTxs: number) {
     try {
       const pkg = await transactionPackagesRepository.findByTransactionCount(numberOfTxs);
+
+      // If not found in database, check default packages
+      if (!pkg) {
+        const defaultPackages = this.getDefaultPackages();
+        const defaultPkg = defaultPackages.find(p => p.numberOfTxs === numberOfTxs && p.isActive);
+
+        if (defaultPkg) {
+          logger.info('Using default package for transaction count', {
+            numberOfTxs,
+            found: true
+          });
+          return defaultPkg;
+        }
+      }
 
       logger.info('Fetched package by transaction count', {
         numberOfTxs,
@@ -52,7 +158,11 @@ export class TransactionPackagesService {
         numberOfTxs,
         error
       });
-      return null; // Return null if not found to allow fallback to calculation
+
+      // Try to return from default packages on error
+      const defaultPackages = this.getDefaultPackages();
+      const defaultPkg = defaultPackages.find(p => p.numberOfTxs === numberOfTxs && p.isActive);
+      return defaultPkg || null;
     }
   }
 

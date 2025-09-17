@@ -19,43 +19,12 @@ export class TransactionPackagesRepository {
   }
 
   async findByTransactionCount(numberOfTxs: number) {
-    console.log('[DEBUG] findByTransactionCount called with:', numberOfTxs);
-    console.log('[DEBUG] Database URL:', process.env.DATABASE_URL?.substring(0, 50) + '...');
-
-    // Try raw SQL query
-    const rawResult = await prisma.$queryRaw`
-      SELECT * FROM transaction_packages
-      WHERE number_of_txs = ${numberOfTxs}
-      AND is_active = true
-      LIMIT 1
-    `;
-    console.log('[DEBUG] Raw query result:', rawResult);
-
-    const result = await prisma.transactionPackage.findFirst({
+    return prisma.transactionPackage.findFirst({
       where: {
         numberOfTxs,
         isActive: true,
       },
     });
-
-    console.log('[DEBUG] Prisma query result:', result);
-
-    // Return the raw result if Prisma result is null
-    if (!result && rawResult && Array.isArray(rawResult) && rawResult.length > 0) {
-      const raw = rawResult[0] as any;
-      return {
-        id: raw.id,
-        numberOfTxs: raw.number_of_txs,
-        usdtCost: raw.usdt_cost,
-        isActive: raw.is_active,
-        description: raw.description,
-        createdBy: raw.created_by,
-        createdAt: raw.created_at,
-        updatedAt: raw.updated_at
-      };
-    }
-
-    return result;
   }
 
   async findActiveByTransactionCount(numberOfTxs: number) {
