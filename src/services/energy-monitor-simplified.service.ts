@@ -7,14 +7,16 @@ import axios from 'axios';
  * 
  * Logic:
  * 1. Check all ACTIVE addresses with transactions > 0
- * 2. If current energy < 130k, add to reclaim_delegate array
- * 3. If delegation > 135k, add to reclaim_delegate array
- * 4. For all addresses in array: reclaim all, then delegate 131,050
+ * 2. If current energy < twoTransactionThreshold (130500), add to reclaim_delegate array
+ * 3. Check 5-minute cooldown period before re-delegation
+ * 4. For all addresses in array: reclaim all, then delegate 132,000
  */
 export class SimplifiedEnergyMonitor {
   private readonly TRON_API_URL = 'https://apilist.tronscanapi.com/api';
   private readonly SYSTEM_WALLET = config.systemWallet.address;
   private readonly API_DELAY_MS = 1500;    // 1.5s between API calls to avoid rate limiting
+  private readonly DELEGATION_AMOUNT = 132000;  // Fixed delegation amount
+  private readonly COOLDOWN_MINUTES = 5;  // 5-minute cooldown between delegations
   private isRunning = false;
   private energyThresholds: {
     oneTransactionThreshold: number;
@@ -184,21 +186,39 @@ export class SimplifiedEnergyMonitor {
       for (let i = 0; i < activeStates.length; i++) {
         const state = activeStates[i];
         try {
+          // Check cooldown period (5 minutes)
+          const cooldownTime = new Date(Date.now() - this.COOLDOWN_MINUTES * 60 * 1000);
+
+          // Find the energy state to check last action time
+          const energyState = await prisma.userEnergyState.findUnique({
+            where: { tronAddress: state.tronAddress }
+          });
+
+          if (energyState?.lastActionAt && energyState.lastActionAt > cooldownTime) {
+            logger.info('[SimplifiedEnergyMonitor] Skipping address - in cooldown period', {
+              address: state.tronAddress,
+              lastAction: energyState.lastActionAt,
+              cooldownUntil: new Date(energyState.lastActionAt.getTime() + this.COOLDOWN_MINUTES * 60 * 1000),
+              remainingCooldown: Math.ceil((energyState.lastActionAt.getTime() + this.COOLDOWN_MINUTES * 60 * 1000 - Date.now()) / 1000) + 's'
+            });
+            continue; // Skip this address
+          }
+
           // Add delay between API calls to prevent rate limiting (except for first call)
           if (i > 0) {
             await this.delay(this.API_DELAY_MS);
           }
-          
+
           const data = await this.makeApiCallWithHeaders(
             `${this.TRON_API_URL}/accountv2`,
             { address: state.tronAddress },
-            config.tronscan?.apiKey ? { 
-              'TRON-PRO-API-KEY': config.tronscan.apiKey 
+            config.tronscan?.apiKey ? {
+              'TRON-PRO-API-KEY': config.tronscan.apiKey
             } : {}
           );
-          
+
           const currentEnergy = data?.bandwidth?.energyRemaining || 0;
-          
+
           // Only add to replenishment list if user has transactions remaining
           if (currentEnergy < thresholds.twoTransactionThreshold && state.transactionsRemaining > 0) {
             logger.info('[SimplifiedEnergyMonitor] Low energy detected (user has credits)', {
@@ -388,21 +408,21 @@ export class SimplifiedEnergyMonitor {
               continue; // Skip delegation for this address
             }
             
-            // Use exact delegation amount from database
-            logger.info('[SimplifiedEnergyMonitor] Using delegation threshold from database', {
-              configured: thresholds.twoTransactionThreshold
+            // Use fixed delegation amount of 132000
+            logger.info('[SimplifiedEnergyMonitor] Using fixed delegation amount', {
+              configured: this.DELEGATION_AMOUNT
             });
-            
-            logger.info('[SimplifiedEnergyMonitor] Delegating exact target energy', {
+
+            logger.info('[SimplifiedEnergyMonitor] Delegating fixed energy amount', {
               address,
-              targetEnergy: thresholds.twoTransactionThreshold,
+              targetEnergy: this.DELEGATION_AMOUNT,
               transactionsRemaining,
-              note: `Delegating exactly ${thresholds.twoTransactionThreshold}`
+              note: `Delegating exactly ${this.DELEGATION_AMOUNT} (fixed amount)`
             });
-            
+
             const delegateResult = await energyService.transferEnergyDirect(
               address,
-              thresholds.twoTransactionThreshold, // Use exact threshold from database
+              this.DELEGATION_AMOUNT, // Use fixed amount of 132000
               userId,
               false // No buffer, exact amount
             );
@@ -413,52 +433,26 @@ export class SimplifiedEnergyMonitor {
               txHash: delegateResult.txHash
             });
             
-            // Check user's current energy after delegation to determine transaction count decrement
-            // Get current energy level (should be approximately twoTransactionThreshold after delegation)
-            const currentEnergyAfterDelegation = thresholds.twoTransactionThreshold;
-
-            // Determine how many transactions to decrement based on energy level
-            // If energy >= oneTransactionThreshold: decrement by 1
-            // If energy < oneTransactionThreshold: decrement by 2
-            const transactionsToDecrement = currentEnergyAfterDelegation >= thresholds.oneTransactionThreshold ? 1 : 2;
-
-            // Update the state AND decrement transaction count appropriately
+            // Update the state WITHOUT decrementing transaction count
+            // Transaction count should only be decremented when actual USDT transfers are detected
             const updatedState = await prisma.userEnergyState.update({
               where: { tronAddress: address },
               data: {
-                lastObservedEnergy: thresholds.twoTransactionThreshold,
-                currentEnergyCached: thresholds.twoTransactionThreshold,
-                currentAllocationCharged: thresholds.twoTransactionThreshold,
-                lastAction: `DELEGATE_${thresholds.twoTransactionThreshold}`,
+                lastObservedEnergy: this.DELEGATION_AMOUNT,
+                currentEnergyCached: this.DELEGATION_AMOUNT,
+                currentAllocationCharged: this.DELEGATION_AMOUNT,
+                lastAction: `DELEGATE_${this.DELEGATION_AMOUNT}`,
                 lastActionAt: new Date(),
                 lastDelegationTime: new Date(),
-                transactionsRemaining: Math.max(0, transactionsRemaining - transactionsToDecrement),
+                // NOT decrementing transactionsRemaining - keep it as is
                 updatedAt: new Date()
               }
             });
             
-            // Update EnergyDelivery records to track the delivered transaction(s)
-            const activeDeliveries = await prisma.energyDelivery.findMany({
-              where: {
-                tronAddress: address,
-                isActive: true
-              },
-              orderBy: { createdAt: 'asc' }
-            });
-
-            if (activeDeliveries.length > 0) {
-              const delivery = activeDeliveries[0];
-              await prisma.energyDelivery.update({
-                where: { id: delivery.id },
-                data: {
-                  deliveredTransactions: Math.min(delivery.deliveredTransactions + transactionsToDecrement, delivery.totalTransactions),
-                  lastDeliveryAt: new Date(),
-                  isActive: (delivery.deliveredTransactions + transactionsToDecrement) < delivery.totalTransactions
-                }
-              });
-            }
+            // Do NOT update EnergyDelivery records here
+            // Only update when actual USDT transfers are detected on blockchain
             
-            // Log the transaction count update
+            // Log the energy delegation WITHOUT transaction count changes
             await prisma.energyMonitoringLog.create({
               data: {
                 userId,
@@ -468,27 +462,19 @@ export class SimplifiedEnergyMonitor {
                 metadata: {
                   delegatedEnergy: delegateResult.actualEnergy,
                   txHash: delegateResult.txHash,
-                  previousTransactionCount: transactionsRemaining,
-                  newTransactionCount: Math.max(0, transactionsRemaining - transactionsToDecrement),
-                  transactionsDeducted: transactionsToDecrement,
-                  energyLevel: currentEnergyAfterDelegation,
-                  oneTransactionThreshold: thresholds.oneTransactionThreshold,
-                  reason: `Energy successfully delegated - ${transactionsToDecrement} transaction credit(s) consumed`
+                  transactionsRemaining: transactionsRemaining,
+                  energyLevel: this.DELEGATION_AMOUNT,
+                  reason: `Energy successfully delegated - transaction count NOT changed (only decrements on actual usage)`
                 }
               }
             });
-            
-            logger.info('[SimplifiedEnergyMonitor] Transaction count updated after successful delegation', {
+
+            logger.info('[SimplifiedEnergyMonitor] Energy delegated without changing transaction count', {
               address,
-              previousCount: transactionsRemaining,
-              newCount: Math.max(0, transactionsRemaining - transactionsToDecrement),
-              transactionsDeducted: transactionsToDecrement,
+              transactionsRemaining,
               energyDelegated: delegateResult.actualEnergy,
-              energyLevel: currentEnergyAfterDelegation,
-              oneTransactionThreshold: thresholds.oneTransactionThreshold,
-              logic: currentEnergyAfterDelegation >= thresholds.oneTransactionThreshold
-                ? 'Energy >= oneTransactionThreshold, deducted 1 transaction'
-                : 'Energy < oneTransactionThreshold, deducted 2 transactions'
+              energyLevel: this.DELEGATION_AMOUNT,
+              note: 'Transaction count unchanged - will only decrement on actual USDT transfers'
             });
             
           } catch (error) {
