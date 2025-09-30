@@ -317,6 +317,42 @@ model EnergyMonitoringLog {
   @@map("energy_monitoring_logs")
 }
 
+model EnergyDelegationAudit {
+  id                        String                     @id @default(cuid())
+  tronAddress               String                     @map("tron_address")
+  userId                    String?                    @map("user_id")
+  cycleId                   String                     @map("cycle_id")
+  operationType             EnergyOperationType        @map("operation_type")
+  txHash                    String?                    @map("tx_hash")
+  timestamp                 DateTime                   @default(now())
+  energyBefore              Int?                       @map("energy_before")
+  energyAfter               Int?                       @map("energy_after")
+  energyDelta               Int?                       @map("energy_delta")
+  reclaimedSun              BigInt?                    @map("reclaimed_sun")
+  reclaimedTrx              Decimal?                   @map("reclaimed_trx") @db.Decimal(18, 6)
+  reclaimedEnergy           Int?                       @map("reclaimed_energy")
+  delegatedSun              BigInt?                    @map("delegated_sun")
+  delegatedTrx              Decimal?                   @map("delegated_trx") @db.Decimal(18, 6)
+  delegatedEnergy           Int?                       @map("delegated_energy")
+  pendingTransactionsBefore Int                        @map("pending_transactions_before")
+  pendingTransactionsAfter  Int                        @map("pending_transactions_after")
+  transactionDecrease       Int                        @default(0) @map("transaction_decrease")
+  relatedUsdtTxHash         String?                    @map("related_usdt_tx_hash")
+  hasActualTransaction      Boolean                    @default(false) @map("has_actual_transaction")
+  isSystemIssue             Boolean                    @default(false) @map("is_system_issue")
+  issueType                 String?                    @map("issue_type")
+  metadata                  Json?
+  createdAt                 DateTime                   @default(now()) @map("created_at")
+
+  @@index([tronAddress])
+  @@index([cycleId])
+  @@index([operationType])
+  @@index([isSystemIssue])
+  @@index([timestamp])
+  @@index([hasActualTransaction])
+  @@map("energy_delegation_audit")
+}
+
 enum DepositStatus {
   PENDING
   CONFIRMED
@@ -386,4 +422,9 @@ enum AdminRole {
   SUPER_ADMIN
   ADMIN
   VIEWER
+}
+
+enum EnergyOperationType {
+  RECLAIM
+  DELEGATE
 }

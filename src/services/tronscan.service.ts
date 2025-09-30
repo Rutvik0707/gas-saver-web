@@ -1,5 +1,12 @@
 import axios, { AxiosInstance } from 'axios';
 import { logger, config } from '../config';
+import {
+  TronScanTransaction,
+  CategorizedTransaction,
+  TransactionCategory,
+  TransactionPattern,
+  TransactionPatternAnalysis
+} from '../types/audit.types';
 
 interface TronScanAccountData {
   bandwidth: {
@@ -366,6 +373,478 @@ class TronScanService {
    */
   isConfigured(): boolean {
     return !!this.baseUrl;
+  }
+
+  /**
+   * Get complete transaction history for an address with pagination
+   * @param address TRON address to query
+   * @param page Page number (0-indexed)
+   * @param limit Number of transactions per page
+   * @returns Transaction history with pagination info
+   */
+  async getAddressTransactionHistory(
+    address: string,
+    page: number = 0,
+    limit: number = 50
+  ): Promise<{
+    data: TronScanTransaction[];
+    total: number;
+    hasMore: boolean;
+  }> {
+    if (!this.baseUrl) {
+      throw new Error('TronScan API not configured');
+    }
+
+    try {
+      logger.info('[TronScan] Fetching transaction history', {
+        address,
+        page,
+        limit
+      });
+
+      const start = page * limit;
+      const response = await this.axiosInstance.get('/transaction', {
+        params: {
+          sort: '-timestamp',
+          count: true,
+          limit,
+          start,
+          address
+        }
+      });
+
+      const data: TronScanTransaction[] = response.data?.data || [];
+      const total = response.data?.total || 0;
+      const hasMore = (start + limit) < total;
+
+      logger.info('[TronScan] Transaction history retrieved', {
+        address,
+        page,
+        retrieved: data.length,
+        total,
+        hasMore
+      });
+
+      return { data, total, hasMore };
+    } catch (error) {
+      logger.error('[TronScan] Failed to get transaction history', {
+        address,
+        page,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Get detailed transaction information by hash
+   * @param txHash Transaction hash
+   * @returns Detailed transaction info
+   */
+  async getTransactionDetails(txHash: string): Promise<TronScanTransaction> {
+    if (!this.baseUrl) {
+      throw new Error('TronScan API not configured');
+    }
+
+    try {
+      logger.debug('[TronScan] Fetching transaction details', { txHash });
+
+      const response = await this.axiosInstance.get('/transaction-info', {
+        params: { hash: txHash }
+      });
+
+      if (!response.data) {
+        throw new Error('Transaction not found');
+      }
+
+      return response.data;
+    } catch (error) {
+      logger.error('[TronScan] Failed to get transaction details', {
+        txHash,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Categorize a transaction based on its type and contract data
+   * @param tx TronScan transaction
+   * @returns Categorized transaction
+   */
+  categorizeTransaction(tx: TronScanTransaction): CategorizedTransaction {
+    const systemWallet = config.systemWallet.address;
+    const usdtContract = config.tron.usdtContract;
+
+    let category = TransactionCategory.OTHER;
+    let amount: string | undefined;
+    let amountTrx: number | undefined;
+    let amountSun: number | undefined;
+    let energyAmount: number | undefined;
+    let resource: string | undefined;
+
+    // Use ownerAddress as primary source for "from", fallback to from field
+    const fromAddress = tx.ownerAddress || tx.from || '';
+    const toAddress = tx.toAddress || tx.to || '';
+
+    // Check contract type
+    // 31 = TriggerSmartContract (for TRC20 transfers)
+    // 1 = TransferContract (TRX transfer)
+    // 57 = DelegateResourceV2Contract
+    // 58 = UnDelegateResourceContract
+
+    if (tx.contractType === 31) {
+      // TriggerSmartContract - check if it's USDT transfer
+      const contractAddress = tx.contractData?.contract_address || toAddress;
+
+      if (contractAddress === usdtContract) {
+        category = TransactionCategory.USDT_TRANSFER;
+        amount = tx.token_info?.symbol || 'USDT';
+
+        // Parse amount from trigger_info or contractData if available
+        if ((tx as any).trigger_info?.parameter?._value) {
+          amountSun = parseInt((tx as any).trigger_info.parameter._value);
+          amountTrx = amountSun / 1_000_000;
+        }
+      }
+    } else if (tx.contractType === 57) {
+      // DelegateResourceV2Contract
+      category = TransactionCategory.ENERGY_DELEGATE;
+      resource = tx.contractData?.resource || 'ENERGY';
+      amountSun = tx.contractData?.balance;
+      amountTrx = amountSun ? amountSun / 1_000_000 : undefined;
+
+      // Estimate energy from TRX amount
+      if (amountTrx) {
+        energyAmount = Math.floor(amountTrx * 10.01); // Approximate ratio
+      }
+    } else if (tx.contractType === 58) {
+      // UnDelegateResourceContract
+      category = TransactionCategory.ENERGY_RECLAIM;
+      resource = tx.contractData?.resource || 'ENERGY';
+      amountSun = tx.contractData?.balance;
+      amountTrx = amountSun ? amountSun / 1_000_000 : undefined;
+
+      // Estimate energy from TRX amount
+      if (amountTrx) {
+        energyAmount = Math.floor(amountTrx * 10.01); // Approximate ratio
+      }
+    } else if (tx.contractType === 1) {
+      // TransferContract (TRX transfer)
+      category = TransactionCategory.TRX_TRANSFER;
+      const amountBigInt = tx.contractData?.amount ? BigInt(tx.contractData.amount) : undefined;
+      amountSun = amountBigInt ? Number(amountBigInt) : undefined;
+      amountTrx = amountSun ? amountSun / 1_000_000 : undefined;
+    }
+
+    return {
+      hash: tx.hash,
+      timestamp: tx.block_timestamp,
+      category,
+      from: fromAddress,
+      to: toAddress,
+      amount,
+      amountTrx,
+      amountSun: amountSun ? Number(amountSun) : undefined,
+      energyAmount,
+      contractAddress: tx.contractData?.contract_address,
+      resource,
+      confirmed: tx.confirmed,
+      metadata: {
+        contractType: tx.contractType,
+        block: tx.block,
+        result: (tx as any).result,
+        cost: (tx as any).cost,
+        contractData: tx.contractData,
+        tokenInfo: tx.token_info,
+        ownerAddress: tx.ownerAddress,
+        toAddress: tx.toAddress
+      }
+    };
+  }
+
+  /**
+   * Detect transaction patterns to identify valid cycles vs system issues
+   * @param transactions Array of categorized transactions (sorted by timestamp DESC)
+   * @param address Address being analyzed
+   * @returns Array of detected patterns
+   */
+  detectTransactionPatterns(
+    transactions: CategorizedTransaction[],
+    address: string
+  ): TransactionPatternAnalysis[] {
+    const patterns: TransactionPatternAnalysis[] = [];
+    const systemWallet = config.systemWallet.address;
+
+    // Reverse to process oldest first
+    const txs = [...transactions].reverse();
+
+    let i = 0;
+    while (i < txs.length) {
+      const tx = txs[i];
+
+      // Look for USDT transfer from the address
+      if (
+        tx.category === TransactionCategory.USDT_TRANSFER &&
+        tx.from && tx.from.toLowerCase() === address.toLowerCase()
+      ) {
+        // USDT transfer found - look ahead for reclaim and delegate
+        const usdtTx = tx;
+        let reclaimTx: CategorizedTransaction | undefined;
+        let delegateTx: CategorizedTransaction | undefined;
+
+        // Look for reclaim within next few transactions (within 10 minutes)
+        for (let j = i + 1; j < Math.min(i + 10, txs.length); j++) {
+          const nextTx = txs[j];
+
+          // Check if within 10 minutes
+          if (nextTx.timestamp - usdtTx.timestamp > 10 * 60 * 1000) {
+            break;
+          }
+
+          if (
+            nextTx.category === TransactionCategory.ENERGY_RECLAIM &&
+            nextTx.from && nextTx.from.toLowerCase() === systemWallet.toLowerCase()
+          ) {
+            reclaimTx = nextTx;
+
+            // Look for delegate after reclaim
+            for (let k = j + 1; k < Math.min(j + 5, txs.length); k++) {
+              const afterReclaim = txs[k];
+
+              if (afterReclaim.timestamp - reclaimTx.timestamp > 5 * 60 * 1000) {
+                break;
+              }
+
+              if (
+                afterReclaim.category === TransactionCategory.ENERGY_DELEGATE &&
+                afterReclaim.from && afterReclaim.from.toLowerCase() === systemWallet.toLowerCase()
+              ) {
+                delegateTx = afterReclaim;
+                break;
+              }
+            }
+            break;
+          }
+        }
+
+        if (reclaimTx && delegateTx) {
+          // Valid cycle: USDT → Reclaim → Delegate
+          patterns.push({
+            pattern: TransactionPattern.VALID_CYCLE,
+            transactions: [usdtTx, reclaimTx, delegateTx],
+            shouldDecreaseCount: true,
+            decreaseAmount: 1, // Could be 2 based on energy thresholds
+            reasoning: 'Valid transaction cycle: User sent USDT, system reclaimed old energy and delegated new energy',
+            timestamp: usdtTx.timestamp,
+            cycleId: `cycle_${usdtTx.hash.substring(0, 16)}`
+          });
+        } else {
+          // Standalone USDT transfer
+          patterns.push({
+            pattern: TransactionPattern.STANDALONE_USDT,
+            transactions: [usdtTx],
+            shouldDecreaseCount: true,
+            decreaseAmount: 1,
+            reasoning: 'USDT transfer without immediate energy reclaim/delegate detected',
+            timestamp: usdtTx.timestamp,
+            cycleId: `usdt_${usdtTx.hash.substring(0, 16)}`
+          });
+        }
+
+        i++;
+      }
+      // Look for reclaim → delegate without prior USDT (system issue)
+      else if (
+        tx.category === TransactionCategory.ENERGY_RECLAIM &&
+        tx.from && tx.from.toLowerCase() === systemWallet.toLowerCase()
+      ) {
+        const reclaimTx = tx;
+        let delegateTx: CategorizedTransaction | undefined;
+
+        // Look for delegate after reclaim
+        for (let j = i + 1; j < Math.min(i + 5, txs.length); j++) {
+          const nextTx = txs[j];
+
+          if (nextTx.timestamp - reclaimTx.timestamp > 5 * 60 * 1000) {
+            break;
+          }
+
+          if (
+            nextTx.category === TransactionCategory.ENERGY_DELEGATE &&
+            nextTx.from && nextTx.from.toLowerCase() === systemWallet.toLowerCase()
+          ) {
+            delegateTx = nextTx;
+            break;
+          }
+        }
+
+        if (delegateTx) {
+          // Check if there was a recent USDT transfer (within last 15 minutes)
+          let hasRecentUsdt = false;
+          for (let j = i - 1; j >= Math.max(0, i - 10); j--) {
+            const prevTx = txs[j];
+            if (reclaimTx.timestamp - prevTx.timestamp > 15 * 60 * 1000) {
+              break;
+            }
+            if (
+              prevTx.category === TransactionCategory.USDT_TRANSFER &&
+              prevTx.from && prevTx.from.toLowerCase() === address.toLowerCase()
+            ) {
+              hasRecentUsdt = true;
+              break;
+            }
+          }
+
+          if (!hasRecentUsdt) {
+            // System issue: Reclaim → Delegate without USDT
+            patterns.push({
+              pattern: TransactionPattern.SYSTEM_ISSUE,
+              transactions: [reclaimTx, delegateTx],
+              shouldDecreaseCount: false,
+              decreaseAmount: 0,
+              reasoning: 'System issue detected: Continuous reclaim/delegate without USDT transaction. No transaction count decrease.',
+              timestamp: reclaimTx.timestamp,
+              cycleId: `issue_${reclaimTx.hash.substring(0, 16)}`
+            });
+          }
+        }
+
+        i++;
+      }
+      // Look for first delegation (no reclaim before)
+      else if (
+        tx.category === TransactionCategory.ENERGY_DELEGATE &&
+        tx.from && tx.from.toLowerCase() === systemWallet.toLowerCase()
+      ) {
+        // Check if this is truly first (no reclaim within 1 hour before)
+        let hasRecentReclaim = false;
+        for (let j = i - 1; j >= Math.max(0, i - 20); j--) {
+          const prevTx = txs[j];
+          if (tx.timestamp - prevTx.timestamp > 60 * 60 * 1000) {
+            break;
+          }
+          if (prevTx.category === TransactionCategory.ENERGY_RECLAIM) {
+            hasRecentReclaim = true;
+            break;
+          }
+        }
+
+        if (!hasRecentReclaim) {
+          patterns.push({
+            pattern: TransactionPattern.FIRST_DELEGATION,
+            transactions: [tx],
+            shouldDecreaseCount: false,
+            decreaseAmount: 0,
+            reasoning: 'Initial energy delegation - no transaction count decrease',
+            timestamp: tx.timestamp,
+            cycleId: `first_${tx.hash.substring(0, 16)}`
+          });
+        }
+
+        i++;
+      } else {
+        i++;
+      }
+    }
+
+    return patterns;
+  }
+
+  /**
+   * Get comprehensive transaction analysis for an address
+   * Fetches all transaction history and analyzes patterns
+   * @param address TRON address to analyze
+   * @param maxPages Maximum number of pages to fetch (default: 20 = 1000 transactions)
+   * @returns Analysis with all transactions and detected patterns
+   */
+  async analyzeAddressTransactions(
+    address: string,
+    maxPages: number = 20
+  ): Promise<{
+    address: string;
+    totalTransactions: number;
+    categorizedTransactions: CategorizedTransaction[];
+    patterns: TransactionPatternAnalysis[];
+    summary: {
+      usdtTransfers: number;
+      energyDelegations: number;
+      energyReclaims: number;
+      validCycles: number;
+      systemIssueCycles: number;
+      firstDelegations: number;
+    };
+  }> {
+    logger.info('[TronScan] Starting comprehensive address analysis', {
+      address,
+      maxPages
+    });
+
+    const allTransactions: TronScanTransaction[] = [];
+    let page = 0;
+    let hasMore = true;
+
+    // Fetch all transaction pages
+    while (hasMore && page < maxPages) {
+      try {
+        const result = await this.getAddressTransactionHistory(address, page, 50);
+        allTransactions.push(...result.data);
+        hasMore = result.hasMore;
+        page++;
+
+        // Rate limiting delay
+        if (hasMore && page < maxPages) {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        }
+      } catch (error) {
+        logger.warn('[TronScan] Failed to fetch page, stopping', { page, error });
+        break;
+      }
+    }
+
+    logger.info('[TronScan] Fetched transaction history', {
+      address,
+      totalFetched: allTransactions.length,
+      pagesFetched: page
+    });
+
+    // Categorize all transactions
+    const categorizedTransactions = allTransactions.map(tx =>
+      this.categorizeTransaction(tx)
+    );
+
+    // Detect patterns
+    const patterns = this.detectTransactionPatterns(categorizedTransactions, address);
+
+    // Calculate summary
+    const summary = {
+      usdtTransfers: categorizedTransactions.filter(tx =>
+        tx.category === TransactionCategory.USDT_TRANSFER &&
+        tx.from && tx.from.toLowerCase() === address.toLowerCase()
+      ).length,
+      energyDelegations: categorizedTransactions.filter(tx =>
+        tx.category === TransactionCategory.ENERGY_DELEGATE
+      ).length,
+      energyReclaims: categorizedTransactions.filter(tx =>
+        tx.category === TransactionCategory.ENERGY_RECLAIM
+      ).length,
+      validCycles: patterns.filter(p => p.pattern === TransactionPattern.VALID_CYCLE).length,
+      systemIssueCycles: patterns.filter(p => p.pattern === TransactionPattern.SYSTEM_ISSUE).length,
+      firstDelegations: patterns.filter(p => p.pattern === TransactionPattern.FIRST_DELEGATION).length
+    };
+
+    logger.info('[TronScan] Analysis complete', {
+      address,
+      summary
+    });
+
+    return {
+      address,
+      totalTransactions: allTransactions.length,
+      categorizedTransactions,
+      patterns,
+      summary
+    };
   }
 }
 
