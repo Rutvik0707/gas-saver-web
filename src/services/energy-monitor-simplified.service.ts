@@ -1,5 +1,6 @@
 import { prisma, logger, config, systemTronWeb, tronUtils } from '../config';
 import { energyService } from './energy.service';
+import { energyAuditRecorder } from './energy-audit-recorder.service';
 import axios from 'axios';
 
 /**
@@ -310,6 +311,15 @@ export class SimplifiedEnergyMonitor {
               d.receiverAddress === address
             );
             
+            // Generate unique cycle ID for this address
+            const cycleId = `cycle_${Date.now()}_${address.substring(0, 8)}`;
+            const userState = activeStates.find(s => s.tronAddress === address);
+            const userId = userState?.userId;
+            const pendingTransactionsBefore = userState?.transactionsRemaining || 0;
+
+            // Get energy before reclaim
+            const energyBeforeReclaim = await energyService.getEnergyBalance(address);
+
             if (delegation && delegation.balance > 0) {
               // Step 1: Try to reclaim ALL energy (but handle failures gracefully)
               try {
@@ -318,17 +328,39 @@ export class SimplifiedEnergyMonitor {
                   delegatedSun: delegation.balance,
                   delegatedEnergy: delegation.resourceValue
                 });
-                
+
                 const reclaimResult = await energyService.reclaimAllEnergyFromAddress(
                   address,
                   delegation.balance
                 );
-                
+
                 if (reclaimResult.reclaimedEnergy > 0) {
                   logger.info('[SimplifiedEnergyMonitor] Energy reclaimed successfully', {
                     address,
                     reclaimedEnergy: reclaimResult.reclaimedEnergy,
                     txHash: reclaimResult.txHash
+                  });
+
+                  // Get energy after reclaim
+                  const energyAfterReclaim = await energyService.getEnergyBalance(address);
+
+                  // Record RECLAIM audit entry
+                  await energyAuditRecorder.recordReclaim({
+                    tronAddress: address,
+                    userId,
+                    cycleId,
+                    txHash: reclaimResult.txHash,
+                    energyBefore: energyBeforeReclaim,
+                    energyAfter: energyAfterReclaim,
+                    reclaimedSun: BigInt(Math.floor(reclaimResult.reclaimedTrx * 1_000_000)),
+                    reclaimedTrx: reclaimResult.reclaimedTrx,
+                    reclaimedEnergy: reclaimResult.reclaimedEnergy,
+                    pendingTransactionsBefore,
+                    metadata: {
+                      delegatedSun: delegation.balance,
+                      delegatedEnergyFromApi: delegation.resourceValue,
+                      source: 'simplified_energy_monitor'
+                    }
                   });
                 }
               } catch (reclaimError) {
@@ -394,11 +426,9 @@ export class SimplifiedEnergyMonitor {
               estimatedTrxCost: bandwidthStatus.estimatedTrxCost
             });
             
-            // Find the user ID for this address
-            const userState = activeStates.find(s => s.tronAddress === address);
-            const userId = userState?.userId || '';
-            const transactionsRemaining = userState?.transactionsRemaining || 0;
-            
+            // transactionsRemaining was already retrieved above as pendingTransactionsBefore
+            const transactionsRemaining = pendingTransactionsBefore;
+
             // Check if user has transaction credits
             if (transactionsRemaining === 0) {
               logger.info('[SimplifiedEnergyMonitor] Skipping delegation - user has no transaction credits', {
@@ -407,7 +437,7 @@ export class SimplifiedEnergyMonitor {
               });
               continue; // Skip delegation for this address
             }
-            
+
             // Use fixed delegation amount of 132000
             logger.info('[SimplifiedEnergyMonitor] Using fixed delegation amount', {
               configured: this.DELEGATION_AMOUNT
@@ -420,19 +450,25 @@ export class SimplifiedEnergyMonitor {
               note: `Delegating exactly ${this.DELEGATION_AMOUNT} (fixed amount)`
             });
 
+            // Get energy before delegation
+            const energyBeforeDelegate = await energyService.getEnergyBalance(address);
+
             const delegateResult = await energyService.transferEnergyDirect(
               address,
               this.DELEGATION_AMOUNT, // Use fixed amount of 132000
               userId,
               false // No buffer, exact amount
             );
-            
+
             logger.info('[SimplifiedEnergyMonitor] Energy delegated successfully', {
               address,
               delegatedEnergy: delegateResult.actualEnergy,
               txHash: delegateResult.txHash
             });
-            
+
+            // Get energy after delegation
+            const energyAfterDelegate = await energyService.getEnergyBalance(address);
+
             // Update the state WITHOUT decrementing transaction count
             // Transaction count should only be decremented when actual USDT transfers are detected
             const updatedState = await prisma.userEnergyState.update({
@@ -448,10 +484,47 @@ export class SimplifiedEnergyMonitor {
                 updatedAt: new Date()
               }
             });
-            
+
+            // Pending transactions after delegation (should be the same as before)
+            const pendingTransactionsAfter = transactionsRemaining;
+
+            // Check for recent USDT transactions
+            const recentUsdtTx = await energyAuditRecorder.getLatestUsdtTransaction(address);
+
+            // Analyze the cycle to determine if it's valid or a system issue
+            const cycleAnalysis = energyAuditRecorder.analyzeCycle({
+              pendingTransactionsBefore,
+              pendingTransactionsAfter,
+              relatedUsdtTxHash: recentUsdtTx
+            });
+
+            // Record DELEGATE audit entry
+            await energyAuditRecorder.recordDelegate({
+              tronAddress: address,
+              userId,
+              cycleId,
+              txHash: delegateResult.txHash,
+              energyBefore: energyBeforeDelegate,
+              energyAfter: energyAfterDelegate,
+              delegatedSun: BigInt(Math.floor(delegateResult.delegatedTrx * 1_000_000)),
+              delegatedTrx: delegateResult.delegatedTrx,
+              delegatedEnergy: delegateResult.actualEnergy,
+              pendingTransactionsBefore,
+              pendingTransactionsAfter,
+              transactionDecrease: cycleAnalysis.transactionDecrease,
+              relatedUsdtTxHash: recentUsdtTx || undefined,
+              hasActualTransaction: cycleAnalysis.hasActualTransaction,
+              isSystemIssue: cycleAnalysis.isSystemIssue,
+              issueType: cycleAnalysis.issueType,
+              metadata: {
+                energyLevel: this.DELEGATION_AMOUNT,
+                source: 'simplified_energy_monitor'
+              }
+            });
+
             // Do NOT update EnergyDelivery records here
             // Only update when actual USDT transfers are detected on blockchain
-            
+
             // Log the energy delegation WITHOUT transaction count changes
             await prisma.energyMonitoringLog.create({
               data: {
@@ -459,11 +532,14 @@ export class SimplifiedEnergyMonitor {
                 tronAddress: address,
                 action: 'ENERGY_DELEGATED',
                 logLevel: 'INFO',
+                cycleId,
                 metadata: {
                   delegatedEnergy: delegateResult.actualEnergy,
                   txHash: delegateResult.txHash,
                   transactionsRemaining: transactionsRemaining,
                   energyLevel: this.DELEGATION_AMOUNT,
+                  hasActualTransaction: cycleAnalysis.hasActualTransaction,
+                  isSystemIssue: cycleAnalysis.isSystemIssue,
                   reason: `Energy successfully delegated - transaction count NOT changed (only decrements on actual usage)`
                 }
               }
@@ -474,6 +550,9 @@ export class SimplifiedEnergyMonitor {
               transactionsRemaining,
               energyDelegated: delegateResult.actualEnergy,
               energyLevel: this.DELEGATION_AMOUNT,
+              cycleId,
+              hasActualTransaction: cycleAnalysis.hasActualTransaction,
+              isSystemIssue: cycleAnalysis.isSystemIssue,
               note: 'Transaction count unchanged - will only decrement on actual USDT transfers'
             });
             

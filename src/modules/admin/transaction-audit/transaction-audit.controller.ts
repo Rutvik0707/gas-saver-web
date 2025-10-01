@@ -1,9 +1,9 @@
 import { Request, Response } from 'express';
-import { transactionAuditService } from '../../../services/transaction-audit.service';
+import { energyAuditRecorder } from '../../../services/energy-audit-recorder.service';
 import { apiUtils } from '../../../shared/utils';
 import { logger } from '../../../config';
 import { AuthenticatedAdminRequest } from '../../../middleware/admin-auth.middleware';
-import { ValidationException, NotFoundException } from '../../../shared/exceptions';
+import { ValidationException } from '../../../shared/exceptions';
 
 export class TransactionAuditController {
   /**
@@ -12,22 +12,13 @@ export class TransactionAuditController {
    *   get:
    *     tags:
    *       - Admin - Transaction Audit
-   *     summary: List all audit reports
-   *     description: Get audit reports for all addresses with pagination
+   *     summary: List all addresses with audit summaries
+   *     description: Get pre-computed audit summaries from database (no TronScan API calls)
    *     security:
    *       - bearerAuth: []
-   *     parameters:
-   *       - in: query
-   *         name: limit
-   *         schema:
-   *           type: integer
-   *           minimum: 1
-   *           maximum: 100
-   *           default: 20
-   *         description: Maximum number of addresses to audit
    *     responses:
    *       200:
-   *         description: Batch audit completed successfully
+   *         description: Address summaries retrieved successfully
    *       401:
    *         description: Unauthorized
    *       403:
@@ -40,18 +31,29 @@ export class TransactionAuditController {
         throw new ValidationException('Admin not authenticated');
       }
 
-      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
-
-      logger.info('[TransactionAuditController] Starting batch audit', {
-        adminId: adminReq.admin.id,
-        limit
+      logger.info('[TransactionAuditController] Fetching audit summaries from database', {
+        adminId: adminReq.admin.id
       });
 
-      const batchResult = await transactionAuditService.auditAllAddresses(limit);
+      // Get all address summaries from database (NO TronScan API calls!)
+      const summaries = await energyAuditRecorder.getAllAddressSummaries();
+
+      // Calculate totals
+      const totalCycles = summaries.reduce((sum, s) => sum + s.totalCycles, 0);
+      const totalValidCycles = summaries.reduce((sum, s) => sum + s.validCycles, 0);
+      const totalSystemIssueCycles = summaries.reduce((sum, s) => sum + s.systemIssueCycles, 0);
+      const totalTransactionDecrease = summaries.reduce((sum, s) => sum + s.totalTransactionDecrease, 0);
 
       res.json(
-        apiUtils.success('Batch audit completed successfully', {
-          batchResult
+        apiUtils.success('Address summaries retrieved successfully', {
+          addresses: summaries,
+          summary: {
+            totalAddresses: summaries.length,
+            totalCycles,
+            totalValidCycles,
+            totalSystemIssueCycles,
+            totalTransactionDecrease
+          }
         })
       );
     } catch (error) {
@@ -71,8 +73,8 @@ export class TransactionAuditController {
    *   get:
    *     tags:
    *       - Admin - Transaction Audit
-   *     summary: Get single address audit
-   *     description: Get detailed audit report for a specific address
+   *     summary: Get address audit details
+   *     description: Get detailed audit history from database for a specific address
    *     security:
    *       - bearerAuth: []
    *     parameters:
@@ -81,10 +83,16 @@ export class TransactionAuditController {
    *         required: true
    *         schema:
    *           type: string
-   *         description: TRON address to audit
+   *         description: TRON address
+   *       - in: query
+   *         name: limit
+   *         schema:
+   *           type: integer
+   *           default: 50
+   *         description: Maximum number of audit entries to return
    *     responses:
    *       200:
-   *         description: Audit report generated successfully
+   *         description: Audit details retrieved successfully
    *       404:
    *         description: Address not found
    *       401:
@@ -100,21 +108,30 @@ export class TransactionAuditController {
       }
 
       const { address } = req.params;
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
 
       if (!address) {
         throw new ValidationException('Address is required');
       }
 
-      logger.info('[TransactionAuditController] Generating address audit', {
+      logger.info('[TransactionAuditController] Fetching address audit from database', {
         adminId: adminReq.admin.id,
-        address
+        address,
+        limit
       });
 
-      const report = await transactionAuditService.generateAddressAuditReport(address);
+      // Get summary
+      const summary = await energyAuditRecorder.getAddressSummary(address);
+
+      // Get detailed history
+      const history = await energyAuditRecorder.getAddressAuditHistory(address, limit);
 
       res.json(
-        apiUtils.success('Audit report generated successfully', {
-          report
+        apiUtils.success('Audit details retrieved successfully', {
+          address,
+          summary,
+          history,
+          totalEntries: history.length
         })
       );
     } catch (error) {
@@ -135,8 +152,8 @@ export class TransactionAuditController {
    *   get:
    *     tags:
    *       - Admin - Transaction Audit
-   *     summary: Get transaction patterns
-   *     description: Get detailed transaction patterns with timeline for an address
+   *     summary: Get transaction patterns for address
+   *     description: Get detailed delegation cycles from database
    *     security:
    *       - bearerAuth: []
    *     parameters:
@@ -169,26 +186,65 @@ export class TransactionAuditController {
         throw new ValidationException('Address is required');
       }
 
-      logger.info('[TransactionAuditController] Getting transaction patterns', {
+      logger.info('[TransactionAuditController] Fetching transaction patterns from database', {
         adminId: adminReq.admin.id,
         address
       });
 
-      const report = await transactionAuditService.generateAddressAuditReport(address);
+      // Get summary
+      const summary = await energyAuditRecorder.getAddressSummary(address);
+
+      // Get all audit entries for this address
+      const history = await energyAuditRecorder.getAddressAuditHistory(address, 200);
+
+      // Group by cycle ID to show reclaim/delegate pairs
+      const cycleMap = new Map<string, any[]>();
+
+      for (const entry of history) {
+        if (!cycleMap.has(entry.cycleId)) {
+          cycleMap.set(entry.cycleId, []);
+        }
+        cycleMap.get(entry.cycleId)!.push(entry);
+      }
+
+      // Convert to patterns
+      const patterns = Array.from(cycleMap.entries()).map(([cycleId, entries]) => {
+        const reclaim = entries.find(e => e.operationType === 'RECLAIM');
+        const delegate = entries.find(e => e.operationType === 'DELEGATE');
+
+        return {
+          cycleId,
+          timestamp: delegate?.timestamp || reclaim?.timestamp,
+          reclaim: reclaim ? {
+            txHash: reclaim.txHash,
+            energyBefore: reclaim.energyBefore,
+            energyAfter: reclaim.energyAfter,
+            reclaimedEnergy: reclaim.reclaimedEnergy,
+            reclaimedTrx: reclaim.reclaimedTrx?.toString()
+          } : null,
+          delegate: delegate ? {
+            txHash: delegate.txHash,
+            energyBefore: delegate.energyBefore,
+            energyAfter: delegate.energyAfter,
+            delegatedEnergy: delegate.delegatedEnergy,
+            delegatedTrx: delegate.delegatedTrx?.toString(),
+            pendingTransactionsBefore: delegate.pendingTransactionsBefore,
+            pendingTransactionsAfter: delegate.pendingTransactionsAfter,
+            transactionDecrease: delegate.transactionDecrease,
+            hasActualTransaction: delegate.hasActualTransaction,
+            isSystemIssue: delegate.isSystemIssue,
+            issueType: delegate.issueType,
+            relatedUsdtTxHash: delegate.relatedUsdtTxHash
+          } : null
+        };
+      });
 
       res.json(
         apiUtils.success('Transaction patterns retrieved successfully', {
-          patterns: report.patterns,
-          allTransactions: report.allTransactions,
-          summary: {
-            totalPurchased: report.totalPurchased,
-            totalActualTransfers: report.totalActualTransfers,
-            validCycles: report.validCycles,
-            systemIssueCycles: report.systemIssueCycles,
-            currentDbValue: report.currentDbValue,
-            correctValue: report.correctValue,
-            discrepancy: report.discrepancy
-          }
+          address,
+          summary,
+          patterns,
+          totalCycles: patterns.length
         })
       );
     } catch (error) {
@@ -196,176 +252,6 @@ export class TransactionAuditController {
         logger.error('[TransactionAuditController] Get transaction patterns failed', {
           error: error.message,
           address: req.params.address,
-          adminId: (req as AuthenticatedAdminRequest).admin?.id,
-        });
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * @swagger
-   * /admin/audit/apply/{address}:
-   *   post:
-   *     tags:
-   *       - Admin - Transaction Audit
-   *     summary: Apply single correction
-   *     description: Apply ledger correction for a specific address
-   *     security:
-   *       - bearerAuth: []
-   *     parameters:
-   *       - in: path
-   *         name: address
-   *         required: true
-   *         schema:
-   *           type: string
-   *         description: TRON address
-   *     requestBody:
-   *       required: false
-   *       content:
-   *         application/json:
-   *           schema:
-   *             type: object
-   *             properties:
-   *               dryRun:
-   *                 type: boolean
-   *                 default: false
-   *                 description: If true, only simulate the correction without applying
-   *     responses:
-   *       200:
-   *         description: Correction applied successfully
-   *       400:
-   *         description: Invalid request
-   *       404:
-   *         description: Address not found
-   *       401:
-   *         description: Unauthorized
-   *       403:
-   *         description: Insufficient permissions
-   */
-  async applySingleCorrection(req: Request, res: Response): Promise<void> {
-    try {
-      const adminReq = req as AuthenticatedAdminRequest;
-      if (!adminReq.admin) {
-        throw new ValidationException('Admin not authenticated');
-      }
-
-      const { address } = req.params;
-      const { dryRun = false } = req.body;
-
-      if (!address) {
-        throw new ValidationException('Address is required');
-      }
-
-      logger.info('[TransactionAuditController] Applying single correction', {
-        adminId: adminReq.admin.id,
-        address,
-        dryRun
-      });
-
-      // Generate correction plan
-      const plan = await transactionAuditService.generateCorrectionPlan(address);
-
-      // Apply correction
-      const result = await transactionAuditService.applyCorrectionPlan(plan, dryRun);
-
-      res.json(
-        apiUtils.success(
-          dryRun ? 'Correction simulated successfully' : 'Correction applied successfully',
-          {
-            plan,
-            result
-          }
-        )
-      );
-    } catch (error) {
-      if (error instanceof Error) {
-        logger.error('[TransactionAuditController] Apply single correction failed', {
-          error: error.message,
-          address: req.params.address,
-          adminId: (req as AuthenticatedAdminRequest).admin?.id,
-        });
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * @swagger
-   * /admin/audit/apply-batch:
-   *   post:
-   *     tags:
-   *       - Admin - Transaction Audit
-   *     summary: Apply batch corrections
-   *     description: Apply ledger corrections for all addresses with discrepancies
-   *     security:
-   *       - bearerAuth: []
-   *     requestBody:
-   *       required: false
-   *       content:
-   *         application/json:
-   *           schema:
-   *             type: object
-   *             properties:
-   *               dryRun:
-   *                 type: boolean
-   *                 default: true
-   *                 description: If true, only simulate corrections without applying
-   *               limit:
-   *                 type: integer
-   *                 minimum: 1
-   *                 maximum: 100
-   *                 description: Maximum number of addresses to process
-   *     responses:
-   *       200:
-   *         description: Batch corrections completed
-   *       400:
-   *         description: Invalid request
-   *       401:
-   *         description: Unauthorized
-   *       403:
-   *         description: Insufficient permissions
-   */
-  async applyBatchCorrections(req: Request, res: Response): Promise<void> {
-    try {
-      const adminReq = req as AuthenticatedAdminRequest;
-      if (!adminReq.admin) {
-        throw new ValidationException('Admin not authenticated');
-      }
-
-      const { dryRun = true, limit } = req.body;
-
-      logger.info('[TransactionAuditController] Applying batch corrections', {
-        adminId: adminReq.admin.id,
-        dryRun,
-        limit
-      });
-
-      // First, run batch audit
-      const batchResult = await transactionAuditService.auditAllAddresses(limit);
-
-      // Apply corrections
-      const result = await transactionAuditService.applyBatchCorrections(batchResult, dryRun);
-
-      res.json(
-        apiUtils.success(
-          dryRun ? 'Batch corrections simulated successfully' : 'Batch corrections applied successfully',
-          {
-            batchResult: {
-              totalAddresses: batchResult.totalAddresses,
-              addressesWithIssues: batchResult.addressesWithIssues,
-              addressesCorrect: batchResult.addressesCorrect,
-              totalDiscrepancy: batchResult.totalDiscrepancy,
-              summary: batchResult.summary
-            },
-            corrections: result
-          }
-        )
-      );
-    } catch (error) {
-      if (error instanceof Error) {
-        logger.error('[TransactionAuditController] Apply batch corrections failed', {
-          error: error.message,
           adminId: (req as AuthenticatedAdminRequest).admin?.id,
         });
       }
