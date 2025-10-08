@@ -92,6 +92,10 @@ const envSchema = z.object({
 
   // Address Pool Configuration
   ADDRESS_COOLDOWN_HOURS: z.string().transform(Number).default('1'),
+
+  // Telegram Bot Configuration
+  TELEGRAM_BOT_TOKEN: z.string().optional(),
+  TELEGRAM_BOT_USERNAME: z.string().optional(),
 });
 
 const env = envSchema.parse(process.env);
@@ -166,6 +170,10 @@ export const config = {
   },
   addressPool: {
     cooldownHours: env.ADDRESS_COOLDOWN_HOURS,
+  },
+  telegram: {
+    botToken: env.TELEGRAM_BOT_TOKEN,
+    botUsername: env.TELEGRAM_BOT_USERNAME,
   },
 } as const;
 

@@ -25,7 +25,11 @@
       "Bash(npx ts-node:*)",
       "Read(//Users/duks/sl-repos/vatsal/energy-broker-admin/**)",
       "Read(//Users/duks/sl-repos/vatsal/energy-broker-admin/src/**)",
-      "Bash(NODE_ENV=production npx ts-node scripts/audit-and-fix-ledger.ts --verbose)"
+      "Bash(NODE_ENV=production npx ts-node scripts/audit-and-fix-ledger.ts --verbose)",
+      "Bash(lsof:*)",
+      "Bash(NODE_ENV=production npx ts-node scripts/backfill-audit-data.ts --limit 3 --verbose)",
+      "Bash(NODE_ENV=production npx ts-node scripts/backfill-audit-data.ts --limit 1 --verbose)",
+      "Bash(NODE_ENV=production npx ts-node scripts/backfill-audit-data.ts)"
     ],
     "deny": [],
     "ask": [],

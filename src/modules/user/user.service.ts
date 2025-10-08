@@ -596,6 +596,15 @@ private formatUserResponse(user: any): UserResponse {
       credits: user.credits?.toString() || '0',
       isActive: user.isActive || false,
       hasPassword: !!user.passwordHash,
+      // Telegram fields
+      telegramId: user.telegramId ? user.telegramId.toString() : undefined,
+      telegramUsername: user.telegramUsername || undefined,
+      telegramFirstName: user.telegramFirstName || undefined,
+      telegramLastName: user.telegramLastName || undefined,
+      telegramLanguageCode: user.telegramLanguageCode || undefined,
+      telegramLinkedAt: user.telegramLinkedAt || undefined,
+      authSource: user.authSource || 'email',
+      lastLoginMethod: user.lastLoginMethod || undefined,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };
@@ -880,5 +889,137 @@ private formatUserResponse(user: any): UserResponse {
         totalPages: Math.ceil(depositsData.total / limit),
       },
     };
+  }
+
+  // ===== Telegram Authentication Methods =====
+
+  /**
+   * Find user by Telegram ID
+   */
+  async findByTelegramId(telegramId: bigint) {
+    return await this.userRepository.findByTelegramId(telegramId);
+  }
+
+  /**
+   * Create new user from Telegram data (auto-signup via bot)
+   * Generates a random email and phone number for users who sign up via Telegram
+   */
+  async createFromTelegram(telegramData: {
+    telegramId: bigint;
+    telegramUsername?: string;
+    telegramFirstName: string;
+    telegramLastName?: string;
+    telegramLanguageCode: string;
+  }): Promise<UserWithRelations> {
+    // Generate a unique email based on Telegram ID
+    const email = `telegram_${telegramData.telegramId}@gassaver.in`;
+
+    // Generate a unique phone number placeholder (using Telegram ID)
+    // Format: +999 followed by Telegram ID (padded to 11 digits)
+    const phoneNumber = `+999${String(telegramData.telegramId).padStart(11, '0')}`;
+
+    // Create user with Telegram data
+    const user = await this.userRepository.create({
+      email,
+      phoneNumber,
+      passwordHash: null, // No password for Telegram-only users
+      telegramId: telegramData.telegramId,
+      telegramUsername: telegramData.telegramUsername,
+      telegramFirstName: telegramData.telegramFirstName,
+      telegramLastName: telegramData.telegramLastName,
+      telegramLanguageCode: telegramData.telegramLanguageCode || 'en',
+      telegramLinkedAt: new Date(),
+      authSource: 'telegram',
+      lastLoginMethod: 'telegram_bot',
+      isEmailVerified: false, // Telegram users don't have real email initially
+      isPhoneVerified: false, // Telegram users don't have real phone initially
+    });
+
+    logger.info('Created new user from Telegram', {
+      userId: user.id,
+      telegramId: String(telegramData.telegramId),
+      username: telegramData.telegramUsername,
+    });
+
+    return user;
+  }
+
+  /**
+   * Link Telegram account to existing user
+   */
+  async linkTelegramToUser(
+    userId: string,
+    telegramData: {
+      telegramId: bigint;
+      telegramUsername?: string;
+      telegramFirstName: string;
+      telegramLastName?: string;
+      telegramLanguageCode: string;
+    }
+  ): Promise<UserWithRelations> {
+    // Check if Telegram ID is already linked to another user
+    const existingTelegramUser = await this.userRepository.findByTelegramId(
+      telegramData.telegramId
+    );
+
+    if (existingTelegramUser && existingTelegramUser.id !== userId) {
+      throw new ConflictException('This Telegram account is already linked to another user');
+    }
+
+    // Get current user
+    const user = await this.userRepository.findById(userId);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Determine new auth source
+    const hasEmail = !!user.email && !user.email.startsWith('telegram_');
+    const hasPhone = !!user.phoneNumber && !user.phoneNumber.startsWith('+999');
+    const hasTelegram = true; // We're linking it now
+
+    let authSource = 'telegram';
+    if (hasEmail && hasPhone && hasTelegram) {
+      authSource = 'all';
+    } else if (hasEmail && hasTelegram) {
+      authSource = 'email_telegram';
+    }
+
+    // Update user with Telegram data
+    const updatedUser = await this.userRepository.update(userId, {
+      telegramId: telegramData.telegramId,
+      telegramUsername: telegramData.telegramUsername,
+      telegramFirstName: telegramData.telegramFirstName,
+      telegramLastName: telegramData.telegramLastName,
+      telegramLanguageCode: telegramData.telegramLanguageCode || 'en',
+      telegramLinkedAt: new Date(),
+      authSource,
+    });
+
+    logger.info('Linked Telegram account to user', {
+      userId,
+      telegramId: String(telegramData.telegramId),
+      username: telegramData.telegramUsername,
+      authSource,
+    });
+
+    return updatedUser;
+  }
+
+  /**
+   * Update last login method for analytics
+   */
+  async updateLastLoginMethod(userId: string, method: string): Promise<void> {
+    try {
+      await this.userRepository.update(userId, {
+        lastLoginMethod: method,
+      });
+    } catch (error) {
+      // Non-critical, just log
+      logger.warn('Failed to update last login method', {
+        userId,
+        method,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
   }
 }

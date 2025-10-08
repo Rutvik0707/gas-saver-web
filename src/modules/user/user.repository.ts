@@ -8,25 +8,45 @@ interface CreateUserData extends Omit<CreateUserDto, 'password'> {
 }
 
 export class UserRepository {
-  async create(userData: CreateUserDto & { 
-    passwordHash: string, 
-    verificationToken?: string, 
-    verificationTokenExpiry?: Date, 
-    otpCode?: string, 
-    otpExpiry?: Date 
+  async create(userData: CreateUserDto & {
+    passwordHash?: string | null,
+    verificationToken?: string,
+    verificationTokenExpiry?: Date,
+    otpCode?: string,
+    otpExpiry?: Date,
+    // Telegram fields
+    telegramId?: bigint,
+    telegramUsername?: string,
+    telegramFirstName?: string,
+    telegramLastName?: string,
+    telegramLanguageCode?: string,
+    telegramLinkedAt?: Date,
+    authSource?: string,
+    lastLoginMethod?: string,
+    isEmailVerified?: boolean,
+    isPhoneVerified?: boolean,
   }): Promise<User> {
     const { password, ...data } = userData as any;
     return prisma.user.create({
       data: {
         email: data.email.toLowerCase(),
         phoneNumber: data.phoneNumber,
-        passwordHash: data.passwordHash,
+        passwordHash: data.passwordHash || null,
         verificationToken: data.verificationToken,
         verificationTokenExpiry: data.verificationTokenExpiry,
         otpCode: data.otpCode,
         otpExpiry: data.otpExpiry,
-        isEmailVerified: false,
-        isPhoneVerified: false,
+        isEmailVerified: data.isEmailVerified ?? false,
+        isPhoneVerified: data.isPhoneVerified ?? false,
+        // Telegram fields
+        telegramId: data.telegramId,
+        telegramUsername: data.telegramUsername,
+        telegramFirstName: data.telegramFirstName,
+        telegramLastName: data.telegramLastName,
+        telegramLanguageCode: data.telegramLanguageCode,
+        telegramLinkedAt: data.telegramLinkedAt,
+        authSource: data.authSource || 'email',
+        lastLoginMethod: data.lastLoginMethod,
       },
     });
   }
@@ -106,7 +126,16 @@ async findByPhoneNumber(phoneNumber: string): Promise<User | null> {
     });
   }
 
-  async update(id: string, userData: UpdateUserDto): Promise<User> {
+  async update(id: string, userData: UpdateUserDto & {
+    telegramId?: bigint,
+    telegramUsername?: string,
+    telegramFirstName?: string,
+    telegramLastName?: string,
+    telegramLanguageCode?: string,
+    telegramLinkedAt?: Date,
+    authSource?: string,
+    lastLoginMethod?: string,
+  }): Promise<User> {
     return prisma.user.update({
       where: { id },
       data: userData,
@@ -397,6 +426,14 @@ async setVerificationToken(id: string, token: string, expiry: Date): Promise<Use
         resetToken: null, // Clear reset token after password change
         resetTokenExpiry: null,
       },
+    });
+  }
+
+  // ===== Telegram Authentication Methods =====
+
+  async findByTelegramId(telegramId: bigint): Promise<User | null> {
+    return prisma.user.findUnique({
+      where: { telegramId },
     });
   }
 }

@@ -22,6 +22,15 @@ model User {
   verificationTokenExpiry DateTime?             @map("verification_token_expiry")
   resetToken              String?               @map("reset_token")
   resetTokenExpiry        DateTime?             @map("reset_token_expiry")
+  // Telegram authentication fields
+  telegramId              BigInt?               @unique @map("telegram_id")
+  telegramUsername        String?               @map("telegram_username")
+  telegramFirstName       String?               @map("telegram_first_name")
+  telegramLastName        String?               @map("telegram_last_name")
+  telegramLanguageCode    String?               @default("en") @map("telegram_language_code")
+  telegramLinkedAt        DateTime?             @map("telegram_linked_at")
+  authSource              String                @default("email") @map("auth_source")
+  lastLoginMethod         String?               @map("last_login_method")
   createdAt               DateTime              @default(now()) @map("created_at")
   updatedAt               DateTime              @updatedAt @map("updated_at")
   feedbacks               Feedback[]
@@ -33,6 +42,7 @@ model User {
   energyStates            UserEnergyState[]
   tronAddresses           UserTronAddress[]
 
+  @@index([telegramId])
   @@map("users")
 }
 

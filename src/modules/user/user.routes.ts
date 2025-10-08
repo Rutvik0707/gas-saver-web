@@ -2,14 +2,18 @@ import { Router } from 'express';
 import { UserController } from './user.controller';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { authRateLimiter, authenticatedRateLimiter } from '../../config/rate-limiters';
+import telegramAuthRoutes from './telegram-auth.routes';
 
 export function createUserRoutes(userController: UserController): Router {
   const router = Router();
 
+  // Telegram authentication routes (public)
+  router.use('/auth/telegram', telegramAuthRoutes);
+
   // Public routes - Registration flow
   router.post('/register', authRateLimiter, userController.register.bind(userController));
   router.post('/verify-registration-otp', authRateLimiter, userController.verifyRegistrationOtp.bind(userController));
-  
+
   // Public routes - Login
   router.post('/login', authRateLimiter, userController.login.bind(userController));
   // Commented out - OTP-based login not required, only password-based login is needed

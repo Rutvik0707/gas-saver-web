@@ -106,6 +106,15 @@ export interface UserResponse {
   credits: string;
   isActive: boolean;
   hasPassword: boolean; // Indicates if password is set
+  // Telegram fields
+  telegramId?: string;
+  telegramUsername?: string;
+  telegramFirstName?: string;
+  telegramLastName?: string;
+  telegramLanguageCode?: string;
+  telegramLinkedAt?: Date;
+  authSource: string;
+  lastLoginMethod?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -174,4 +183,61 @@ export interface UserDashboardResponse {
     total: number;
     totalPages: number;
   };
+}
+
+// ===== Telegram Authentication Types =====
+
+/**
+ * Telegram InitData from bot API calls
+ * Sent via X-Telegram-Init-Data header
+ */
+export interface TelegramInitDataDto {
+  id: number;
+  first_name: string;
+  last_name?: string;
+  username?: string;
+  language_code?: string;
+  auth_date: number;
+  hash: string;
+}
+
+/**
+ * Telegram Widget callback data (from website login button)
+ */
+export interface TelegramWidgetDataDto {
+  id: string;
+  first_name: string;
+  last_name?: string;
+  username?: string;
+  photo_url?: string;
+  auth_date: string;
+  hash: string;
+}
+
+/**
+ * Request body for linking Telegram account to existing user
+ */
+export const linkTelegramSchema = z.object({
+  telegramData: z.object({
+    id: z.number(),
+    first_name: z.string(),
+    last_name: z.string().optional(),
+    username: z.string().optional(),
+    language_code: z.string().optional(),
+    auth_date: z.number(),
+    hash: z.string(),
+  }),
+});
+
+export type LinkTelegramDto = z.infer<typeof linkTelegramSchema>;
+
+/**
+ * Telegram user info for database operations
+ */
+export interface TelegramUserInfo {
+  telegramId: bigint;
+  telegramUsername?: string;
+  telegramFirstName: string;
+  telegramLastName?: string;
+  telegramLanguageCode: string;
 }
