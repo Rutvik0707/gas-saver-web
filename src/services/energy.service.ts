@@ -313,14 +313,38 @@ export class EnergyService {
       let roundingBuffer: number; // Declare here for proper scope
 
       if (isSimplifiedMonitor) {
-        // For simplified monitor, use exact calculation without any buffers
-        roundingBuffer = 0; // No buffer for monitor
-        delegationTrxAmount = trxAmount; // Exact amount, no rounding buffer
-        logger.info('[EnergyService] Simplified monitor exact delegation - no buffers', {
+        // For simplified monitor, calculate TRX needed and round UP to guarantee minimum energy
+        // This ensures we NEVER under-delegate and cause reclaim loops
+        const minTrxNeeded = Math.ceil((energyAmount / energyPerTrx) * 1000) / 1000; // Round up to 3 decimals
+        delegationTrxAmount = minTrxNeeded;
+        roundingBuffer = 0; // No additional buffer needed - already rounded up
+
+        // CRITICAL VALIDATION: Verify we'll get at least the requested energy
+        const expectedEnergy = Math.floor(delegationTrxAmount * energyPerTrx);
+
+        if (expectedEnergy < energyAmount) {
+          logger.error('[EnergyService] Cannot guarantee minimum energy - ABORTING delegation', {
+            requestedEnergy: energyAmount,
+            energyPerTrx,
+            calculatedTrx: delegationTrxAmount,
+            expectedEnergy,
+            shortfall: energyAmount - expectedEnergy,
+            reason: 'Delegation would result in insufficient energy, causing reclaim loop'
+          });
+          throw new Error(
+            `Cannot guarantee ${energyAmount} energy. Would only get ${expectedEnergy} (shortfall: ${energyAmount - expectedEnergy}). ` +
+            `ABORTING delegation to prevent TRX/bandwidth waste.`
+          );
+        }
+
+        logger.info('[EnergyService] Simplified monitor delegation - validated minimum guarantee', {
           requestedEnergy: energyAmount,
           energyPerTrx,
           exactTrxAmount: trxAmount,
-          expectedEnergy: Math.floor(trxAmount * energyPerTrx)
+          roundedUpTrxAmount: delegationTrxAmount,
+          expectedEnergy,
+          surplus: expectedEnergy - energyAmount,
+          validation: '✅ GUARANTEED MINIMUM MET'
         });
       } else {
         // For normal delegations, add small buffer for safety
