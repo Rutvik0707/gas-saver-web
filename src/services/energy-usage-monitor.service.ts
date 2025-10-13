@@ -332,13 +332,27 @@ export class EnergyUsageMonitorService {
         } else {
           while (cumulative >= this.ENERGY_UNIT && transactionsRemaining > 0) {
             cumulative -= this.ENERGY_UNIT;
-            transactionsRemaining -= 1;
-            chargeEvents++;
+
+            // Check current energy level to determine transaction cost
+            // If currentEnergy < 65k, deduct 2 transactions (insufficient energy for one transaction)
+            // Otherwise, deduct 1 transaction (sufficient energy)
+            const transactionCost = this.calculateTransactionCost(currentEnergy);
+            const actualDeduction = Math.min(transactionCost, transactionsRemaining); // Don't go below 0
+
+            transactionsRemaining -= actualDeduction;
+            chargeEvents += actualDeduction;
+
             logger.info('[EnergyMonitor] Decrementing transaction', {
               address: state.tronAddress,
               chargeEvent: chargeEvents,
+              currentEnergy,
+              transactionCost,
+              actualDeduction,
               transactionsRemaining,
-              cumulativeRemaining: cumulative
+              cumulativeRemaining: cumulative,
+              reason: currentEnergy < this.ENERGY_UNIT ?
+                `Low energy (${currentEnergy} < ${this.ENERGY_UNIT}) - charged ${transactionCost} transactions` :
+                'Normal energy level - charged 1 transaction'
             });
           }
         }
