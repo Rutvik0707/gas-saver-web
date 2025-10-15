@@ -485,8 +485,8 @@ export class SimplifiedEnergyMonitor {
               }
             });
 
-            // Pending transactions after delegation (should be the same as before)
-            const pendingTransactionsAfter = transactionsRemaining;
+            // Pending transactions after delegation - get actual value from database after update
+            const pendingTransactionsAfter = updatedState.transactionsRemaining;
 
             // Check for recent USDT transactions
             const recentUsdtTx = await energyAuditRecorder.getLatestUsdtTransaction(address);
