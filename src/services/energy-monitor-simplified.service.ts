@@ -18,6 +18,7 @@ export class SimplifiedEnergyMonitor {
   private readonly API_DELAY_MS = 1500;    // 1.5s between API calls to avoid rate limiting
   private readonly DELEGATION_AMOUNT = 132000;  // Fixed delegation amount
   private readonly COOLDOWN_MINUTES = 5;  // 5-minute cooldown between delegations
+  private readonly INACTIVITY_PENALTY_HOURS = 24;  // Apply penalty after 24 hours of inactivity
   private isRunning = false;
   private energyThresholds: {
     oneTransactionThreshold: number;
@@ -109,6 +110,85 @@ export class SimplifiedEnergyMonitor {
     return this.energyThresholds;
   }
 
+  /**
+   * Check and apply 24-hour inactivity penalty
+   * Reduces transaction count by 1 if user hasn't received energy in 24+ hours
+   */
+  private async applyInactivityPenalty(
+    tronAddress: string,
+    userId: string | null,
+    energyState: any
+  ): Promise<boolean> {
+    try {
+      const now = new Date();
+      const lastDelegation = energyState.lastDelegationTime;
+
+      // Skip if no delegation time recorded or no transactions remaining
+      if (!lastDelegation || energyState.transactionsRemaining <= 0) {
+        return false;
+      }
+
+      // Calculate hours since last delegation
+      const hoursInactive = (now.getTime() - new Date(lastDelegation).getTime()) / 3600000;
+
+      // Check if 24 hours have passed
+      if (hoursInactive >= this.INACTIVITY_PENALTY_HOURS) {
+        logger.info('[SimplifiedEnergyMonitor] Inactivity detected - applying penalty', {
+          address: tronAddress,
+          hoursInactive: hoursInactive.toFixed(2),
+          lastDelegationTime: lastDelegation,
+          currentTransactions: energyState.transactionsRemaining
+        });
+
+        // Decrement transaction count by 1
+        const newTransactionCount = Math.max(0, energyState.transactionsRemaining - 1);
+
+        // Update user energy state
+        await prisma.userEnergyState.update({
+          where: { tronAddress },
+          data: {
+            transactionsRemaining: newTransactionCount,
+            lastPenaltyTime: now,
+            inactivityPenalties: { increment: 1 },
+            lastAction: 'PENALTY_24H',
+            lastActionAt: now,
+            updatedAt: now
+          }
+        });
+
+        // Log to EnergyAllocationLog
+        await prisma.energyAllocationLog.create({
+          data: {
+            userId,
+            tronAddress,
+            action: 'PENALTY_24H',
+            reason: `24h inactivity penalty - ${hoursInactive.toFixed(2)} hours since last delegation`,
+            transactionsRemainingAfter: newTransactionCount,
+            createdAt: now
+          }
+        });
+
+        logger.info('[SimplifiedEnergyMonitor] Inactivity penalty applied', {
+          address: tronAddress,
+          hoursInactive: hoursInactive.toFixed(2),
+          transactionsBefore: energyState.transactionsRemaining,
+          transactionsAfter: newTransactionCount,
+          totalPenalties: energyState.inactivityPenalties + 1
+        });
+
+        return true; // Penalty was applied
+      }
+
+      return false; // No penalty applied
+    } catch (error) {
+      logger.error('[SimplifiedEnergyMonitor] Failed to apply inactivity penalty', {
+        address: tronAddress,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      return false;
+    }
+  }
+
   async runCycle(): Promise<void> {
     // Prevent concurrent execution
     if (this.isRunning) {
@@ -155,7 +235,8 @@ export class SimplifiedEnergyMonitor {
       
       // Step 1: Initialize array for addresses needing adjustment
       const reclaimDelegateAddresses = new Set<string>();
-      
+      const inactivityPenaltyAddresses = new Set<string>(); // Track addresses with inactivity penalties
+
       // Step 2: Get all ACTIVE addresses with transactions > 0
       const activeStates = await prisma.userEnergyState.findMany({
         where: {
@@ -190,10 +271,35 @@ export class SimplifiedEnergyMonitor {
           // Check cooldown period (5 minutes)
           const cooldownTime = new Date(Date.now() - this.COOLDOWN_MINUTES * 60 * 1000);
 
-          // Find the energy state to check last action time
+          // Find the energy state to check last action time and inactivity
           const energyState = await prisma.userEnergyState.findUnique({
             where: { tronAddress: state.tronAddress }
           });
+
+          if (!energyState) {
+            logger.warn('[SimplifiedEnergyMonitor] Energy state not found', {
+              address: state.tronAddress
+            });
+            continue;
+          }
+
+          // Check for 24-hour inactivity and apply penalty if needed
+          const penaltyApplied = await this.applyInactivityPenalty(
+            state.tronAddress,
+            state.userId,
+            energyState
+          );
+
+          // If penalty was applied, force reclaim/delegate cycle for this address
+          if (penaltyApplied) {
+            logger.info('[SimplifiedEnergyMonitor] Forcing reclaim/delegate due to inactivity penalty', {
+              address: state.tronAddress,
+              transactionsRemaining: energyState.transactionsRemaining - 1 // Already decremented in penalty
+            });
+            reclaimDelegateAddresses.add(state.tronAddress);
+            inactivityPenaltyAddresses.add(state.tronAddress); // Track penalty was applied
+            continue; // Skip to next address - this one will be processed in reclaim/delegate phase
+          }
 
           if (energyState?.lastActionAt && energyState.lastActionAt > cooldownTime) {
             logger.info('[SimplifiedEnergyMonitor] Skipping address - in cooldown period', {
@@ -488,6 +594,9 @@ export class SimplifiedEnergyMonitor {
             // Pending transactions after delegation - get actual value from database after update
             const pendingTransactionsAfter = updatedState.transactionsRemaining;
 
+            // Check if this address had an inactivity penalty applied
+            const penaltyWasApplied = inactivityPenaltyAddresses.has(address);
+
             // Check for recent USDT transactions
             const recentUsdtTx = await energyAuditRecorder.getLatestUsdtTransaction(address);
 
@@ -497,6 +606,14 @@ export class SimplifiedEnergyMonitor {
               pendingTransactionsAfter,
               relatedUsdtTxHash: recentUsdtTx
             });
+
+            // If penalty was applied, override issue type
+            let finalIssueType = cycleAnalysis.issueType;
+            let finalIsSystemIssue = cycleAnalysis.isSystemIssue;
+            if (penaltyWasApplied) {
+              finalIssueType = 'INACTIVITY_PENALTY_APPLIED';
+              finalIsSystemIssue = false; // This is not a system issue, it's intentional
+            }
 
             // Record DELEGATE audit entry
             await energyAuditRecorder.recordDelegate({
@@ -514,11 +631,13 @@ export class SimplifiedEnergyMonitor {
               transactionDecrease: cycleAnalysis.transactionDecrease,
               relatedUsdtTxHash: recentUsdtTx || undefined,
               hasActualTransaction: cycleAnalysis.hasActualTransaction,
-              isSystemIssue: cycleAnalysis.isSystemIssue,
-              issueType: cycleAnalysis.issueType,
+              isSystemIssue: finalIsSystemIssue,
+              issueType: finalIssueType,
               metadata: {
                 energyLevel: this.DELEGATION_AMOUNT,
-                source: 'simplified_energy_monitor'
+                source: 'simplified_energy_monitor',
+                penaltyApplied: penaltyWasApplied,
+                reason: penaltyWasApplied ? '24h inactivity penalty - transaction count reduced' : undefined
               }
             });
 
