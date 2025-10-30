@@ -133,35 +133,52 @@ export class TransactionPackagesService {
     try {
       const pkg = await transactionPackagesRepository.findByTransactionCount(numberOfTxs);
 
-      // If not found in database, check default packages
-      if (!pkg) {
-        const defaultPackages = this.getDefaultPackages();
-        const defaultPkg = defaultPackages.find(p => p.numberOfTxs === numberOfTxs && p.isActive);
-
-        if (defaultPkg) {
-          logger.info('Using default package for transaction count', {
-            numberOfTxs,
-            found: true
-          });
-          return defaultPkg;
-        }
+      // If found in database, use it (preferred)
+      if (pkg) {
+        logger.info('✅ Fetched package from DATABASE', {
+          numberOfTxs,
+          packageId: pkg.id,
+          usdtCost: pkg.usdtCost
+        });
+        return pkg;
       }
 
-      logger.info('Fetched package by transaction count', {
-        numberOfTxs,
-        found: !!pkg
+      // If not found in database, check default packages (FALLBACK)
+      const defaultPackages = this.getDefaultPackages();
+      const defaultPkg = defaultPackages.find(p => p.numberOfTxs === numberOfTxs && p.isActive);
+
+      if (defaultPkg) {
+        logger.warn('⚠️ Using HARDCODED default package - DB package not found!', {
+          numberOfTxs,
+          usdtCost: defaultPkg.usdtCost,
+          message: 'Database package should exist. Please seed transaction_packages table.'
+        });
+        return defaultPkg;
+      }
+
+      // Package not found in DB or defaults
+      logger.warn('❌ Package not found in database or defaults', {
+        numberOfTxs
       });
 
-      return pkg;
+      return null;
     } catch (error) {
       logger.error('Failed to fetch package by transaction count', {
         numberOfTxs,
         error
       });
 
-      // Try to return from default packages on error
+      // Try to return from default packages on error (FALLBACK)
       const defaultPackages = this.getDefaultPackages();
       const defaultPkg = defaultPackages.find(p => p.numberOfTxs === numberOfTxs && p.isActive);
+
+      if (defaultPkg) {
+        logger.warn('⚠️ Using HARDCODED default package due to DB error', {
+          numberOfTxs,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+
       return defaultPkg || null;
     }
   }

@@ -422,7 +422,25 @@ export class PricingService {
     timestamp: Date;
   }> {
     try {
-      // Hardcoded package prices as per requirement
+      // PRIORITY 1: Try to get package from database FIRST
+      const transactionPackage = await transactionPackagesService.getPackageByTransactionCount(numberOfTransactions);
+
+      if (transactionPackage && transactionPackage.isActive) {
+        // Use the database-defined pricing (this is the correct source of truth)
+        logger.info('✅ Using DATABASE transaction package', {
+          numberOfTransactions,
+          packageId: transactionPackage.id,
+          usdtCost: transactionPackage.usdtCost
+        });
+
+        return {
+          numberOfTransactions,
+          costInUSDT: Number(transactionPackage.usdtCost),
+          timestamp: new Date()
+        };
+      }
+
+      // PRIORITY 2: Hardcoded package prices as FALLBACK (log warning)
       const hardcodedPackages: { [key: number]: number } = {
         50: 50,
         100: 100,
@@ -434,32 +452,15 @@ export class PricingService {
 
       // Check if this is a hardcoded package
       if (hardcodedPackages[numberOfTransactions]) {
-        logger.info('Using hardcoded transaction package', {
+        logger.warn('⚠️ Using HARDCODED transaction package - DB package not found!', {
           numberOfTransactions,
-          usdtCost: hardcodedPackages[numberOfTransactions]
+          usdtCost: hardcodedPackages[numberOfTransactions],
+          message: 'This should use database packages. Please check transaction_packages table.'
         });
 
         return {
           numberOfTransactions,
           costInUSDT: hardcodedPackages[numberOfTransactions],
-          timestamp: new Date()
-        };
-      }
-
-      // Step 1: Try to check database package (keeping for future fix)
-      const transactionPackage = await transactionPackagesService.getPackageByTransactionCount(numberOfTransactions);
-
-      if (transactionPackage && transactionPackage.isActive) {
-        // Use the database-defined pricing
-        logger.info('Using database-defined transaction package', {
-          numberOfTransactions,
-          packageId: transactionPackage.id,
-          usdtCost: transactionPackage.usdtCost
-        });
-
-        return {
-          numberOfTransactions,
-          costInUSDT: Number(transactionPackage.usdtCost),
           timestamp: new Date()
         };
       }

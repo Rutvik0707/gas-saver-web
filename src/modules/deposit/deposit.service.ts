@@ -28,11 +28,33 @@ export class DepositService {
    * Initiate a new deposit with unique address assignment
    */
   async initiateDeposit(
-    userId: string, 
+    userId: string,
     dto: InitiateDepositDto
   ): Promise<DepositInitiationResponse> {
     try {
       const { numberOfTransactions, tronAddress } = dto;
+
+      // Validate that numberOfTransactions matches a valid package
+      const { transactionPackagesService } = await import('../transaction-packages/transaction-packages.service');
+      const validPackage = await transactionPackagesService.getPackageByTransactionCount(numberOfTransactions);
+
+      if (!validPackage) {
+        logger.error('Invalid transaction package requested', {
+          userId,
+          numberOfTransactions,
+          validPackages: [50, 100, 200, 300, 400, 500]
+        });
+        throw new ValidationException(
+          `Invalid transaction count: ${numberOfTransactions}. Valid packages are: 50, 100, 200, 300, 400, or 500 transactions.`
+        );
+      }
+
+      logger.info('✅ Valid transaction package requested', {
+        userId,
+        numberOfTransactions,
+        packageId: validPackage.id,
+        usdtCost: validPackage.usdtCost
+      });
 
       // Determine the energy recipient address
       let energyRecipientAddress: string | undefined = tronAddress;
