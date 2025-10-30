@@ -152,7 +152,7 @@ export function parseTelegramInitData(headerValue: string): TelegramInitData | n
       first_name: initData.first_name,
       last_name: initData.last_name,
       username: initData.username,
-      language_code: initData.language_code || 'en',
+      language_code: initData.language_code, // Don't default - preserve exact value for signature validation
       auth_date: parseInt(initData.auth_date),
       hash: initData.hash,
     };
