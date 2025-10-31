@@ -23,7 +23,8 @@ export class TransactionUsageTracker {
   private readonly SYSTEM_WALLET = config.systemWallet.address;
   private readonly CHECK_INTERVAL_MS = 30000; // 30 seconds
   private isRunning = false;
-  private lastCheckTimestamp: Map<string, number> = new Map();
+  // Removed in-memory Map - now using database field lastTxCheckTimestamp
+  // This prevents double-counting transactions on server restart
 
   /**
    * Start monitoring transaction usage for all active addresses
@@ -76,7 +77,8 @@ export class TransactionUsageTracker {
           userId: true,
           tronAddress: true,
           transactionsRemaining: true,
-          lastUsageTime: true
+          lastUsageTime: true,
+          lastTxCheckTimestamp: true
         }
       });
 
@@ -113,10 +115,12 @@ export class TransactionUsageTracker {
    * Check a specific address for USDT transactions
    */
   private async checkAddressTransactions(state: any): Promise<void> {
-    const { tronAddress, userId, id } = state;
-    
-    // Get last check timestamp for this address
-    const lastCheck = this.lastCheckTimestamp.get(tronAddress) || 0;
+    const { tronAddress, userId, id, lastTxCheckTimestamp } = state;
+
+    // Get last check timestamp from database (persisted across server restarts)
+    // If never checked, use a recent timestamp (e.g., 1 hour ago) to avoid fetching ALL historical txs
+    const defaultStartTime = Date.now() - (60 * 60 * 1000); // 1 hour ago
+    const lastCheck = lastTxCheckTimestamp ? new Date(lastTxCheckTimestamp).getTime() : defaultStartTime;
     const now = Date.now();
 
     try {
@@ -177,11 +181,16 @@ export class TransactionUsageTracker {
         });
 
         // Decrement transaction count
-        await this.decrementTransactionCount(state, usdtTransfers.length);
+        await this.decrementTransactionCount(state, usdtTransfers.length, now);
       }
 
-      // Update last check timestamp
-      this.lastCheckTimestamp.set(tronAddress, now);
+      // Update last check timestamp in database (persisted across restarts)
+      await prisma.userEnergyState.update({
+        where: { id },
+        data: {
+          lastTxCheckTimestamp: new Date(now)
+        }
+      });
 
     } catch (error) {
       logger.error('[TransactionUsageTracker] Failed to fetch transactions', {
@@ -194,7 +203,7 @@ export class TransactionUsageTracker {
   /**
    * Decrement transaction count for a user after detecting USDT transfers
    */
-  private async decrementTransactionCount(state: any, usageCount: number): Promise<void> {
+  private async decrementTransactionCount(state: any, usageCount: number, checkTimestamp: number): Promise<void> {
     const { id, userId, tronAddress, transactionsRemaining } = state;
 
     // Calculate new transaction count
@@ -210,11 +219,14 @@ export class TransactionUsageTracker {
 
     try {
       // Update UserEnergyState
+      // IMPORTANT: Update lastDelegationTime to NOW when actual usage is detected
+      // This ensures SimplifiedEnergyMonitor knows the user is active and won't apply inactivity penalties
       await prisma.userEnergyState.update({
         where: { id },
         data: {
           transactionsRemaining: newCount,
           lastUsageTime: new Date(),
+          lastDelegationTime: new Date(), // CRITICAL: Reset delegation time on actual usage
           lastAction: 'TX_USAGE_DETECTED',
           lastActionAt: new Date(),
           updatedAt: new Date()

@@ -49,7 +49,9 @@
     "test-energy:dev": "cross-env NODE_ENV=development ts-node scripts/test-energy-calculations.ts",
     "test-energy:prod": "cross-env NODE_ENV=production ts-node scripts/test-energy-calculations.ts",
     "fix-penalty-bug": "ts-node scripts/fix-inactivity-penalty-bug.ts --dry-run",
-    "fix-penalty-bug:prod": "cross-env NODE_ENV=production ts-node scripts/fix-inactivity-penalty-bug.ts --dry-run"
+    "fix-penalty-bug:prod": "cross-env NODE_ENV=production ts-node scripts/fix-inactivity-penalty-bug.ts --dry-run",
+    "clean-slate": "ts-node scripts/restore-clean-slate.ts",
+    "clean-slate:prod": "cross-env NODE_ENV=production ts-node scripts/restore-clean-slate.ts"
   },
   "keywords": [
     "tron",

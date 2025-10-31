@@ -141,6 +141,7 @@ model UserEnergyState {
   lastObservedEnergy                Int                   @default(0)
   lastUsageTime                     DateTime?
   lastPenaltyTime                   DateTime?
+  lastTxCheckTimestamp              DateTime?             @map("last_tx_check_timestamp")
   inactivityHours                   Int                   @default(0)
   transactionsRemaining             Int                   @default(0)
   inactivityPenalties               Int                   @default(0)
