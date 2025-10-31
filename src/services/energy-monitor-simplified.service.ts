@@ -113,6 +113,9 @@ export class SimplifiedEnergyMonitor {
   /**
    * Check and apply 24-hour inactivity penalty
    * Reduces transaction count by 1 if user hasn't received energy in 24+ hours
+   *
+   * IMPORTANT: This should only apply penalty ONCE every 24 hours, not on every cycle!
+   * We must check BOTH lastDelegationTime AND lastPenaltyTime to prevent repeated penalties.
    */
   private async applyInactivityPenalty(
     tronAddress: string,
@@ -122,6 +125,7 @@ export class SimplifiedEnergyMonitor {
     try {
       const now = new Date();
       const lastDelegation = energyState.lastDelegationTime;
+      const lastPenalty = energyState.lastPenaltyTime;
 
       // Skip if no delegation time recorded or no transactions remaining
       if (!lastDelegation || energyState.transactionsRemaining <= 0) {
@@ -131,12 +135,23 @@ export class SimplifiedEnergyMonitor {
       // Calculate hours since last delegation
       const hoursInactive = (now.getTime() - new Date(lastDelegation).getTime()) / 3600000;
 
-      // Check if 24 hours have passed
-      if (hoursInactive >= this.INACTIVITY_PENALTY_HOURS) {
+      // Calculate hours since last penalty (if any)
+      const hoursSinceLastPenalty = lastPenalty
+        ? (now.getTime() - new Date(lastPenalty).getTime()) / 3600000
+        : Infinity; // If no penalty yet, allow it
+
+      // CRITICAL FIX: Check if 24 hours have passed since BOTH:
+      // 1. Last delegation (user is inactive)
+      // 2. Last penalty (prevent applying penalty multiple times)
+      if (hoursInactive >= this.INACTIVITY_PENALTY_HOURS &&
+          hoursSinceLastPenalty >= this.INACTIVITY_PENALTY_HOURS) {
+
         logger.info('[SimplifiedEnergyMonitor] Inactivity detected - applying penalty', {
           address: tronAddress,
           hoursInactive: hoursInactive.toFixed(2),
+          hoursSinceLastPenalty: lastPenalty ? hoursSinceLastPenalty.toFixed(2) : 'never',
           lastDelegationTime: lastDelegation,
+          lastPenaltyTime: lastPenalty || 'never',
           currentTransactions: energyState.transactionsRemaining
         });
 
@@ -162,7 +177,7 @@ export class SimplifiedEnergyMonitor {
             userId,
             tronAddress,
             action: 'PENALTY_24H',
-            reason: `24h inactivity penalty - ${hoursInactive.toFixed(2)} hours since last delegation`,
+            reason: `24h inactivity penalty - ${hoursInactive.toFixed(2)} hours since last delegation, ${lastPenalty ? hoursSinceLastPenalty.toFixed(2) + ' hours since last penalty' : 'first penalty'}`,
             transactionsRemainingAfter: newTransactionCount,
             createdAt: now
           }
@@ -171,12 +186,23 @@ export class SimplifiedEnergyMonitor {
         logger.info('[SimplifiedEnergyMonitor] Inactivity penalty applied', {
           address: tronAddress,
           hoursInactive: hoursInactive.toFixed(2),
+          hoursSinceLastPenalty: lastPenalty ? hoursSinceLastPenalty.toFixed(2) : 'never',
           transactionsBefore: energyState.transactionsRemaining,
           transactionsAfter: newTransactionCount,
           totalPenalties: energyState.inactivityPenalties + 1
         });
 
         return true; // Penalty was applied
+      }
+
+      // Log why penalty was NOT applied (for debugging)
+      if (hoursInactive >= this.INACTIVITY_PENALTY_HOURS) {
+        logger.debug('[SimplifiedEnergyMonitor] Inactivity detected but penalty recently applied', {
+          address: tronAddress,
+          hoursInactive: hoursInactive.toFixed(2),
+          hoursSinceLastPenalty: lastPenalty ? hoursSinceLastPenalty.toFixed(2) : 'never',
+          nextPenaltyIn: lastPenalty ? (this.INACTIVITY_PENALTY_HOURS - hoursSinceLastPenalty).toFixed(2) + ' hours' : 'now'
+        });
       }
 
       return false; // No penalty applied
