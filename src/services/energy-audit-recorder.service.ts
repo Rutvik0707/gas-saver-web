@@ -184,37 +184,55 @@ export class EnergyAuditRecorder {
   }
 
   /**
-   * Get latest USDT transaction for an address
-   * This helps detect if there was an actual transaction between reclaim/delegate
+   * Get latest USDT transaction for an address by checking blockchain
+   * This detects if user actually SENT USDT (not deposits TO system wallet)
+   *
+   * @param tronAddress Address to check
+   * @param timeWindowMinutes How far back to check (default 5 minutes)
+   * @returns Transaction hash if found, null otherwise
    */
-  async getLatestUsdtTransaction(tronAddress: string): Promise<string | null> {
+  async getLatestUsdtTransaction(
+    tronAddress: string,
+    timeWindowMinutes: number = 5
+  ): Promise<string | null> {
     try {
-      // Query recent USDT transactions from database
-      // This assumes we have ProcessedTransaction table tracking USDT transfers
-      const recentTx = await prisma.processedTransaction.findFirst({
-        where: {
-          address: tronAddress
-        },
-        orderBy: {
-          blockTimestamp: 'desc'
-        },
-        select: {
-          txHash: true,
-          blockTimestamp: true
-        }
+      const { tronscanService } = await import('./tronscan.service');
+
+      // Check blockchain for USDT transactions in the last N minutes
+      const endTime = Date.now();
+      const startTime = endTime - (timeWindowMinutes * 60 * 1000);
+
+      logger.debug('[EnergyAuditRecorder] Checking blockchain for USDT transactions', {
+        tronAddress,
+        startTime: new Date(startTime).toISOString(),
+        endTime: new Date(endTime).toISOString(),
+        timeWindowMinutes
       });
 
-      if (recentTx) {
-        // Check if this transaction is recent (within last 5 minutes)
-        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-        if (recentTx.blockTimestamp > fiveMinutesAgo) {
-          return recentTx.txHash;
-        }
+      // Query blockchain via TronScan API
+      const usdtTxHashes = await tronscanService.getUsdtTransactionsBetween(
+        tronAddress,
+        startTime,
+        endTime
+      );
+
+      if (usdtTxHashes.length > 0) {
+        logger.info('[EnergyAuditRecorder] Found USDT transaction on blockchain', {
+          tronAddress,
+          txHash: usdtTxHashes[0],
+          totalFound: usdtTxHashes.length
+        });
+        return usdtTxHashes[0]; // Return most recent
       }
+
+      logger.debug('[EnergyAuditRecorder] No USDT transactions found on blockchain', {
+        tronAddress,
+        timeWindowMinutes
+      });
 
       return null;
     } catch (error) {
-      logger.error('[EnergyAuditRecorder] Failed to get latest USDT transaction', {
+      logger.error('[EnergyAuditRecorder] Failed to check blockchain for USDT transactions', {
         error: error instanceof Error ? error.message : 'Unknown error',
         tronAddress
       });
@@ -224,34 +242,84 @@ export class EnergyAuditRecorder {
 
   /**
    * Analyze delegation cycle to determine if it's valid or a system issue
+   *
+   * IMPORTANT: Transaction counts DON'T change during energy operations by design.
+   * - Energy delegation/reclaim happens at :30 of each minute (SimplifiedEnergyMonitor)
+   * - Transaction count decrement happens separately every :45 seconds (TransactionUsageTracker)
+   *
+   * These are TWO INDEPENDENT SERVICES running at different times!
+   *
+   * This method CALCULATES the EXPECTED transaction decrease based on energy levels:
+   * - If energyBefore < oneTransactionThreshold (64k): User already consumed 1 tx, expects 2 more = 2 consumed
+   * - If energyBefore >= oneTransactionThreshold (64k): User has energy for 1 tx, expects 1 more = 1 consumed
+   *
+   * @param params.energyBefore - Energy level before delegation (used to calculate expected decrease)
+   * @param params.oneTransactionThreshold - Energy threshold for 1 transaction (~64-65k)
+   * @param params.pendingTransactionsBefore - Transaction count before operation
+   * @param params.pendingTransactionsAfter - Transaction count after operation
+   * @param params.relatedUsdtTxHash - USDT transaction hash if found on blockchain
    */
   analyzeCycle(params: {
     pendingTransactionsBefore: number;
     pendingTransactionsAfter: number;
     relatedUsdtTxHash: string | null;
+    energyBefore?: number;
+    oneTransactionThreshold?: number;
   }): {
     transactionDecrease: number;
+    expectedTransactionDecrease: number;
     hasActualTransaction: boolean;
     isSystemIssue: boolean;
     issueType?: string;
   } {
-    const decrease = params.pendingTransactionsBefore - params.pendingTransactionsAfter;
-    const hasActualTransaction = params.relatedUsdtTxHash !== null || decrease > 0;
+    // Calculate actual decrease (usually 0 during energy operations, that's EXPECTED)
+    const actualDecrease = params.pendingTransactionsBefore - params.pendingTransactionsAfter;
 
-    // System issue: Reclaim/Delegate without actual USDT transaction
-    const isSystemIssue = !hasActualTransaction && decrease === 0;
+    // Has actual transaction if blockchain verification found USDT tx
+    const hasActualTransaction = params.relatedUsdtTxHash !== null;
+
+    // Calculate EXPECTED transaction decrease based on energy level
+    let expectedDecrease = 0;
+    if (params.energyBefore !== undefined && params.oneTransactionThreshold !== undefined) {
+      if (hasActualTransaction || params.pendingTransactionsBefore > 0) {
+        // Determine how many transactions should be consumed based on energy level
+        if (params.energyBefore < params.oneTransactionThreshold) {
+          // User had less than 64k energy = already used 1 transaction
+          // Delegating 132k (for 2 transactions) = 2 transactions consumed total
+          expectedDecrease = 2;
+        } else {
+          // User had enough energy for 1 transaction (>=64k)
+          // Delegating 132k (for 2 transactions) but user keeps 1 = 1 transaction consumed
+          expectedDecrease = 1;
+        }
+
+        logger.debug('[EnergyAuditRecorder] Calculated expected transaction decrease', {
+          energyBefore: params.energyBefore,
+          threshold: params.oneTransactionThreshold,
+          expectedDecrease,
+          reason: params.energyBefore < params.oneTransactionThreshold
+            ? 'energyBefore < 64k: user consumed 1 tx already, delegating for 2 more = 2 consumed'
+            : 'energyBefore >= 64k: user has energy for 1 tx, delegating for 1 more = 1 consumed'
+        });
+      }
+    }
+
+    // System issue ONLY if:
+    // - No related USDT transaction found on blockchain
+    // - AND user has no pending transactions (shouldn't be getting energy)
+    const isSystemIssue = !hasActualTransaction && params.pendingTransactionsBefore === 0;
 
     let issueType: string | undefined;
     if (isSystemIssue) {
-      issueType = 'RECLAIM_DELEGATE_WITHOUT_TRANSACTION';
-    } else if (decrease > 2) {
-      issueType = 'EXCESSIVE_TRANSACTION_DECREASE';
-    } else if (decrease < 0) {
+      issueType = 'NO_PENDING_TRANSACTIONS';
+    } else if (actualDecrease < 0) {
+      // Transaction count should never increase
       issueType = 'TRANSACTION_COUNT_INCREASED';
     }
 
     return {
-      transactionDecrease: Math.max(0, decrease),
+      transactionDecrease: Math.max(0, actualDecrease),
+      expectedTransactionDecrease: expectedDecrease,
       hasActualTransaction,
       isSystemIssue,
       issueType

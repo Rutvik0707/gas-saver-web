@@ -752,6 +752,87 @@ class TronScanService {
   }
 
   /**
+   * Get USDT transactions sent BY a specific address within a time range
+   * This is used to verify if user actually sent USDT transactions (not deposits TO system)
+   * @param address TRON address to query
+   * @param startTimestamp Start time in milliseconds
+   * @param endTimestamp End time in milliseconds
+   * @returns Array of USDT transaction hashes sent by the user
+   */
+  async getUsdtTransactionsBetween(
+    address: string,
+    startTimestamp: number,
+    endTimestamp: number
+  ): Promise<string[]> {
+    if (!this.baseUrl) {
+      logger.warn('[TronScan] API not configured, returning empty array for USDT transactions');
+      return [];
+    }
+
+    try {
+      const systemWallet = config.systemWallet.address;
+      const usdtContract = config.tron.usdtContract;
+
+      logger.debug('[TronScan] Fetching USDT transactions between timestamps', {
+        address,
+        startTime: new Date(startTimestamp).toISOString(),
+        endTime: new Date(endTimestamp).toISOString()
+      });
+
+      // Fetch transactions for the address in the time range
+      const response = await this.axiosInstance.get('/transaction', {
+        params: {
+          sort: '-timestamp',
+          count: true,
+          limit: 50,
+          start: 0,
+          address,
+          start_timestamp: startTimestamp,
+          end_timestamp: endTimestamp
+        }
+      });
+
+      const transactions: TronScanTransaction[] = response.data?.data || [];
+
+      // Filter for USDT transfers SENT BY the user (not TO the user)
+      const usdtTxHashes = transactions
+        .filter((tx: TronScanTransaction) => {
+          // Must be TriggerSmartContract
+          if (tx.contractType !== 31) return false;
+
+          // Must be USDT contract
+          const contractAddress = tx.contractData?.contract_address || tx.toAddress;
+          if (contractAddress !== usdtContract) return false;
+
+          // Must be sent FROM this address (user sending USDT)
+          if (tx.ownerAddress !== address) return false;
+
+          // Ignore deposits TO system wallet (those are deposits, not usage)
+          if (tx.toAddress === systemWallet) return false;
+
+          return true;
+        })
+        .map((tx: TronScanTransaction) => tx.hash);
+
+      logger.info('[TronScan] USDT transactions found', {
+        address,
+        count: usdtTxHashes.length,
+        hashes: usdtTxHashes
+      });
+
+      return usdtTxHashes;
+    } catch (error) {
+      logger.error('[TronScan] Failed to get USDT transactions between timestamps', {
+        address,
+        startTimestamp,
+        endTimestamp,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      return [];
+    }
+  }
+
+  /**
    * Get comprehensive transaction analysis for an address
    * Fetches all transaction history and analyzes patterns
    * @param address TRON address to analyze

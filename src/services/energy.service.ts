@@ -566,6 +566,56 @@ export class EnergyService {
     }
   }
 
+  /**
+   * Get energy balance with retry mechanism for post-delegation confirmation
+   * This method waits for blockchain confirmation before reading energy state
+   *
+   * @param address Address to check
+   * @param waitForConfirmation If true, adds delays and retries (use after delegation)
+   * @returns Current energy balance
+   */
+  async getEnergyBalanceWithRetry(
+    address: string,
+    waitForConfirmation: boolean = false
+  ): Promise<number> {
+    if (!waitForConfirmation) {
+      return this.getEnergyBalance(address);
+    }
+
+    // Wait for blockchain confirmation (3 blocks = ~9 seconds on TRON)
+    await new Promise(resolve => setTimeout(resolve, 10000));
+
+    // Try up to 3 times with increasing delays
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const energy = await this.getEnergyBalance(address);
+
+      if (energy > 0) {
+        logger.debug('[EnergyService] Energy balance confirmed after delegation', {
+          address,
+          energy,
+          attempt
+        });
+        return energy;
+      }
+
+      if (attempt < 3) {
+        logger.debug('[EnergyService] Energy still 0, retrying...', {
+          address,
+          attempt,
+          nextRetryIn: '5 seconds'
+        });
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      }
+    }
+
+    logger.warn('[EnergyService] Energy balance still 0 after retries', {
+      address,
+      note: 'May indicate delegation confirmation delay or blockchain issue'
+    });
+
+    return 0;
+  }
+
   async getBandwidthBalance(address: string): Promise<number> {
     try {
       const accountResources = await systemTronWeb.trx.getAccountResources(address);

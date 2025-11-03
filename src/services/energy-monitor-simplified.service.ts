@@ -474,6 +474,7 @@ export class SimplifiedEnergyMonitor {
                   });
 
                   // Get energy after reclaim
+                  // Use blockchain query (reclaim removes delegation, so TronScan won't show it)
                   const energyAfterReclaim = await energyService.getEnergyBalance(address);
 
                   // Record RECLAIM audit entry
@@ -599,7 +600,25 @@ export class SimplifiedEnergyMonitor {
             });
 
             // Get energy after delegation
-            const energyAfterDelegate = await energyService.getEnergyBalance(address);
+            // Try to get actual delegated energy from TronScan API first (more accurate)
+            let energyAfterDelegate = 0;
+            try {
+              const { tronscanService } = await import('./tronscan.service');
+              const delegationDetails = await tronscanService.getOurDelegationDetails(address);
+              if (delegationDetails) {
+                energyAfterDelegate = delegationDetails.delegatedEnergy;
+                logger.debug('[SimplifiedEnergyMonitor] Got energy from TronScan API', {
+                  address,
+                  delegatedEnergy: energyAfterDelegate
+                });
+              } else {
+                // Fallback to blockchain query
+                energyAfterDelegate = await energyService.getEnergyBalance(address);
+              }
+            } catch (error) {
+              // Fallback to blockchain query
+              energyAfterDelegate = await energyService.getEnergyBalance(address);
+            }
 
             // Update the state WITHOUT decrementing transaction count
             // Transaction count should only be decremented when actual USDT transfers are detected
@@ -627,10 +646,13 @@ export class SimplifiedEnergyMonitor {
             const recentUsdtTx = await energyAuditRecorder.getLatestUsdtTransaction(address);
 
             // Analyze the cycle to determine if it's valid or a system issue
+            // Pass energyBefore and threshold to calculate expected transaction decrease (1 or 2)
             const cycleAnalysis = energyAuditRecorder.analyzeCycle({
               pendingTransactionsBefore,
               pendingTransactionsAfter,
-              relatedUsdtTxHash: recentUsdtTx
+              relatedUsdtTxHash: recentUsdtTx,
+              energyBefore: energyBeforeDelegate,
+              oneTransactionThreshold: this.energyThresholds?.oneTransactionThreshold
             });
 
             // If penalty was applied, override issue type
@@ -654,7 +676,7 @@ export class SimplifiedEnergyMonitor {
               delegatedEnergy: delegateResult.actualEnergy,
               pendingTransactionsBefore,
               pendingTransactionsAfter,
-              transactionDecrease: cycleAnalysis.transactionDecrease,
+              transactionDecrease: cycleAnalysis.expectedTransactionDecrease, // Use EXPECTED decrease based on energy level
               relatedUsdtTxHash: recentUsdtTx || undefined,
               hasActualTransaction: cycleAnalysis.hasActualTransaction,
               isSystemIssue: finalIsSystemIssue,
@@ -663,7 +685,12 @@ export class SimplifiedEnergyMonitor {
                 energyLevel: this.DELEGATION_AMOUNT,
                 source: 'simplified_energy_monitor',
                 penaltyApplied: penaltyWasApplied,
-                reason: penaltyWasApplied ? '24h inactivity penalty - transaction count reduced' : undefined
+                reason: penaltyWasApplied ? '24h inactivity penalty - transaction count reduced' : undefined,
+                actualTransactionDecrease: cycleAnalysis.transactionDecrease,
+                expectedTransactionDecrease: cycleAnalysis.expectedTransactionDecrease,
+                calculationReason: energyBeforeDelegate < (this.energyThresholds?.oneTransactionThreshold || 65000)
+                  ? 'energyBefore < 64k: consumed 2 transactions (1 already used + delegating for 2 more)'
+                  : 'energyBefore >= 64k: consumed 1 transaction (has energy for 1 + delegating for 1 more)'
               }
             });
 
