@@ -620,8 +620,55 @@ export class SimplifiedEnergyMonitor {
               energyAfterDelegate = await energyService.getEnergyBalance(address);
             }
 
-            // Update the state WITHOUT decrementing transaction count
-            // Transaction count should only be decremented when actual USDT transfers are detected
+            // Calculate transaction decrease based on energy consumption
+            // This is the core business logic: decrement transaction count when energy is consumed
+            let transactionDecrease = 0;
+            const oneTransactionThreshold = this.energyThresholds?.oneTransactionThreshold || 65000;
+
+            if (transactionsRemaining > 0) {
+              if (energyBeforeDelegate < oneTransactionThreshold) {
+                // User had less than 65k energy before delegation
+                // This means they already consumed 1 transaction
+                // Now we're delegating 132k (for 2 transactions), so total consumed = 2
+                transactionDecrease = 2;
+                logger.info('[SimplifiedEnergyMonitor] Calculating transaction decrease', {
+                  address,
+                  energyBefore: energyBeforeDelegate,
+                  threshold: oneTransactionThreshold,
+                  transactionDecrease: 2,
+                  reason: 'energyBefore < 65k: user consumed 1 tx already, delegating for 2 more = 2 total consumed'
+                });
+              } else {
+                // User had >= 65k energy before delegation
+                // They still have energy for 1 transaction
+                // We're delegating 132k (for 2 transactions), so they'll use 1 more = 1 consumed
+                transactionDecrease = 1;
+                logger.info('[SimplifiedEnergyMonitor] Calculating transaction decrease', {
+                  address,
+                  energyBefore: energyBeforeDelegate,
+                  threshold: oneTransactionThreshold,
+                  transactionDecrease: 1,
+                  reason: 'energyBefore >= 65k: user has energy for 1 tx, delegating for 1 more = 1 consumed'
+                });
+              }
+
+              // Cap at remaining transactions (don't go below 0)
+              transactionDecrease = Math.min(transactionDecrease, transactionsRemaining);
+            }
+
+            // Calculate new transaction count
+            const newTransactionCount = Math.max(0, transactionsRemaining - transactionDecrease);
+
+            logger.info('[SimplifiedEnergyMonitor] Updating transaction count', {
+              address,
+              previousCount: transactionsRemaining,
+              decreaseBy: transactionDecrease,
+              newCount: newTransactionCount,
+              energyBefore: energyBeforeDelegate,
+              threshold: oneTransactionThreshold
+            });
+
+            // Update the state WITH transaction count decrement
             const updatedState = await prisma.userEnergyState.update({
               where: { tronAddress: address },
               data: {
@@ -631,39 +678,39 @@ export class SimplifiedEnergyMonitor {
                 lastAction: `DELEGATE_${this.DELEGATION_AMOUNT}`,
                 lastActionAt: new Date(),
                 lastDelegationTime: new Date(),
-                // NOT decrementing transactionsRemaining - keep it as is
+                transactionsRemaining: newTransactionCount, // DECREMENT based on energy consumption
                 updatedAt: new Date()
               }
             });
 
-            // Pending transactions after delegation - get actual value from database after update
-            const pendingTransactionsAfter = updatedState.transactionsRemaining;
+            // Update EnergyDelivery records to mark transactions as delivered
+            if (transactionDecrease > 0) {
+              await this.updateEnergyDeliveryRecords(address, transactionDecrease);
+            }
+
+            // Pending transactions after delegation - use the new count we just set
+            const pendingTransactionsAfter = newTransactionCount;
 
             // Check if this address had an inactivity penalty applied
             const penaltyWasApplied = inactivityPenaltyAddresses.has(address);
 
-            // Check for recent USDT transactions
+            // Check for recent USDT transactions (for audit purposes)
             const recentUsdtTx = await energyAuditRecorder.getLatestUsdtTransaction(address);
 
-            // Analyze the cycle to determine if it's valid or a system issue
-            // Pass energyBefore and threshold to calculate expected transaction decrease (1 or 2)
-            const cycleAnalysis = energyAuditRecorder.analyzeCycle({
-              pendingTransactionsBefore,
-              pendingTransactionsAfter,
-              relatedUsdtTxHash: recentUsdtTx,
-              energyBefore: energyBeforeDelegate,
-              oneTransactionThreshold: this.energyThresholds?.oneTransactionThreshold
-            });
+            // Determine if this is a system issue
+            // Now that we're actually decrementing counts, a cycle is only a system issue if:
+            // - No transactions remaining (shouldn't be getting energy)
+            const isSystemIssue = transactionsRemaining === 0 && !penaltyWasApplied;
+            const hasActualTransaction = recentUsdtTx !== null;
 
-            // If penalty was applied, override issue type
-            let finalIssueType = cycleAnalysis.issueType;
-            let finalIsSystemIssue = cycleAnalysis.isSystemIssue;
-            if (penaltyWasApplied) {
+            let finalIssueType: string | undefined = undefined;
+            if (isSystemIssue) {
+              finalIssueType = 'NO_PENDING_TRANSACTIONS';
+            } else if (penaltyWasApplied) {
               finalIssueType = 'INACTIVITY_PENALTY_APPLIED';
-              finalIsSystemIssue = false; // This is not a system issue, it's intentional
             }
 
-            // Record DELEGATE audit entry
+            // Record DELEGATE audit entry with ACTUAL transaction decrease
             await energyAuditRecorder.recordDelegate({
               tronAddress: address,
               userId,
@@ -674,30 +721,26 @@ export class SimplifiedEnergyMonitor {
               delegatedSun: BigInt(Math.floor(delegateResult.delegatedTrx * 1_000_000)),
               delegatedTrx: delegateResult.delegatedTrx,
               delegatedEnergy: delegateResult.actualEnergy,
-              pendingTransactionsBefore,
-              pendingTransactionsAfter,
-              transactionDecrease: cycleAnalysis.expectedTransactionDecrease, // Use EXPECTED decrease based on energy level
+              pendingTransactionsBefore: transactionsRemaining, // Before decrement
+              pendingTransactionsAfter: newTransactionCount, // After decrement
+              transactionDecrease: transactionDecrease, // ACTUAL decrease applied to database
               relatedUsdtTxHash: recentUsdtTx || undefined,
-              hasActualTransaction: cycleAnalysis.hasActualTransaction,
-              isSystemIssue: finalIsSystemIssue,
+              hasActualTransaction: hasActualTransaction,
+              isSystemIssue: isSystemIssue,
               issueType: finalIssueType,
               metadata: {
                 energyLevel: this.DELEGATION_AMOUNT,
                 source: 'simplified_energy_monitor',
                 penaltyApplied: penaltyWasApplied,
                 reason: penaltyWasApplied ? '24h inactivity penalty - transaction count reduced' : undefined,
-                actualTransactionDecrease: cycleAnalysis.transactionDecrease,
-                expectedTransactionDecrease: cycleAnalysis.expectedTransactionDecrease,
-                calculationReason: energyBeforeDelegate < (this.energyThresholds?.oneTransactionThreshold || 65000)
-                  ? 'energyBefore < 64k: consumed 2 transactions (1 already used + delegating for 2 more)'
-                  : 'energyBefore >= 64k: consumed 1 transaction (has energy for 1 + delegating for 1 more)'
+                transactionDecreaseApplied: transactionDecrease,
+                calculationReason: energyBeforeDelegate < oneTransactionThreshold
+                  ? 'energyBefore < 65k: consumed 2 transactions (1 already used + delegating for 2 more)'
+                  : 'energyBefore >= 65k: consumed 1 transaction (has energy for 1 + delegating for 1 more)'
               }
             });
 
-            // Do NOT update EnergyDelivery records here
-            // Only update when actual USDT transfers are detected on blockchain
-
-            // Log the energy delegation WITHOUT transaction count changes
+            // Log the energy delegation WITH transaction count changes
             await prisma.energyMonitoringLog.create({
               data: {
                 userId,
@@ -708,24 +751,34 @@ export class SimplifiedEnergyMonitor {
                 metadata: {
                   delegatedEnergy: delegateResult.actualEnergy,
                   txHash: delegateResult.txHash,
-                  transactionsRemaining: transactionsRemaining,
+                  transactionsRemainingBefore: transactionsRemaining,
+                  transactionsRemainingAfter: newTransactionCount,
+                  transactionDecrease: transactionDecrease,
                   energyLevel: this.DELEGATION_AMOUNT,
-                  hasActualTransaction: cycleAnalysis.hasActualTransaction,
-                  isSystemIssue: cycleAnalysis.isSystemIssue,
-                  reason: `Energy successfully delegated - transaction count NOT changed (only decrements on actual usage)`
+                  energyBefore: energyBeforeDelegate,
+                  hasActualTransaction: hasActualTransaction,
+                  isSystemIssue: isSystemIssue,
+                  reason: transactionDecrease > 0
+                    ? `Energy delegated - transaction count decreased by ${transactionDecrease} based on energy consumption`
+                    : 'Energy delegated - no transaction decrease (already at 0)'
                 }
               }
             });
 
-            logger.info('[SimplifiedEnergyMonitor] Energy delegated without changing transaction count', {
+            logger.info('[SimplifiedEnergyMonitor] Delegation cycle completed with transaction count update', {
               address,
-              transactionsRemaining,
+              transactionsRemainingBefore: transactionsRemaining,
+              transactionsRemainingAfter: newTransactionCount,
+              transactionDecrease: transactionDecrease,
               energyDelegated: delegateResult.actualEnergy,
               energyLevel: this.DELEGATION_AMOUNT,
+              energyBefore: energyBeforeDelegate,
               cycleId,
-              hasActualTransaction: cycleAnalysis.hasActualTransaction,
-              isSystemIssue: cycleAnalysis.isSystemIssue,
-              note: 'Transaction count unchanged - will only decrement on actual USDT transfers'
+              hasActualTransaction: hasActualTransaction,
+              isSystemIssue: isSystemIssue,
+              note: transactionDecrease > 0
+                ? `Transaction count decreased by ${transactionDecrease} based on energy consumption (before: ${energyBeforeDelegate}, threshold: ${oneTransactionThreshold})`
+                : 'No transaction decrease applied'
             });
             
           } catch (error) {
@@ -754,6 +807,82 @@ export class SimplifiedEnergyMonitor {
       });
     } finally {
       this.isRunning = false;
+    }
+  }
+
+  /**
+   * Update EnergyDelivery records to mark transactions as delivered
+   * This keeps the EnergyDelivery records in sync with actual transaction consumption
+   */
+  private async updateEnergyDeliveryRecords(
+    tronAddress: string,
+    transactionsDelivered: number
+  ): Promise<void> {
+    try {
+      // Find active energy deliveries for this address
+      const activeDeliveries = await prisma.energyDelivery.findMany({
+        where: {
+          tronAddress,
+          isActive: true
+        },
+        orderBy: { createdAt: 'asc' } // Process oldest first (FIFO)
+      });
+
+      // Filter deliveries that have pending transactions
+      const pendingDeliveries = activeDeliveries.filter(
+        (d: any) => d.deliveredTransactions < d.totalTransactions
+      );
+
+      if (pendingDeliveries.length === 0) {
+        logger.debug('[SimplifiedEnergyMonitor] No pending energy deliveries to update', {
+          address: tronAddress
+        });
+        return;
+      }
+
+      let remainingToDeliver = transactionsDelivered;
+      for (const delivery of pendingDeliveries) {
+        if (remainingToDeliver <= 0) break;
+
+        const pendingInDelivery = delivery.totalTransactions - delivery.deliveredTransactions;
+        const toDeliverNow = Math.min(remainingToDeliver, pendingInDelivery);
+
+        await prisma.energyDelivery.update({
+          where: { id: delivery.id },
+          data: {
+            deliveredTransactions: delivery.deliveredTransactions + toDeliverNow,
+            lastDeliveryAt: new Date(),
+            isActive: (delivery.deliveredTransactions + toDeliverNow) < delivery.totalTransactions
+          }
+        });
+
+        remainingToDeliver -= toDeliverNow;
+
+        logger.info('[SimplifiedEnergyMonitor] Updated EnergyDelivery record', {
+          deliveryId: delivery.id,
+          address: tronAddress,
+          delivered: toDeliverNow,
+          totalDelivered: delivery.deliveredTransactions + toDeliverNow,
+          totalTransactions: delivery.totalTransactions,
+          isComplete: (delivery.deliveredTransactions + toDeliverNow) >= delivery.totalTransactions
+        });
+      }
+
+      if (remainingToDeliver > 0) {
+        logger.warn('[SimplifiedEnergyMonitor] More transactions delivered than pending deliveries', {
+          address: tronAddress,
+          excess: remainingToDeliver,
+          note: 'This could happen if manual adjustments were made or there are stale delivery records'
+        });
+      }
+
+    } catch (error) {
+      logger.error('[SimplifiedEnergyMonitor] Failed to update EnergyDelivery records', {
+        address: tronAddress,
+        transactionsDelivered,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      // Don't throw - this is a secondary update and shouldn't break the main flow
     }
   }
 }

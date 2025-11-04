@@ -124,6 +124,14 @@ export class TransactionUsageTracker {
     const now = Date.now();
 
     try {
+      logger.info('[TransactionUsageTracker] Checking address for USDT transactions', {
+        address: tronAddress,
+        userId,
+        lastCheck: new Date(lastCheck).toISOString(),
+        now: new Date(now).toISOString(),
+        timeRangeMinutes: Math.round((now - lastCheck) / 60000)
+      });
+
       // Fetch recent transactions from TronScan
       const response = await axios.get(`${this.TRON_API_URL}/transaction`, {
         params: {
@@ -141,30 +149,93 @@ export class TransactionUsageTracker {
       });
 
       const transactions = response.data?.data || [];
+
+      logger.info('[TransactionUsageTracker] Fetched transactions from blockchain', {
+        address: tronAddress,
+        totalTransactions: transactions.length,
+        timeRange: `${new Date(lastCheck).toISOString()} to ${new Date(now).toISOString()}`
+      });
       
       // Filter for USDT transfers sent BY the user (not TO the user)
       const usdtTransfers = transactions.filter((tx: any) => {
-        // Check if it's a TRC20 transfer
-        if (tx.contractType !== 31) return false; // 31 = TriggerSmartContract
-        
+        // Log raw transaction for debugging
+        logger.debug('[TransactionUsageTracker] Examining transaction', {
+          address: tronAddress,
+          txHash: tx.hash,
+          contractType: tx.contractType,
+          ownerAddress: tx.ownerAddress,
+          toAddress: tx.toAddress,
+          contractData: tx.contractData
+        });
+
+        // Check if it's a TRC20 transfer (TriggerSmartContract)
+        if (tx.contractType !== 31) {
+          logger.debug('[TransactionUsageTracker] Skipping non-TRC20 transaction', {
+            txHash: tx.hash,
+            contractType: tx.contractType
+          });
+          return false;
+        }
+
         // Check if it's USDT contract
         const contractData = tx.contractData || {};
-        if (contractData.contract_address !== this.USDT_CONTRACT) return false;
-        
-        // Check if it's a transfer FROM this address (user sending USDT)
-        if (tx.ownerAddress !== tronAddress) return false;
-        
-        // Ignore transfers TO system wallet (these are deposits, not usage)
-        if (tx.toAddress === this.SYSTEM_WALLET) return false;
-        
-        // Ignore delegation/reclaim transactions (energy transfers)
-        if (tx.toAddress === this.SYSTEM_WALLET || tx.ownerAddress === this.SYSTEM_WALLET) {
-          const amount = parseInt(contractData.amount || '0');
-          if (amount === 0 || contractData.method === 'delegateResource' || contractData.method === 'undelegateResource') {
-            return false;
-          }
+        const contractAddress = contractData.contract_address || tx.contract_address;
+
+        if (!contractAddress) {
+          logger.debug('[TransactionUsageTracker] No contract address found', { txHash: tx.hash });
+          return false;
         }
-        
+
+        if (contractAddress !== this.USDT_CONTRACT) {
+          logger.debug('[TransactionUsageTracker] Not USDT contract', {
+            txHash: tx.hash,
+            contractAddress,
+            expected: this.USDT_CONTRACT
+          });
+          return false;
+        }
+
+        // Check if it's a transfer FROM this address (user sending USDT)
+        if (tx.ownerAddress !== tronAddress) {
+          logger.debug('[TransactionUsageTracker] Not sent from monitored address', {
+            txHash: tx.hash,
+            ownerAddress: tx.ownerAddress,
+            expected: tronAddress
+          });
+          return false;
+        }
+
+        // Get the recipient address (could be in different fields)
+        const toAddress = tx.toAddress || contractData.to_address || contractData.toAddress;
+
+        // Ignore transfers TO system wallet (these are deposits, not usage)
+        if (toAddress === this.SYSTEM_WALLET) {
+          logger.debug('[TransactionUsageTracker] Ignoring deposit to system wallet', {
+            txHash: tx.hash
+          });
+          return false;
+        }
+
+        // Check if this is an energy delegation/reclaim transaction (these have method fields)
+        const method = contractData.method || tx.method;
+        if (method === 'delegateResource' || method === 'undelegateResource' ||
+            method === 'DelegateResource' || method === 'UndelegateResource') {
+          logger.debug('[TransactionUsageTracker] Ignoring energy delegation/reclaim', {
+            txHash: tx.hash,
+            method
+          });
+          return false;
+        }
+
+        // This is a valid USDT transfer!
+        logger.info('[TransactionUsageTracker] Valid USDT transaction found', {
+          address: tronAddress,
+          txHash: tx.hash,
+          to: toAddress,
+          amount: contractData.amount || contractData.call_value,
+          timestamp: tx.timestamp || tx.block_timestamp
+        });
+
         return true;
       });
 
@@ -339,14 +410,39 @@ export class TransactionUsageTracker {
       });
 
       const transactions = response.data?.data || [];
-      
-      // Count USDT transfers
+
+      logger.info('[TransactionUsageTracker] Manual check - fetched transactions', {
+        address: tronAddress,
+        totalTransactions: transactions.length
+      });
+
+      // Count USDT transfers using the same improved logic
       const usdtTransfers = transactions.filter((tx: any) => {
+        // Check if it's a TRC20 transfer
         if (tx.contractType !== 31) return false;
+
+        // Check if it's USDT contract
         const contractData = tx.contractData || {};
-        if (contractData.contract_address !== this.USDT_CONTRACT) return false;
+        const contractAddress = contractData.contract_address || tx.contract_address;
+
+        if (!contractAddress || contractAddress !== this.USDT_CONTRACT) return false;
+
+        // Check if it's a transfer FROM this address
         if (tx.ownerAddress !== tronAddress) return false;
-        if (tx.toAddress === this.SYSTEM_WALLET) return false;
+
+        // Get recipient address
+        const toAddress = tx.toAddress || contractData.to_address || contractData.toAddress;
+
+        // Ignore transfers TO system wallet (deposits)
+        if (toAddress === this.SYSTEM_WALLET) return false;
+
+        // Ignore energy delegation/reclaim
+        const method = contractData.method || tx.method;
+        if (method === 'delegateResource' || method === 'undelegateResource' ||
+            method === 'DelegateResource' || method === 'UndelegateResource') {
+          return false;
+        }
+
         return true;
       }).length;
 
