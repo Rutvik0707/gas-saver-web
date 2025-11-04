@@ -15,20 +15,20 @@ export class EnergyService {
   // ==================================================================================
   // This value was calculated from actual mainnet transaction data:
   //
-  // Reference Transaction: 901ef1cfedf442f5643a9bf6ad52a52e3fe29db537f0f152cf0fed9c20398a2a
-  // - Delegated: 13,186,823,187 SUN (13,186.82 TRX)
-  // - Received: 129,070.87 energy
-  // - Energy/SUN ratio: 9.787867e-06
+  // Reference Transaction: 2432d3384c8b789ee819cc53e9bf0be21a18622afdf19d807be8b9b77d5b21cd
+  // - Delegated: 13,486,084,510 SUN (13,486.08 TRX)
+  // - Received: 129,612.32 energy
+  // - Energy/SUN ratio: 9.6077e-06
   //
   // CALCULATION:
-  // To get 132,000 energy: 132,000 / 9.787867e-06 = 13,486,084,510 SUN
-  // This is 13,486.08 TRX in SUN (299 SUN more than the test transaction)
+  // To get 132,000 energy: 132,000 / 9.6077e-06 = 13,738,773,589 SUN
+  // This is 13,738.77 TRX in SUN (252.7 TRX more than previous value)
   //
   // This value is FIXED and should NEVER be calculated dynamically.
   // If network conditions change and this no longer produces 132k energy,
   // update this constant based on new mainnet testing.
   // ==================================================================================
-  private readonly EXACT_SUN_FOR_132K_ENERGY = 13486084510; // 13,486.08 TRX in SUN
+  private readonly EXACT_SUN_FOR_132K_ENERGY = 13738773589; // 13,738.77 TRX in SUN
 
   /**
    * Calculate required energy for USDT transfer
