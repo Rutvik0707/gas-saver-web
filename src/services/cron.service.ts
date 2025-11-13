@@ -45,12 +45,22 @@ export class CronService {
       await transactionUsageTracker.checkAllAddresses();
     });
 
+    // Final energy reclaim - Reclaims ALL energy from addresses with 0 pending transactions
+    // This service ensures efficient resource utilization by reclaiming unused energy
+    // Runs every 15 minutes to check addresses that have completed all transactions
+    // Only reclaims if energy is delegated and transactionsRemaining = 0
+    this.scheduleJob('final-energy-reclaim', '0 */15 * * * *', async () => {
+      const { finalEnergyReclaimService } = await import('./final-energy-reclaim.service');
+      await finalEnergyReclaimService.runCycle();
+    });
+
     logger.info('🔄 Transaction detector started - scanning every 30 seconds');
     logger.info('💰 Deposit processor started - processing at :15 past every minute');
     logger.info('📍 Address pool maintenance started - running every hour');
     logger.info('⏳ Deposit expirer started - cleanup at :45 past every 5 minutes');
     logger.info('⚡ Simplified energy monitor started - checking at :30 past every minute');
     logger.info('📊 Transaction usage tracker started - checking every 45 seconds');
+    logger.info('♻️  Final energy reclaim started - running every 15 minutes');
     logger.info('✅ All background services initialized successfully');
   }
 
@@ -218,11 +228,14 @@ export class CronService {
         case 'deposit-expirer':
           await this.runDepositExpirer();
           break;
+        case 'final-energy-reclaim':
+          await this.runFinalEnergyReclaim();
+          break;
         default:
           logger.warn(`Unknown job name: ${jobName}`);
           return false;
       }
-      
+
       logger.info(`Manually triggered job: ${jobName}`);
       return true;
     } catch (error) {
@@ -230,6 +243,19 @@ export class CronService {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
       return false;
+    }
+  }
+
+  private async runFinalEnergyReclaim(): Promise<void> {
+    try {
+      logger.debug('♻️  Running final energy reclaim...');
+      const { finalEnergyReclaimService } = await import('./final-energy-reclaim.service');
+      await finalEnergyReclaimService.runCycle();
+      logger.debug('♻️  Final energy reclaim completed');
+    } catch (error) {
+      logger.error('❌ Final energy reclaim failed', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
     }
   }
 }

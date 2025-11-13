@@ -155,6 +155,8 @@ model UserEnergyState {
   lastActionAt                      DateTime?             @map("last_action_at")
   lastBlockchainCheck               DateTime?             @map("last_blockchain_check")
   monitoringMetadata                Json?                 @map("monitoring_metadata")
+  finalReclaimCompleted             Boolean               @default(false) @map("final_reclaim_completed")
+  finalReclaimAt                    DateTime?             @map("final_reclaim_at")
   logs                              EnergyAllocationLog[]
   monitoringLogs                    EnergyMonitoringLog[]
   user                              User                  @relation(fields: [userId], references: [id], onDelete: Cascade)

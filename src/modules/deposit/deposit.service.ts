@@ -580,7 +580,7 @@ export class DepositService {
             });
             
             if (existingState) {
-              // Update existing state - add transactions
+              // Update existing state - add transactions and reset final reclaim flag
               await tx.userEnergyState.update({
                 where: { tronAddress: deposit.energyRecipientAddress },
                 data: {
@@ -588,6 +588,7 @@ export class DepositService {
                     increment: numberOfTransactions
                   },
                   status: 'ACTIVE',
+                  finalReclaimCompleted: false, // Reset flag - new deposit means monitoring should resume
                   updatedAt: new Date(),
                   monitoringMetadata: {
                     ...(existingState.monitoringMetadata as any || {}),
@@ -611,6 +612,7 @@ export class DepositService {
                   tronAddress: deposit.energyRecipientAddress,
                   transactionsRemaining: numberOfTransactions,
                   status: 'ACTIVE',
+                  finalReclaimCompleted: false, // Start with monitoring enabled
                   monitoringMetadata: {
                     createdFrom: 'deposit_processing',
                     firstDepositId: deposit.id,
