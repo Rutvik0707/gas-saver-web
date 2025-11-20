@@ -625,35 +625,49 @@ export class SimplifiedEnergyMonitor {
             let transactionDecrease = 0;
             const oneTransactionThreshold = this.energyThresholds?.oneTransactionThreshold || 65000;
 
-            if (transactionsRemaining > 0) {
-              if (energyBeforeDelegate < oneTransactionThreshold) {
-                // User had less than 65k energy before delegation
-                // This means they already consumed 1 transaction
-                // Now we're delegating 132k (for 2 transactions), so total consumed = 2
+            // Check if inactivity penalty was already applied for this address
+            const hadInactivityPenalty = inactivityPenaltyAddresses.has(address);
+
+            if (transactionsRemaining > 0 && !hadInactivityPenalty) {
+              // Calculate how much energy was consumed since last delegation (132k)
+              // energyBeforeDelegate = remaining energy after consumption
+              // Energy consumed = 132k - energyBeforeDelegate
+              const energyConsumed = this.DELEGATION_AMOUNT - energyBeforeDelegate;
+
+              if (energyConsumed > oneTransactionThreshold) {
+                // User consumed more than 65k energy = 2 transactions used
                 transactionDecrease = 2;
                 logger.info('[SimplifiedEnergyMonitor] Calculating transaction decrease', {
                   address,
                   energyBefore: energyBeforeDelegate,
+                  energyConsumed,
                   threshold: oneTransactionThreshold,
                   transactionDecrease: 2,
-                  reason: 'energyBefore < 65k: user consumed 1 tx already, delegating for 2 more = 2 total consumed'
+                  reason: `Energy consumed (${energyConsumed}) > ${oneTransactionThreshold}: user consumed 2 transactions`
                 });
               } else {
-                // User had >= 65k energy before delegation
-                // They still have energy for 1 transaction
-                // We're delegating 132k (for 2 transactions), so they'll use 1 more = 1 consumed
+                // User consumed <= 65k energy = 1 transaction used
                 transactionDecrease = 1;
                 logger.info('[SimplifiedEnergyMonitor] Calculating transaction decrease', {
                   address,
                   energyBefore: energyBeforeDelegate,
+                  energyConsumed,
                   threshold: oneTransactionThreshold,
                   transactionDecrease: 1,
-                  reason: 'energyBefore >= 65k: user has energy for 1 tx, delegating for 1 more = 1 consumed'
+                  reason: `Energy consumed (${energyConsumed}) <= ${oneTransactionThreshold}: user consumed 1 transaction`
                 });
               }
 
               // Cap at remaining transactions (don't go below 0)
               transactionDecrease = Math.min(transactionDecrease, transactionsRemaining);
+            } else if (hadInactivityPenalty) {
+              // Inactivity penalty already deducted 1 Tx, don't deduct again
+              transactionDecrease = 0;
+              logger.info('[SimplifiedEnergyMonitor] Skipping transaction decrease - inactivity penalty already applied', {
+                address,
+                energyBefore: energyBeforeDelegate,
+                reason: 'Inactivity penalty already deducted 1 Tx this cycle'
+              });
             }
 
             // Calculate new transaction count
@@ -734,9 +748,12 @@ export class SimplifiedEnergyMonitor {
                 penaltyApplied: penaltyWasApplied,
                 reason: penaltyWasApplied ? '24h inactivity penalty - transaction count reduced' : undefined,
                 transactionDecreaseApplied: transactionDecrease,
-                calculationReason: energyBeforeDelegate < oneTransactionThreshold
-                  ? 'energyBefore < 65k: consumed 2 transactions (1 already used + delegating for 2 more)'
-                  : 'energyBefore >= 65k: consumed 1 transaction (has energy for 1 + delegating for 1 more)'
+                energyConsumed: this.DELEGATION_AMOUNT - energyBeforeDelegate,
+                calculationReason: hadInactivityPenalty
+                  ? 'Inactivity penalty already applied - skipped transaction decrease'
+                  : (this.DELEGATION_AMOUNT - energyBeforeDelegate) > oneTransactionThreshold
+                    ? `Energy consumed (${this.DELEGATION_AMOUNT - energyBeforeDelegate}) > ${oneTransactionThreshold}: 2 transactions used`
+                    : `Energy consumed (${this.DELEGATION_AMOUNT - energyBeforeDelegate}) <= ${oneTransactionThreshold}: 1 transaction used`
               }
             });
 

@@ -243,18 +243,18 @@ export class EnergyAuditRecorder {
   /**
    * Analyze delegation cycle to determine if it's valid or a system issue
    *
-   * IMPORTANT: Transaction counts DON'T change during energy operations by design.
-   * - Energy delegation/reclaim happens at :30 of each minute (SimplifiedEnergyMonitor)
-   * - Transaction count decrement happens separately every :45 seconds (TransactionUsageTracker)
+   * This method CALCULATES the EXPECTED transaction decrease based on energy consumption:
+   * - Calculate energy consumed: 132k (delegation amount) - energyBefore (remaining energy)
+   * - If energy consumed > 65k: User consumed 2 transactions
+   * - If energy consumed <= 65k: User consumed 1 transaction
    *
-   * These are TWO INDEPENDENT SERVICES running at different times!
+   * Example:
+   * - energyBefore = 70k → energyConsumed = 132k - 70k = 62k → 1 transaction used
+   * - energyBefore = 50k → energyConsumed = 132k - 50k = 82k → 2 transactions used
+   * - energyBefore = 10k → energyConsumed = 132k - 10k = 122k → 2 transactions used
    *
-   * This method CALCULATES the EXPECTED transaction decrease based on energy levels:
-   * - If energyBefore < oneTransactionThreshold (64k): User already consumed 1 tx, expects 2 more = 2 consumed
-   * - If energyBefore >= oneTransactionThreshold (64k): User has energy for 1 tx, expects 1 more = 1 consumed
-   *
-   * @param params.energyBefore - Energy level before delegation (used to calculate expected decrease)
-   * @param params.oneTransactionThreshold - Energy threshold for 1 transaction (~64-65k)
+   * @param params.energyBefore - Energy level before delegation (used to calculate energy consumed)
+   * @param params.oneTransactionThreshold - Energy threshold for 1 transaction (~65k)
    * @param params.pendingTransactionsBefore - Transaction count before operation
    * @param params.pendingTransactionsAfter - Transaction count after operation
    * @param params.relatedUsdtTxHash - USDT transaction hash if found on blockchain
@@ -278,28 +278,32 @@ export class EnergyAuditRecorder {
     // Has actual transaction if blockchain verification found USDT tx
     const hasActualTransaction = params.relatedUsdtTxHash !== null;
 
-    // Calculate EXPECTED transaction decrease based on energy level
+    // Calculate EXPECTED transaction decrease based on energy consumption
+    // Fixed delegation amount is 132,000 energy
+    const DELEGATION_AMOUNT = 132000;
     let expectedDecrease = 0;
     if (params.energyBefore !== undefined && params.oneTransactionThreshold !== undefined) {
       if (hasActualTransaction || params.pendingTransactionsBefore > 0) {
-        // Determine how many transactions should be consumed based on energy level
-        if (params.energyBefore < params.oneTransactionThreshold) {
-          // User had less than 64k energy = already used 1 transaction
-          // Delegating 132k (for 2 transactions) = 2 transactions consumed total
+        // Calculate energy consumed: delegation amount - remaining energy
+        const energyConsumed = DELEGATION_AMOUNT - params.energyBefore;
+
+        // Determine transaction decrease based on energy consumed
+        if (energyConsumed > params.oneTransactionThreshold) {
+          // User consumed more than 65k energy = 2 transactions used
           expectedDecrease = 2;
         } else {
-          // User had enough energy for 1 transaction (>=64k)
-          // Delegating 132k (for 2 transactions) but user keeps 1 = 1 transaction consumed
+          // User consumed <= 65k energy = 1 transaction used
           expectedDecrease = 1;
         }
 
         logger.debug('[EnergyAuditRecorder] Calculated expected transaction decrease', {
           energyBefore: params.energyBefore,
+          energyConsumed,
           threshold: params.oneTransactionThreshold,
           expectedDecrease,
-          reason: params.energyBefore < params.oneTransactionThreshold
-            ? 'energyBefore < 64k: user consumed 1 tx already, delegating for 2 more = 2 consumed'
-            : 'energyBefore >= 64k: user has energy for 1 tx, delegating for 1 more = 1 consumed'
+          reason: energyConsumed > params.oneTransactionThreshold
+            ? `Energy consumed (${energyConsumed}) > ${params.oneTransactionThreshold}: 2 transactions used`
+            : `Energy consumed (${energyConsumed}) <= ${params.oneTransactionThreshold}: 1 transaction used`
         });
       }
     }
