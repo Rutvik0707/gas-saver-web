@@ -630,16 +630,16 @@ export class SimplifiedEnergyMonitor {
 
             if (transactionsRemaining > 0 && !hadInactivityPenalty) {
               // Calculate how much energy was consumed since last delegation (132k)
-              // energyBeforeDelegate = remaining energy after consumption
-              // Energy consumed = 132k - energyBeforeDelegate
-              const energyConsumed = this.DELEGATION_AMOUNT - energyBeforeDelegate;
+              // energyBeforeReclaim = remaining energy BEFORE reclaim (actual consumption indicator)
+              // Energy consumed = 132k - energyBeforeReclaim
+              const energyConsumed = this.DELEGATION_AMOUNT - energyBeforeReclaim;
 
               if (energyConsumed > oneTransactionThreshold) {
                 // User consumed more than 65k energy = 2 transactions used
                 transactionDecrease = 2;
                 logger.info('[SimplifiedEnergyMonitor] Calculating transaction decrease', {
                   address,
-                  energyBefore: energyBeforeDelegate,
+                  energyBeforeReclaim,
                   energyConsumed,
                   threshold: oneTransactionThreshold,
                   transactionDecrease: 2,
@@ -650,7 +650,7 @@ export class SimplifiedEnergyMonitor {
                 transactionDecrease = 1;
                 logger.info('[SimplifiedEnergyMonitor] Calculating transaction decrease', {
                   address,
-                  energyBefore: energyBeforeDelegate,
+                  energyBeforeReclaim,
                   energyConsumed,
                   threshold: oneTransactionThreshold,
                   transactionDecrease: 1,
@@ -665,7 +665,7 @@ export class SimplifiedEnergyMonitor {
               transactionDecrease = 0;
               logger.info('[SimplifiedEnergyMonitor] Skipping transaction decrease - inactivity penalty already applied', {
                 address,
-                energyBefore: energyBeforeDelegate,
+                energyBeforeReclaim,
                 reason: 'Inactivity penalty already deducted 1 Tx this cycle'
               });
             }
@@ -748,12 +748,13 @@ export class SimplifiedEnergyMonitor {
                 penaltyApplied: penaltyWasApplied,
                 reason: penaltyWasApplied ? '24h inactivity penalty - transaction count reduced' : undefined,
                 transactionDecreaseApplied: transactionDecrease,
-                energyConsumed: this.DELEGATION_AMOUNT - energyBeforeDelegate,
+                energyBeforeReclaim: energyBeforeReclaim,
+                energyConsumed: this.DELEGATION_AMOUNT - energyBeforeReclaim,
                 calculationReason: hadInactivityPenalty
                   ? 'Inactivity penalty already applied - skipped transaction decrease'
-                  : (this.DELEGATION_AMOUNT - energyBeforeDelegate) > oneTransactionThreshold
-                    ? `Energy consumed (${this.DELEGATION_AMOUNT - energyBeforeDelegate}) > ${oneTransactionThreshold}: 2 transactions used`
-                    : `Energy consumed (${this.DELEGATION_AMOUNT - energyBeforeDelegate}) <= ${oneTransactionThreshold}: 1 transaction used`
+                  : (this.DELEGATION_AMOUNT - energyBeforeReclaim) > oneTransactionThreshold
+                    ? `Energy consumed (${this.DELEGATION_AMOUNT - energyBeforeReclaim}) > ${oneTransactionThreshold}: 2 transactions used`
+                    : `Energy consumed (${this.DELEGATION_AMOUNT - energyBeforeReclaim}) <= ${oneTransactionThreshold}: 1 transaction used`
               }
             });
 
