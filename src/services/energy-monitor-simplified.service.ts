@@ -447,7 +447,25 @@ export class SimplifiedEnergyMonitor {
             const cycleId = `cycle_${Date.now()}_${address.substring(0, 8)}`;
             const userState = activeStates.find(s => s.tronAddress === address);
             const userId = userState?.userId;
-            const pendingTransactionsBefore = userState?.transactionsRemaining || 0;
+
+            // Get transaction count - if inactivity penalty was applied, re-read from DB
+            // to get the updated count (penalty decrements by 1)
+            let pendingTransactionsBefore = userState?.transactionsRemaining || 0;
+            if (inactivityPenaltyAddresses.has(address)) {
+              // Re-read from database to get the updated count after penalty
+              const freshState = await prisma.userEnergyState.findUnique({
+                where: { tronAddress: address },
+                select: { transactionsRemaining: true }
+              });
+              if (freshState) {
+                logger.info('[SimplifiedEnergyMonitor] Refreshed transaction count after penalty', {
+                  address,
+                  staleCount: pendingTransactionsBefore,
+                  freshCount: freshState.transactionsRemaining
+                });
+                pendingTransactionsBefore = freshState.transactionsRemaining;
+              }
+            }
 
             // Get energy before reclaim
             const energyBeforeReclaim = await energyService.getEnergyBalance(address);
@@ -629,32 +647,29 @@ export class SimplifiedEnergyMonitor {
             const hadInactivityPenalty = inactivityPenaltyAddresses.has(address);
 
             if (transactionsRemaining > 0 && !hadInactivityPenalty) {
-              // Calculate how much energy was consumed since last delegation (132k)
-              // energyBeforeReclaim = remaining energy BEFORE reclaim (actual consumption indicator)
-              // Energy consumed = 132k - energyBeforeReclaim
-              const energyConsumed = this.DELEGATION_AMOUNT - energyBeforeReclaim;
+              // Check energy remaining BEFORE reclaim to determine transaction consumption
+              // If user still has >= 65k energy remaining, they used ~1 transaction worth (~65k consumed)
+              // If user has < 65k energy remaining, they used ~2 transactions worth (>65k consumed)
 
-              if (energyConsumed > oneTransactionThreshold) {
-                // User consumed more than 65k energy = 2 transactions used
-                transactionDecrease = 2;
-                logger.info('[SimplifiedEnergyMonitor] Calculating transaction decrease', {
-                  address,
-                  energyBeforeReclaim,
-                  energyConsumed,
-                  threshold: oneTransactionThreshold,
-                  transactionDecrease: 2,
-                  reason: `Energy consumed (${energyConsumed}) > ${oneTransactionThreshold}: user consumed 2 transactions`
-                });
-              } else {
-                // User consumed <= 65k energy = 1 transaction used
+              if (energyBeforeReclaim >= oneTransactionThreshold) {
+                // User had >= 65k energy remaining = consumed <= 67k = 1 transaction used
                 transactionDecrease = 1;
                 logger.info('[SimplifiedEnergyMonitor] Calculating transaction decrease', {
                   address,
                   energyBeforeReclaim,
-                  energyConsumed,
                   threshold: oneTransactionThreshold,
                   transactionDecrease: 1,
-                  reason: `Energy consumed (${energyConsumed}) <= ${oneTransactionThreshold}: user consumed 1 transaction`
+                  reason: `Energy remaining (${energyBeforeReclaim}) >= ${oneTransactionThreshold}: user consumed 1 transaction`
+                });
+              } else {
+                // User had < 65k energy remaining = consumed > 67k = 2 transactions used
+                transactionDecrease = 2;
+                logger.info('[SimplifiedEnergyMonitor] Calculating transaction decrease', {
+                  address,
+                  energyBeforeReclaim,
+                  threshold: oneTransactionThreshold,
+                  transactionDecrease: 2,
+                  reason: `Energy remaining (${energyBeforeReclaim}) < ${oneTransactionThreshold}: user consumed 2 transactions`
                 });
               }
 
@@ -749,12 +764,11 @@ export class SimplifiedEnergyMonitor {
                 reason: penaltyWasApplied ? '24h inactivity penalty - transaction count reduced' : undefined,
                 transactionDecreaseApplied: transactionDecrease,
                 energyBeforeReclaim: energyBeforeReclaim,
-                energyConsumed: this.DELEGATION_AMOUNT - energyBeforeReclaim,
                 calculationReason: hadInactivityPenalty
                   ? 'Inactivity penalty already applied - skipped transaction decrease'
-                  : (this.DELEGATION_AMOUNT - energyBeforeReclaim) > oneTransactionThreshold
-                    ? `Energy consumed (${this.DELEGATION_AMOUNT - energyBeforeReclaim}) > ${oneTransactionThreshold}: 2 transactions used`
-                    : `Energy consumed (${this.DELEGATION_AMOUNT - energyBeforeReclaim}) <= ${oneTransactionThreshold}: 1 transaction used`
+                  : energyBeforeReclaim >= oneTransactionThreshold
+                    ? `Energy remaining (${energyBeforeReclaim}) >= ${oneTransactionThreshold}: 1 transaction used`
+                    : `Energy remaining (${energyBeforeReclaim}) < ${oneTransactionThreshold}: 2 transactions used`
               }
             });
 

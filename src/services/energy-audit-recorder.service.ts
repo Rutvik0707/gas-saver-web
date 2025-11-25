@@ -243,17 +243,16 @@ export class EnergyAuditRecorder {
   /**
    * Analyze delegation cycle to determine if it's valid or a system issue
    *
-   * This method CALCULATES the EXPECTED transaction decrease based on energy consumption:
-   * - Calculate energy consumed: 132k (delegation amount) - energyBefore (remaining energy)
-   * - If energy consumed > 65k: User consumed 2 transactions
-   * - If energy consumed <= 65k: User consumed 1 transaction
+   * This method CALCULATES the EXPECTED transaction decrease based on energy REMAINING before reclaim:
+   * - If energy remaining >= 65k: User consumed 1 transaction
+   * - If energy remaining < 65k: User consumed 2 transactions
    *
    * Example:
-   * - energyBefore = 70k → energyConsumed = 132k - 70k = 62k → 1 transaction used
-   * - energyBefore = 50k → energyConsumed = 132k - 50k = 82k → 2 transactions used
-   * - energyBefore = 10k → energyConsumed = 132k - 10k = 122k → 2 transactions used
+   * - energyBefore = 67k → energy remaining >= 65k → 1 transaction used
+   * - energyBefore = 50k → energy remaining < 65k → 2 transactions used
+   * - energyBefore = 1k → energy remaining < 65k → 2 transactions used
    *
-   * @param params.energyBefore - Energy level before delegation (used to calculate energy consumed)
+   * @param params.energyBefore - Energy level BEFORE reclaim (remaining energy)
    * @param params.oneTransactionThreshold - Energy threshold for 1 transaction (~65k)
    * @param params.pendingTransactionsBefore - Transaction count before operation
    * @param params.pendingTransactionsAfter - Transaction count after operation
@@ -278,32 +277,28 @@ export class EnergyAuditRecorder {
     // Has actual transaction if blockchain verification found USDT tx
     const hasActualTransaction = params.relatedUsdtTxHash !== null;
 
-    // Calculate EXPECTED transaction decrease based on energy consumption
-    // Fixed delegation amount is 132,000 energy
-    const DELEGATION_AMOUNT = 132000;
+    // Calculate EXPECTED transaction decrease based on energy remaining before reclaim
+    // If energy remaining >= 65k, user consumed 1 transaction
+    // If energy remaining < 65k, user consumed 2 transactions
     let expectedDecrease = 0;
     if (params.energyBefore !== undefined && params.oneTransactionThreshold !== undefined) {
       if (hasActualTransaction || params.pendingTransactionsBefore > 0) {
-        // Calculate energy consumed: delegation amount - remaining energy
-        const energyConsumed = DELEGATION_AMOUNT - params.energyBefore;
-
-        // Determine transaction decrease based on energy consumed
-        if (energyConsumed > params.oneTransactionThreshold) {
-          // User consumed more than 65k energy = 2 transactions used
-          expectedDecrease = 2;
-        } else {
-          // User consumed <= 65k energy = 1 transaction used
+        // Determine transaction decrease based on energy remaining before reclaim
+        if (params.energyBefore >= params.oneTransactionThreshold) {
+          // User had >= 65k energy remaining = consumed 1 transaction
           expectedDecrease = 1;
+        } else {
+          // User had < 65k energy remaining = consumed 2 transactions
+          expectedDecrease = 2;
         }
 
         logger.debug('[EnergyAuditRecorder] Calculated expected transaction decrease', {
           energyBefore: params.energyBefore,
-          energyConsumed,
           threshold: params.oneTransactionThreshold,
           expectedDecrease,
-          reason: energyConsumed > params.oneTransactionThreshold
-            ? `Energy consumed (${energyConsumed}) > ${params.oneTransactionThreshold}: 2 transactions used`
-            : `Energy consumed (${energyConsumed}) <= ${params.oneTransactionThreshold}: 1 transaction used`
+          reason: params.energyBefore >= params.oneTransactionThreshold
+            ? `Energy remaining (${params.energyBefore}) >= ${params.oneTransactionThreshold}: 1 transaction used`
+            : `Energy remaining (${params.energyBefore}) < ${params.oneTransactionThreshold}: 2 transactions used`
         });
       }
     }
