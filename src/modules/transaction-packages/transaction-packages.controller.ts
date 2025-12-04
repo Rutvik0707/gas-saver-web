@@ -51,6 +51,27 @@ export class TransactionPackagesController {
     }
   }
 
+  async getActivePackages(req: Request, res: Response) {
+    try {
+      // Only return active packages for public endpoint
+      const packages = await transactionPackagesService.getAllPackages(false);
+
+      return res.json({
+        success: true,
+        data: packages,
+      });
+    } catch (error) {
+      logger.error('Failed to get active transaction packages', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to fetch transaction packages',
+      });
+    }
+  }
+
   async getPackageByTransactionCount(req: Request, res: Response) {
     try {
       const numberOfTxs = parseInt(req.query.numberOfTxs as string, 10);

@@ -12,6 +12,9 @@ const router = Router();
 // Public endpoint for fetching package by transaction count (used by pricing service)
 router.get('/by-count', transactionPackagesController.getPackageByTransactionCount);
 
+// Public endpoint for fetching all active packages (used by user app)
+router.get('/active', transactionPackagesController.getActivePackages);
+
 // Admin-only endpoints
 router.use(adminAuthMiddleware);
 
