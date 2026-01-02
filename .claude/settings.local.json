@@ -29,7 +29,12 @@
       "Bash(lsof:*)",
       "Bash(NODE_ENV=production npx ts-node scripts/backfill-audit-data.ts --limit 3 --verbose)",
       "Bash(NODE_ENV=production npx ts-node scripts/backfill-audit-data.ts --limit 1 --verbose)",
-      "Bash(NODE_ENV=production npx ts-node scripts/backfill-audit-data.ts)"
+      "Bash(NODE_ENV=production npx ts-node scripts/backfill-audit-data.ts)",
+      "Bash(NODE_ENV=production npx ts-node:*)",
+      "Bash(cross-env NODE_ENV=production ./node_modules/.bin/ts-node:*)",
+      "Bash(npm exec:*)",
+      "Bash(npm install:*)",
+      "Bash(NODE_ENV=production ./node_modules/.bin/ts-node:*)"
     ],
     "deny": [],
     "ask": [],

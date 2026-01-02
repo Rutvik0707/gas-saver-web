@@ -500,13 +500,13 @@ export class DepositService {
           continue;
         }
 
-        // Validate numberOfTransactions
+        // Validate numberOfTransactions (valid packages: 50, 100, 200, 300, 400, 500)
         const numberOfTransactions = deposit.numberOfTransactions || 1;
-        if (numberOfTransactions > 100) {
+        if (numberOfTransactions > 500) {
           logger.error('Deposit has excessive numberOfTransactions', {
             depositId: deposit.id,
             numberOfTransactions,
-            maxAllowed: 100,
+            maxAllowed: 500,
           });
           await this.depositRepository.markAsFailed(deposit.id);
           continue;
