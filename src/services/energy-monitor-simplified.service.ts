@@ -1,6 +1,7 @@
 import { prisma, logger, config, systemTronWeb, tronUtils } from '../config';
 import { energyService } from './energy.service';
 import { energyAuditRecorder } from './energy-audit-recorder.service';
+import { transactionDecrementLogger, DecrementSource } from './transaction-decrement-logger.service';
 import axios from 'axios';
 
 /**
@@ -190,6 +191,22 @@ export class SimplifiedEnergyMonitor {
           transactionsBefore: energyState.transactionsRemaining,
           transactionsAfter: newTransactionCount,
           totalPenalties: energyState.inactivityPenalties + 1
+        });
+
+        // Log to transaction decrement audit trail
+        await transactionDecrementLogger.logDecrement({
+          tronAddress,
+          userId: userId || undefined,
+          source: DecrementSource.INACTIVITY_PENALTY,
+          decrementAmount: 1,
+          previousCount: energyState.transactionsRemaining,
+          newCount: newTransactionCount,
+          reason: `24h inactivity penalty - ${hoursInactive.toFixed(2)} hours since last delegation`,
+          metadata: {
+            hoursInactive: parseFloat(hoursInactive.toFixed(2)),
+            hoursSinceLastPenalty: lastPenalty ? parseFloat(hoursSinceLastPenalty.toFixed(2)) : null,
+            totalPenalties: energyState.inactivityPenalties + 1
+          }
         });
 
         return true; // Penalty was applied
@@ -638,46 +655,85 @@ export class SimplifiedEnergyMonitor {
               energyAfterDelegate = await energyService.getEnergyBalance(address);
             }
 
-            // Calculate transaction decrease based on energy consumption
-            // This is the core business logic: decrement transaction count when energy is consumed
+            // Calculate transaction decrease based on ACTUAL blockchain transactions
+            // FIXED: Only decrease when we find real USDT transactions on the blockchain
             let transactionDecrease = 0;
+            let decreaseSource: 'ACTUAL_TRANSACTION' | 'NO_TRANSACTION' | 'INACTIVITY_PENALTY' = 'NO_TRANSACTION';
+            let actualTxHashes: string[] = []; // Store tx hashes for audit logging
             const oneTransactionThreshold = this.energyThresholds?.oneTransactionThreshold || 65000;
 
             // Check if inactivity penalty was already applied for this address
             const hadInactivityPenalty = inactivityPenaltyAddresses.has(address);
 
             if (transactionsRemaining > 0 && !hadInactivityPenalty) {
-              // Check energy remaining BEFORE reclaim to determine transaction consumption
-              // If user still has >= 65k energy remaining, they used ~1 transaction worth (~65k consumed)
-              // If user has < 65k energy remaining, they used ~2 transactions worth (>65k consumed)
+              // FIXED: Check for ACTUAL blockchain transactions instead of just energy levels
+              // Get the last delegation time to determine the time window for checking transactions
+              const lastDelegationState = await prisma.userEnergyState.findUnique({
+                where: { tronAddress: address },
+                select: { lastDelegationTime: true, lastTxCheckTimestamp: true }
+              });
 
-              if (energyBeforeReclaim >= oneTransactionThreshold) {
-                // User had >= 65k energy remaining = consumed <= 67k = 1 transaction used
-                transactionDecrease = 1;
-                logger.info('[SimplifiedEnergyMonitor] Calculating transaction decrease', {
+              const lastCheckTime = lastDelegationState?.lastTxCheckTimestamp ||
+                                   lastDelegationState?.lastDelegationTime ||
+                                   new Date(Date.now() - 10 * 60 * 1000); // Default 10 min ago
+
+              // Count actual USDT transactions since last check
+              const { tronscanService } = await import('./tronscan.service');
+              actualTxHashes = await tronscanService.getUsdtTransactionsBetween(
+                address,
+                new Date(lastCheckTime).getTime(),
+                Date.now()
+              );
+
+              const actualTxCount = actualTxHashes.length;
+
+              if (actualTxCount > 0) {
+                // User made ACTUAL transactions - decrease by the number of transactions found
+                transactionDecrease = Math.min(actualTxCount, transactionsRemaining);
+                decreaseSource = 'ACTUAL_TRANSACTION';
+
+                logger.info('[SimplifiedEnergyMonitor] ACTUAL transaction(s) found on blockchain', {
                   address,
+                  actualTxCount,
+                  transactionDecrease,
+                  txHashes: actualTxHashes,
                   energyBeforeReclaim,
-                  threshold: oneTransactionThreshold,
-                  transactionDecrease: 1,
-                  reason: `Energy remaining (${energyBeforeReclaim}) >= ${oneTransactionThreshold}: user consumed 1 transaction`
+                  timeWindow: {
+                    from: new Date(lastCheckTime).toISOString(),
+                    to: new Date().toISOString()
+                  },
+                  reason: `Found ${actualTxCount} actual USDT transaction(s) on blockchain`
                 });
               } else {
-                // User had < 65k energy remaining = consumed > 67k = 2 transactions used
-                transactionDecrease = 2;
-                logger.info('[SimplifiedEnergyMonitor] Calculating transaction decrease', {
+                // NO actual transaction found - do NOT decrease
+                // This is the key fix: we only decrease on verified transactions
+                transactionDecrease = 0;
+                decreaseSource = 'NO_TRANSACTION';
+
+                logger.info('[SimplifiedEnergyMonitor] No actual transaction found - NOT decreasing count', {
                   address,
                   energyBeforeReclaim,
                   threshold: oneTransactionThreshold,
-                  transactionDecrease: 2,
-                  reason: `Energy remaining (${energyBeforeReclaim}) < ${oneTransactionThreshold}: user consumed 2 transactions`
+                  transactionDecrease: 0,
+                  timeWindow: {
+                    from: new Date(lastCheckTime).toISOString(),
+                    to: new Date().toISOString()
+                  },
+                  reason: 'No USDT transactions found on blockchain - skipping transaction decrease',
+                  note: 'Energy consumption without actual transaction detected - this is expected during monitoring cycles'
                 });
               }
 
-              // Cap at remaining transactions (don't go below 0)
-              transactionDecrease = Math.min(transactionDecrease, transactionsRemaining);
+              // Update lastTxCheckTimestamp to prevent double-counting
+              await prisma.userEnergyState.update({
+                where: { tronAddress: address },
+                data: { lastTxCheckTimestamp: new Date() }
+              });
+
             } else if (hadInactivityPenalty) {
               // Inactivity penalty already deducted 1 Tx, don't deduct again
               transactionDecrease = 0;
+              decreaseSource = 'INACTIVITY_PENALTY';
               logger.info('[SimplifiedEnergyMonitor] Skipping transaction decrease - inactivity penalty already applied', {
                 address,
                 energyBeforeReclaim,
@@ -716,6 +772,33 @@ export class SimplifiedEnergyMonitor {
             if (transactionDecrease > 0) {
               await this.updateEnergyDeliveryRecords(address, transactionDecrease);
             }
+
+            // Log the decrement with full audit trail
+            await transactionDecrementLogger.logDecrement({
+              tronAddress: address,
+              userId,
+              source: decreaseSource === 'ACTUAL_TRANSACTION'
+                ? DecrementSource.ACTUAL_TRANSACTION
+                : decreaseSource === 'INACTIVITY_PENALTY'
+                  ? DecrementSource.INACTIVITY_PENALTY
+                  : DecrementSource.NO_DECREMENT,
+              decrementAmount: transactionDecrease,
+              previousCount: transactionsRemaining,
+              newCount: newTransactionCount,
+              relatedTxHashes: actualTxHashes.length > 0 ? actualTxHashes : undefined,
+              cycleId,
+              reason: decreaseSource === 'ACTUAL_TRANSACTION'
+                ? `Found ${actualTxHashes.length} actual USDT transaction(s) on blockchain`
+                : decreaseSource === 'INACTIVITY_PENALTY'
+                  ? '24-hour inactivity penalty already applied this cycle'
+                  : 'No USDT transactions found on blockchain - no decrement',
+              metadata: {
+                energyBeforeReclaim,
+                energyBeforeDelegate: energyBeforeDelegate,
+                delegatedEnergy: delegateResult.actualEnergy,
+                verificationMethod: 'BLOCKCHAIN_TX_CHECK'
+              }
+            });
 
             // Pending transactions after delegation - use the new count we just set
             const pendingTransactionsAfter = newTransactionCount;
@@ -763,12 +846,14 @@ export class SimplifiedEnergyMonitor {
                 penaltyApplied: penaltyWasApplied,
                 reason: penaltyWasApplied ? '24h inactivity penalty - transaction count reduced' : undefined,
                 transactionDecreaseApplied: transactionDecrease,
+                decreaseSource: decreaseSource, // NEW: Track source of decrease decision
                 energyBeforeReclaim: energyBeforeReclaim,
-                calculationReason: hadInactivityPenalty
-                  ? 'Inactivity penalty already applied - skipped transaction decrease'
-                  : energyBeforeReclaim >= oneTransactionThreshold
-                    ? `Energy remaining (${energyBeforeReclaim}) >= ${oneTransactionThreshold}: 1 transaction used`
-                    : `Energy remaining (${energyBeforeReclaim}) < ${oneTransactionThreshold}: 2 transactions used`
+                verificationMethod: 'BLOCKCHAIN_TX_CHECK', // NEW: Indicate we used blockchain verification
+                calculationReason: decreaseSource === 'ACTUAL_TRANSACTION'
+                  ? `Found ${transactionDecrease} actual USDT transaction(s) on blockchain`
+                  : decreaseSource === 'INACTIVITY_PENALTY'
+                    ? 'Inactivity penalty already applied - skipped transaction decrease'
+                    : 'No USDT transactions found on blockchain - no decrease applied'
               }
             });
 
