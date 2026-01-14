@@ -112,6 +112,30 @@ export class SimplifiedEnergyMonitor {
   }
 
   /**
+   * Generate human-readable reason for transaction decrease calculation
+   * Used for audit logging to explain how the decrease was determined
+   */
+  private getCalculationReason(
+    source: 'ENERGY_BASED' | 'BLOCKCHAIN_VERIFIED' | 'NO_TRANSACTION' | 'INACTIVITY_PENALTY',
+    energyBeforeReclaim: number,
+    blockchainTxCount: number,
+    threshold: number
+  ): string {
+    if (source === 'BLOCKCHAIN_VERIFIED') {
+      return `Blockchain verified: ${blockchainTxCount} USDT transaction(s) found`;
+    } else if (source === 'ENERGY_BASED') {
+      if (energyBeforeReclaim >= threshold) {
+        return `Energy-based: ${energyBeforeReclaim} energy remaining >= ${threshold} threshold → 1 transaction`;
+      } else {
+        return `Energy-based: ${energyBeforeReclaim} energy remaining < ${threshold} threshold → 2 transactions`;
+      }
+    } else if (source === 'INACTIVITY_PENALTY') {
+      return '24-hour inactivity penalty applied';
+    }
+    return 'No transaction decrease - no energy consumption detected';
+  }
+
+  /**
    * Check and apply 24-hour inactivity penalty
    * Reduces transaction count by 1 if user hasn't received energy in 24+ hours
    *
@@ -655,79 +679,121 @@ export class SimplifiedEnergyMonitor {
               energyAfterDelegate = await energyService.getEnergyBalance(address);
             }
 
-            // Calculate transaction decrease based on ACTUAL blockchain transactions
-            // FIXED: Only decrease when we find real USDT transactions on the blockchain
+            // Calculate transaction decrease using HYBRID approach:
+            // 1. PRIMARY: Energy-based estimation (always reliable)
+            // 2. SECONDARY: Blockchain verification (for confirmation, with retry)
             let transactionDecrease = 0;
-            let decreaseSource: 'ACTUAL_TRANSACTION' | 'NO_TRANSACTION' | 'INACTIVITY_PENALTY' = 'NO_TRANSACTION';
+            let decreaseSource: 'ENERGY_BASED' | 'BLOCKCHAIN_VERIFIED' | 'NO_TRANSACTION' | 'INACTIVITY_PENALTY' = 'NO_TRANSACTION';
             let actualTxHashes: string[] = []; // Store tx hashes for audit logging
+            let blockchainVerified = false; // Track if blockchain confirmed the decrease
             const oneTransactionThreshold = this.energyThresholds?.oneTransactionThreshold || 65000;
 
             // Check if inactivity penalty was already applied for this address
             const hadInactivityPenalty = inactivityPenaltyAddresses.has(address);
 
             if (transactionsRemaining > 0 && !hadInactivityPenalty) {
-              // FIXED: Check for ACTUAL blockchain transactions instead of just energy levels
-              // Get the last delegation time to determine the time window for checking transactions
-              const lastDelegationState = await prisma.userEnergyState.findUnique({
-                where: { tronAddress: address },
-                select: { lastDelegationTime: true, lastTxCheckTimestamp: true }
-              });
+              // STEP 1: Energy-based estimation (PRIMARY - always reliable)
+              // This ensures we always have a reasonable estimate even if blockchain API fails
+              if (energyBeforeReclaim >= oneTransactionThreshold) {
+                // Energy >= 65k means user likely did 1 transaction
+                transactionDecrease = 1;
+                decreaseSource = 'ENERGY_BASED';
+              } else if (energyBeforeReclaim < oneTransactionThreshold && energyBeforeReclaim > 0) {
+                // Energy < 65k means user likely did 2 transactions (used more energy)
+                transactionDecrease = 2;
+                decreaseSource = 'ENERGY_BASED';
+              }
+              // If energyBeforeReclaim is 0 or very close to delegation amount, no energy was used = no decrease
 
-              const lastCheckTime = lastDelegationState?.lastTxCheckTimestamp ||
-                                   lastDelegationState?.lastDelegationTime ||
-                                   new Date(Date.now() - 10 * 60 * 1000); // Default 10 min ago
-
-              // Count actual USDT transactions since last check
-              const { tronscanService } = await import('./tronscan.service');
-              actualTxHashes = await tronscanService.getUsdtTransactionsBetween(
-                address,
-                new Date(lastCheckTime).getTime(),
-                Date.now()
-              );
-
-              const actualTxCount = actualTxHashes.length;
-
-              if (actualTxCount > 0) {
-                // User made ACTUAL transactions - decrease by the number of transactions found
-                transactionDecrease = Math.min(actualTxCount, transactionsRemaining);
-                decreaseSource = 'ACTUAL_TRANSACTION';
-
-                logger.info('[SimplifiedEnergyMonitor] ACTUAL transaction(s) found on blockchain', {
-                  address,
-                  actualTxCount,
-                  transactionDecrease,
-                  txHashes: actualTxHashes,
-                  energyBeforeReclaim,
-                  timeWindow: {
-                    from: new Date(lastCheckTime).toISOString(),
-                    to: new Date().toISOString()
-                  },
-                  reason: `Found ${actualTxCount} actual USDT transaction(s) on blockchain`
+              // STEP 2: Blockchain verification (SECONDARY - for confirmation)
+              // This confirms or adjusts the energy-based estimate with actual blockchain data
+              try {
+                const lastDelegationState = await prisma.userEnergyState.findUnique({
+                  where: { tronAddress: address },
+                  select: { lastDelegationTime: true, lastTxCheckTimestamp: true }
                 });
-              } else {
-                // NO actual transaction found - do NOT decrease
-                // This is the key fix: we only decrease on verified transactions
-                transactionDecrease = 0;
-                decreaseSource = 'NO_TRANSACTION';
 
-                logger.info('[SimplifiedEnergyMonitor] No actual transaction found - NOT decreasing count', {
+                const lastCheckTime = lastDelegationState?.lastTxCheckTimestamp ||
+                                     lastDelegationState?.lastDelegationTime ||
+                                     new Date(Date.now() - 10 * 60 * 1000); // Default 10 min ago
+
+                // Use retry-enabled method for more reliable blockchain verification
+                const { tronscanService } = await import('./tronscan.service');
+                actualTxHashes = await tronscanService.getUsdtTransactionsBetweenWithRetry(
                   address,
-                  energyBeforeReclaim,
-                  threshold: oneTransactionThreshold,
-                  transactionDecrease: 0,
-                  timeWindow: {
-                    from: new Date(lastCheckTime).toISOString(),
-                    to: new Date().toISOString()
-                  },
-                  reason: 'No USDT transactions found on blockchain - skipping transaction decrease',
-                  note: 'Energy consumption without actual transaction detected - this is expected during monitoring cycles'
+                  new Date(lastCheckTime).getTime(),
+                  Date.now()
+                );
+
+                if (actualTxHashes.length > 0) {
+                  // Blockchain confirms transaction(s)
+                  blockchainVerified = true;
+                  decreaseSource = 'BLOCKCHAIN_VERIFIED';
+
+                  // Use blockchain count if it differs from energy estimation
+                  if (actualTxHashes.length !== transactionDecrease) {
+                    logger.info('[SimplifiedEnergyMonitor] Blockchain count differs from energy estimate', {
+                      address,
+                      energyEstimate: transactionDecrease,
+                      blockchainCount: actualTxHashes.length,
+                      using: 'blockchain',
+                      energyBeforeReclaim,
+                      threshold: oneTransactionThreshold
+                    });
+                    transactionDecrease = Math.min(actualTxHashes.length, transactionsRemaining);
+                  }
+
+                  logger.info('[SimplifiedEnergyMonitor] Blockchain verified transaction(s)', {
+                    address,
+                    blockchainTxCount: actualTxHashes.length,
+                    transactionDecrease,
+                    txHashes: actualTxHashes,
+                    energyBeforeReclaim
+                  });
+                } else if (transactionDecrease > 0) {
+                  // No blockchain transactions found, but energy-based suggests there should be
+                  // Keep the energy-based estimate (user may have used energy for non-USDT tx)
+                  logger.info('[SimplifiedEnergyMonitor] No blockchain tx found, using energy-based estimate', {
+                    address,
+                    energyBasedDecrease: transactionDecrease,
+                    energyBeforeReclaim,
+                    threshold: oneTransactionThreshold,
+                    reason: 'Energy consumed but no USDT tx on chain - possible non-USDT activity'
+                  });
+                }
+
+                // Update lastTxCheckTimestamp to prevent double-counting
+                await prisma.userEnergyState.update({
+                  where: { tronAddress: address },
+                  data: { lastTxCheckTimestamp: new Date() }
                 });
+
+              } catch (error) {
+                // Blockchain verification failed after retries - use energy-based estimate
+                logger.warn('[SimplifiedEnergyMonitor] Blockchain verification failed, using energy estimate', {
+                  address,
+                  error: error instanceof Error ? error.message : 'Unknown',
+                  energyBasedDecrease: transactionDecrease,
+                  energyBeforeReclaim,
+                  threshold: oneTransactionThreshold
+                });
+                // Keep the energy-based transactionDecrease - don't set to 0 just because API failed
               }
 
-              // Update lastTxCheckTimestamp to prevent double-counting
-              await prisma.userEnergyState.update({
-                where: { tronAddress: address },
-                data: { lastTxCheckTimestamp: new Date() }
+              // Cap at remaining transactions
+              transactionDecrease = Math.min(transactionDecrease, transactionsRemaining);
+
+              // Log the final decision
+              logger.info('[SimplifiedEnergyMonitor] Transaction decrease calculated (HYBRID)', {
+                address,
+                energyBeforeReclaim,
+                threshold: oneTransactionThreshold,
+                transactionDecrease,
+                decreaseSource,
+                blockchainVerified,
+                blockchainTxCount: actualTxHashes.length,
+                txHashes: actualTxHashes,
+                calculationReason: this.getCalculationReason(decreaseSource, energyBeforeReclaim, actualTxHashes.length, oneTransactionThreshold)
               });
 
             } else if (hadInactivityPenalty) {
@@ -774,29 +840,31 @@ export class SimplifiedEnergyMonitor {
             }
 
             // Log the decrement with full audit trail
+            // Map hybrid decrease sources to decrement logger sources
+            const loggerSource = (decreaseSource === 'BLOCKCHAIN_VERIFIED' || decreaseSource === 'ENERGY_BASED')
+              ? DecrementSource.ACTUAL_TRANSACTION  // Both indicate actual transaction usage
+              : decreaseSource === 'INACTIVITY_PENALTY'
+                ? DecrementSource.INACTIVITY_PENALTY
+                : DecrementSource.NO_DECREMENT;
+
             await transactionDecrementLogger.logDecrement({
               tronAddress: address,
               userId,
-              source: decreaseSource === 'ACTUAL_TRANSACTION'
-                ? DecrementSource.ACTUAL_TRANSACTION
-                : decreaseSource === 'INACTIVITY_PENALTY'
-                  ? DecrementSource.INACTIVITY_PENALTY
-                  : DecrementSource.NO_DECREMENT,
+              source: loggerSource,
               decrementAmount: transactionDecrease,
               previousCount: transactionsRemaining,
               newCount: newTransactionCount,
               relatedTxHashes: actualTxHashes.length > 0 ? actualTxHashes : undefined,
               cycleId,
-              reason: decreaseSource === 'ACTUAL_TRANSACTION'
-                ? `Found ${actualTxHashes.length} actual USDT transaction(s) on blockchain`
-                : decreaseSource === 'INACTIVITY_PENALTY'
-                  ? '24-hour inactivity penalty already applied this cycle'
-                  : 'No USDT transactions found on blockchain - no decrement',
+              reason: this.getCalculationReason(decreaseSource, energyBeforeReclaim, actualTxHashes.length, oneTransactionThreshold),
               metadata: {
                 energyBeforeReclaim,
                 energyBeforeDelegate: energyBeforeDelegate,
                 delegatedEnergy: delegateResult.actualEnergy,
-                verificationMethod: 'BLOCKCHAIN_TX_CHECK'
+                verificationMethod: 'HYBRID_ENERGY_BLOCKCHAIN',
+                decreaseSource: decreaseSource,
+                blockchainVerified: blockchainVerified,
+                energyThreshold: oneTransactionThreshold
               }
             });
 
@@ -806,14 +874,17 @@ export class SimplifiedEnergyMonitor {
             // Check if this address had an inactivity penalty applied
             const penaltyWasApplied = inactivityPenaltyAddresses.has(address);
 
-            // Check for recent USDT transactions (for audit purposes)
-            const recentUsdtTx = await energyAuditRecorder.getLatestUsdtTransaction(address);
+            // FIXED: Use the SAME transaction hashes we already fetched for decrement calculation
+            // This ensures hasActualTransaction and transactionDecrease are ALWAYS consistent
+            // Previously used a separate getLatestUsdtTransaction() call with a different 5-minute window
+            // which caused hasActualTransaction=true but transactionDecrease=0 inconsistencies
+            const hasActualTransaction = actualTxHashes.length > 0;
+            const relatedUsdtTxHash = actualTxHashes.length > 0 ? actualTxHashes[0] : undefined;
 
             // Determine if this is a system issue
             // Now that we're actually decrementing counts, a cycle is only a system issue if:
             // - No transactions remaining (shouldn't be getting energy)
             const isSystemIssue = transactionsRemaining === 0 && !penaltyWasApplied;
-            const hasActualTransaction = recentUsdtTx !== null;
 
             let finalIssueType: string | undefined = undefined;
             if (isSystemIssue) {
@@ -836,7 +907,7 @@ export class SimplifiedEnergyMonitor {
               pendingTransactionsBefore: transactionsRemaining, // Before decrement
               pendingTransactionsAfter: newTransactionCount, // After decrement
               transactionDecrease: transactionDecrease, // ACTUAL decrease applied to database
-              relatedUsdtTxHash: recentUsdtTx || undefined,
+              relatedUsdtTxHash: relatedUsdtTxHash,
               hasActualTransaction: hasActualTransaction,
               isSystemIssue: isSystemIssue,
               issueType: finalIssueType,
@@ -846,14 +917,14 @@ export class SimplifiedEnergyMonitor {
                 penaltyApplied: penaltyWasApplied,
                 reason: penaltyWasApplied ? '24h inactivity penalty - transaction count reduced' : undefined,
                 transactionDecreaseApplied: transactionDecrease,
-                decreaseSource: decreaseSource, // NEW: Track source of decrease decision
+                // HYBRID approach tracking
+                decreaseSource: decreaseSource, // 'ENERGY_BASED' | 'BLOCKCHAIN_VERIFIED' | 'NO_TRANSACTION' | 'INACTIVITY_PENALTY'
+                blockchainVerified: blockchainVerified, // true if blockchain confirmed the transactions
                 energyBeforeReclaim: energyBeforeReclaim,
-                verificationMethod: 'BLOCKCHAIN_TX_CHECK', // NEW: Indicate we used blockchain verification
-                calculationReason: decreaseSource === 'ACTUAL_TRANSACTION'
-                  ? `Found ${transactionDecrease} actual USDT transaction(s) on blockchain`
-                  : decreaseSource === 'INACTIVITY_PENALTY'
-                    ? 'Inactivity penalty already applied - skipped transaction decrease'
-                    : 'No USDT transactions found on blockchain - no decrease applied'
+                energyThreshold: oneTransactionThreshold, // The 65k threshold used
+                blockchainTxCount: actualTxHashes.length, // How many tx found on blockchain
+                verificationMethod: 'HYBRID_ENERGY_BLOCKCHAIN', // Energy-based PRIMARY + Blockchain SECONDARY
+                calculationReason: this.getCalculationReason(decreaseSource, energyBeforeReclaim, actualTxHashes.length, oneTransactionThreshold)
               }
             });
 
@@ -875,9 +946,12 @@ export class SimplifiedEnergyMonitor {
                   energyBefore: energyBeforeDelegate,
                   hasActualTransaction: hasActualTransaction,
                   isSystemIssue: isSystemIssue,
-                  reason: transactionDecrease > 0
-                    ? `Energy delegated - transaction count decreased by ${transactionDecrease} based on energy consumption`
-                    : 'Energy delegated - no transaction decrease (already at 0)'
+                  // HYBRID approach tracking
+                  decreaseSource: decreaseSource,
+                  blockchainVerified: blockchainVerified,
+                  energyThreshold: oneTransactionThreshold,
+                  blockchainTxCount: actualTxHashes.length,
+                  reason: this.getCalculationReason(decreaseSource, energyBeforeReclaim, actualTxHashes.length, oneTransactionThreshold)
                 }
               }
             });

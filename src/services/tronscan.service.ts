@@ -833,6 +833,70 @@ class TronScanService {
   }
 
   /**
+   * Get USDT transactions with retry logic for more reliable blockchain verification
+   * Unlike getUsdtTransactionsBetween, this method:
+   * - Retries on failures with exponential backoff
+   * - Throws error instead of returning empty array on failure
+   * This allows callers to distinguish "no transactions" from "API failure"
+   *
+   * @param address TRON address to query
+   * @param startTimestamp Start time in milliseconds
+   * @param endTimestamp End time in milliseconds
+   * @param maxRetries Maximum retry attempts (default: 3)
+   * @returns Array of USDT transaction hashes
+   * @throws Error if all retries fail
+   */
+  async getUsdtTransactionsBetweenWithRetry(
+    address: string,
+    startTimestamp: number,
+    endTimestamp: number,
+    maxRetries: number = 3
+  ): Promise<string[]> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        // Call the base method - it may throw or return empty array
+        const result = await this.getUsdtTransactionsBetween(address, startTimestamp, endTimestamp);
+
+        // Success - return result (even if empty, it means no transactions found)
+        logger.debug('[TronScan] getUsdtTransactionsBetweenWithRetry succeeded', {
+          address,
+          attempt,
+          resultCount: result.length
+        });
+
+        return result;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('Unknown error');
+
+        logger.warn('[TronScan] Retry attempt failed', {
+          address,
+          attempt,
+          maxRetries,
+          error: lastError.message,
+          willRetry: attempt < maxRetries
+        });
+
+        if (attempt < maxRetries) {
+          // Exponential backoff: 1s, 2s, 4s
+          const delayMs = Math.pow(2, attempt - 1) * 1000;
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+      }
+    }
+
+    // All retries failed - throw so caller knows it was a failure, not "no transactions"
+    logger.error('[TronScan] All retry attempts failed', {
+      address,
+      maxRetries,
+      error: lastError?.message
+    });
+
+    throw lastError || new Error('All retry attempts failed for getUsdtTransactionsBetween');
+  }
+
+  /**
    * Get comprehensive transaction analysis for an address
    * Fetches all transaction history and analyzes patterns
    * @param address TRON address to analyze
