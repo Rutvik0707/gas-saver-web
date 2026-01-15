@@ -25,7 +25,7 @@ type EnergyUserStatus = 'ACTIVE' | 'SUSPENDED' | 'BANNED';
  */
 export class EnergyUsageMonitorService {
   private readonly ENERGY_UNIT = 65500;
-  private readonly FULL_BUFFER = 130500; // Reduced from 131000 to account for natural energy generation from staked TRX
+  private readonly FULL_BUFFER = 131000; // Aligned with DELEGATION_AMOUNT in simplified-energy-monitor and twoTransactionThreshold in DB
   private readonly MIN_BUFFER_AFTER_PENALTY = 66000; // keep ~1 tx minimum
   private readonly SMALL_USAGE_THRESHOLD = 500; // ignore minor fluctuations
   private readonly INACTIVITY_PENALTY_HOURS = 24;
