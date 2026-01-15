@@ -17,7 +17,7 @@ export class SimplifiedEnergyMonitor {
   private readonly TRON_API_URL = 'https://apilist.tronscanapi.com/api';
   private readonly SYSTEM_WALLET = config.systemWallet.address;
   private readonly API_DELAY_MS = 1500;    // 1.5s between API calls to avoid rate limiting
-  private readonly DELEGATION_AMOUNT = 130500;  // Fixed delegation amount - aligned with FULL_BUFFER in energy-usage-monitor
+  private readonly DELEGATION_AMOUNT = 131000;  // Fixed delegation amount - aligned with FULL_BUFFER in energy-usage-monitor
   private readonly COOLDOWN_MINUTES = 5;  // 5-minute cooldown between delegations
   private readonly INACTIVITY_PENALTY_HOURS = 24;  // Apply penalty after 24 hours of inactivity
   private isRunning = false;
@@ -630,7 +630,7 @@ export class SimplifiedEnergyMonitor {
               continue; // Skip delegation for this address
             }
 
-            // Use fixed delegation amount of 130500 (aligned with FULL_BUFFER)
+            // Use fixed delegation amount of 131000 (within FULL_BUFFER 1% tolerance)
             logger.info('[SimplifiedEnergyMonitor] Using fixed delegation amount', {
               configured: this.DELEGATION_AMOUNT
             });
@@ -647,7 +647,7 @@ export class SimplifiedEnergyMonitor {
 
             const delegateResult = await energyService.transferEnergyDirect(
               address,
-              this.DELEGATION_AMOUNT, // Use fixed amount of 130500 (aligned with FULL_BUFFER)
+              this.DELEGATION_AMOUNT, // Use fixed amount of 131000 (within FULL_BUFFER 1% tolerance)
               userId,
               false // No buffer, exact amount
             );
