@@ -542,9 +542,11 @@ export class SimplifiedEnergyMonitor {
                   const energyAfterReclaim = await energyService.getEnergyBalance(address);
 
                   // Record RECLAIM audit entry
-                  // NOTE: reclaimedEnergy uses energyBeforeReclaim (actual user energy balance)
-                  // instead of reclaimResult.reclaimedEnergy (computed from delegation SUN)
-                  // This ensures the UI shows what was actually in the user's account
+                  // NOTE: reclaimedEnergy uses the delegated energy from blockchain/API
+                  // Priority: delegation.resourceValue (from TronScan API) > reclaimResult.reclaimedEnergy (computed)
+                  // This ensures the UI shows the actual delegated energy that was reclaimed
+                  const actualReclaimedEnergy = delegation.resourceValue || reclaimResult.reclaimedEnergy;
+
                   await energyAuditRecorder.recordReclaim({
                     tronAddress: address,
                     userId,
@@ -554,12 +556,13 @@ export class SimplifiedEnergyMonitor {
                     energyAfter: energyAfterReclaim,
                     reclaimedSun: BigInt(Math.floor(reclaimResult.reclaimedTrx * 1_000_000)),
                     reclaimedTrx: reclaimResult.reclaimedTrx,
-                    reclaimedEnergy: energyBeforeReclaim,  // Use actual energy before reclaim
+                    reclaimedEnergy: actualReclaimedEnergy,  // Use actual delegated energy from blockchain
                     pendingTransactionsBefore,
                     metadata: {
                       delegatedSun: delegation.balance,
                       delegatedEnergyFromApi: delegation.resourceValue,
-                      computedReclaimEnergy: reclaimResult.reclaimedEnergy,  // Keep for reference
+                      computedReclaimEnergy: reclaimResult.reclaimedEnergy,
+                      userEnergyBeforeReclaim: energyBeforeReclaim,  // Keep for reference
                       source: 'simplified_energy_monitor'
                     }
                   });
@@ -736,17 +739,59 @@ export class SimplifiedEnergyMonitor {
                     energyBeforeReclaim
                   });
                 } else {
-                  // NO blockchain transactions found - DO NOT DECREMENT
-                  // This is the critical fix: no verified tx = no decrement
-                  transactionDecrease = 0;
-                  decreaseSource = 'NO_TRANSACTION';
+                  // NO blockchain transactions found - check energy consumption as fallback
+                  // HYBRID APPROACH: If blockchain verification finds 0 transactions but energy was
+                  // significantly consumed, use energy-based calculation to avoid missing legitimate decrements
+                  // This catches cases where:
+                  // 1. USDT transactions were sent TO system wallet (filtered out in blockchain query)
+                  // 2. User made non-USDT transactions that consumed energy
+                  // 3. TronScan API missed the transactions
 
-                  logger.info('[SimplifiedEnergyMonitor] No blockchain tx found - NOT decrementing (preserving user credits)', {
-                    address,
-                    energyBeforeReclaim,
-                    expectedEnergy: this.DELEGATION_AMOUNT,
-                    reason: 'No USDT transactions verified on blockchain - transaction count preserved'
-                  });
+                  const energyConsumed = this.DELEGATION_AMOUNT - energyBeforeReclaim;
+                  const energyBasedTxCount = Math.floor(energyConsumed / oneTransactionThreshold);
+
+                  if (energyBasedTxCount > 0 && energyBeforeReclaim < oneTransactionThreshold) {
+                    // Energy shows significant consumption (2+ transactions worth)
+                    // Use energy-based calculation as fallback
+                    transactionDecrease = Math.min(energyBasedTxCount, transactionsRemaining);
+                    decreaseSource = 'ENERGY_BASED';
+
+                    logger.info('[SimplifiedEnergyMonitor] No blockchain tx found but energy consumed - using ENERGY-BASED fallback', {
+                      address,
+                      energyBeforeReclaim,
+                      expectedEnergy: this.DELEGATION_AMOUNT,
+                      energyConsumed,
+                      energyBasedTxCount,
+                      transactionDecrease,
+                      reason: 'Blockchain verification found 0 tx but energy consumption indicates usage - applying energy-based decrease'
+                    });
+                  } else if (energyBasedTxCount === 1 && energyBeforeReclaim < this.DELEGATION_AMOUNT * 0.6) {
+                    // Energy shows ~1 transaction consumed (energy below 60% of delegation)
+                    transactionDecrease = Math.min(1, transactionsRemaining);
+                    decreaseSource = 'ENERGY_BASED';
+
+                    logger.info('[SimplifiedEnergyMonitor] No blockchain tx found but moderate energy consumed - using ENERGY-BASED fallback', {
+                      address,
+                      energyBeforeReclaim,
+                      expectedEnergy: this.DELEGATION_AMOUNT,
+                      energyConsumed,
+                      transactionDecrease,
+                      reason: 'Energy consumption indicates ~1 transaction used'
+                    });
+                  } else {
+                    // Energy shows no significant consumption - preserve user credits
+                    transactionDecrease = 0;
+                    decreaseSource = 'NO_TRANSACTION';
+
+                    logger.info('[SimplifiedEnergyMonitor] No blockchain tx found and no energy consumed - preserving user credits', {
+                      address,
+                      energyBeforeReclaim,
+                      expectedEnergy: this.DELEGATION_AMOUNT,
+                      energyConsumed,
+                      energyBasedTxCount,
+                      reason: 'No USDT transactions verified and energy shows minimal/no usage - transaction count preserved'
+                    });
+                  }
                 }
 
                 // Update lastTxCheckTimestamp to prevent double-counting
