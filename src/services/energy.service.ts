@@ -301,13 +301,12 @@ export class EnergyService {
   private async delegateEnergyToAddress(userAddress: string, energyAmount: number, includeBuffer: boolean = true): Promise<string> {
     // Real TRON energy delegation implementation
     // Prerequisites: System wallet must have staked TRX to generate energy
-    
+
     const systemWalletAddress = config.systemWallet.address;
-    
+    const TARGET_ENERGY = 131000; // Fixed target: exactly 131k energy
+    const ENERGY_TOLERANCE = 500; // Allow ±500 energy variance
+
     try {
-      
-      // TRON's delegateResource expects the resource amount directly, not TRX value
-      // We pass the energy amount directly
       logger.info('🔋 Creating energy delegation transaction', {
         from: systemWalletAddress,
         to: userAddress,
@@ -317,92 +316,76 @@ export class EnergyService {
         timestamp: new Date().toISOString(),
       });
 
-      // Create resource delegation transaction
-      // IMPORTANT: In TRON's Stake 2.0, delegateResource expects:
-      // - amount: The amount in SUN of staked TRX to delegate
-      // Get current energy per TRX ratio dynamically from network
-      const energyPerTrx = await this.getCachedEnergyPerTrx();
-      const trxAmount = energyAmount / energyPerTrx;
-      
-      // Use precise TRX amount for accurate delegation
-      // Buffer is optional - for monitor we want exact amounts, for user deposits we add safety margin
-      const bufferMultiplier = includeBuffer ? 1.05 : 1.0; // 5% buffer only if requested
-      const bufferedTrxAmount = trxAmount * bufferMultiplier;
-
-      // For exact energy delegation, check if this is from simplified monitor
-      // MUST be EXACTLY 130,500 to use hardcoded constant (aligned with FULL_BUFFER)
-      const isSimplifiedMonitor = !includeBuffer && energyAmount === 131000;
+      // For exact 131k delegation (from simplified monitor), use DYNAMIC calculation
+      const isExact131kDelegation = !includeBuffer && energyAmount === TARGET_ENERGY;
 
       let delegationTrxAmount: number;
-      let roundingBuffer: number; // Declare here for proper scope
+      let delegationAmountSun: number;
+      let expectedEnergy: number;
+      let energyPerTrx: number;
 
-      if (isSimplifiedMonitor) {
-        // HARDCODED DELEGATION: Use exact pre-determined SUN amount for 131k energy
-        // This bypasses ALL calculations to ensure deterministic, repeatable results
-        // The magic number is determined by manual testing on mainnet
-        const delegationAmountSunHardcoded = this.EXACT_SUN_FOR_131K_ENERGY;
-        delegationTrxAmount = delegationAmountSunHardcoded / 1_000_000;
+      if (isExact131kDelegation) {
+        // DYNAMIC DELEGATION: Calculate exact TRX needed for 131k energy based on current network ratio
+        // This replaces the old hardcoded approach that failed when network conditions changed
+        const calculation = await chainParametersService.calculateTrxForEnergy(TARGET_ENERGY);
 
-        logger.info('[EnergyService] 🔒 Using HARDCODED SUN amount for exact 131k energy', {
-          requestedEnergy: energyAmount,
-          hardcodedSunAmount: delegationAmountSunHardcoded,
-          hardcodedTrxAmount: delegationTrxAmount,
-          note: 'This is a FIXED value - no calculations, no variables, no variance',
-          guarantee: 'TRON network will convert this exact SUN amount to 131,000 energy',
-          warning: 'If actual energy ≠ 131k, update EXACT_SUN_FOR_131K_ENERGY constant'
+        delegationTrxAmount = calculation.trxAmount;
+        delegationAmountSun = calculation.sunAmount;
+        expectedEnergy = calculation.expectedEnergy;
+        energyPerTrx = calculation.ratio;
+
+        logger.info('[EnergyService] 🎯 DYNAMIC calculation for exact 131k energy', {
+          targetEnergy: TARGET_ENERGY,
+          calculatedTrx: delegationTrxAmount,
+          calculatedSun: delegationAmountSun,
+          expectedEnergy,
+          energyRatio: energyPerTrx.toFixed(4),
+          confidence: calculation.confidence,
+          note: 'Using real-time network ratio for accurate delegation'
         });
 
-        // Override the delegationAmountSun to use our hardcoded value
-        // This will skip the Math.ceil conversion below
-        roundingBuffer = 0;
+        // VALIDATION: Stop delegation if we can't guarantee at least 131k energy
+        if (expectedEnergy < TARGET_ENERGY) {
+          const shortfall = TARGET_ENERGY - expectedEnergy;
+          logger.error('[EnergyService] ❌ STOPPING DELEGATION - Cannot guarantee 131k energy', {
+            targetEnergy: TARGET_ENERGY,
+            expectedEnergy,
+            shortfall,
+            energyRatio: energyPerTrx.toFixed(4),
+            trxAmount: delegationTrxAmount,
+            reason: 'Expected energy is less than target 131k - delegation would be insufficient',
+            action: 'Delegation ABORTED to prevent user from receiving less than expected'
+          });
+          throw new Error(`Cannot delegate exact 131k energy. Expected: ${expectedEnergy}, Target: ${TARGET_ENERGY}. Current ratio: ${energyPerTrx.toFixed(4)}. Shortfall: ${shortfall} energy.`);
+        }
+
+        logger.info('[EnergyService] ✅ Validation passed - can achieve 131k energy', {
+          targetEnergy: TARGET_ENERGY,
+          expectedEnergy,
+          surplus: expectedEnergy - TARGET_ENERGY
+        });
+
       } else {
-        // For normal delegations, add small buffer for safety
-        const isMainnet = config.tron.network === 'mainnet';
-        roundingBuffer = includeBuffer ? 0 : (isMainnet ? 0.01 : 0.01); // Small buffer only
-        delegationTrxAmount = Math.max(1, bufferedTrxAmount + roundingBuffer);
+        // For normal delegations (with buffer), use standard calculation
+        energyPerTrx = await this.getCachedEnergyPerTrx();
+        const trxAmount = energyAmount / energyPerTrx;
+        const bufferMultiplier = includeBuffer ? 1.05 : 1.0;
+        delegationTrxAmount = Math.max(1, trxAmount * bufferMultiplier);
+        delegationAmountSun = Math.ceil(tronUtils.toSun(delegationTrxAmount));
+        expectedEnergy = Math.floor(delegationTrxAmount * energyPerTrx);
       }
 
-      // Convert to SUN and ensure it's an integer
-      // For simplified monitor, use the hardcoded value; otherwise calculate
-      const delegationAmountSun = isSimplifiedMonitor
-        ? this.EXACT_SUN_FOR_131K_ENERGY  // HARDCODED - no calculation
-        : Math.ceil(tronUtils.toSun(delegationTrxAmount)); // Calculated for normal delegations
-      
-      // For mainnet with configured energy target, validate the calculation
-      const activeRate = await prisma.energyRate.findFirst({
-        where: { isActive: true },
-        orderBy: { createdAt: 'desc' }
-      });
-      const expectedEnergy = Math.floor(delegationTrxAmount * energyPerTrx);
-      const isExactTarget = energyAmount === activeRate?.twoTransactionThreshold && !includeBuffer;
-      
-      if (isExactTarget && expectedEnergy < energyAmount) {
-        logger.warn('⚠️ Energy delegation may be insufficient!', {
-          requested: energyAmount,
-          expected: expectedEnergy,
-          shortfall: energyAmount - expectedEnergy,
-          suggestion: `Need to delegate ${Math.ceil(energyAmount / energyPerTrx) + 1} TRX`
-        });
-      }
-      
+      // Log final delegation amounts
       logger.info('📐 Delegation amounts calculated', {
         network: config.tron.network,
-        step1_requestedEnergy: energyAmount,
-        step2_energyPerTrx: energyPerTrx,
-        step3_calculatedTrxAmount: trxAmount,
-        step4_delegationTrxAmount: delegationTrxAmount.toFixed(6),
-        step4b_withoutBuffer: trxAmount.toFixed(6),
-        step5_delegationAmountSun: delegationAmountSun,
-        step6_estimatedEnergyReceived: expectedEnergy,
+        requestedEnergy: energyAmount,
+        energyPerTrx: energyPerTrx.toFixed(4),
+        delegationTrxAmount: delegationTrxAmount.toFixed(2),
+        delegationAmountSun,
+        expectedEnergy,
         includeBuffer,
-        bufferMultiplier,
-        roundingBuffer,
-        calculation: includeBuffer 
-          ? `${energyAmount} energy ÷ ${energyPerTrx.toFixed(2)} = ${trxAmount.toFixed(6)} TRX × ${bufferMultiplier} buffer = ${delegationTrxAmount.toFixed(6)} TRX → ${delegationAmountSun} SUN`
-          : `${energyAmount} energy ÷ ${energyPerTrx.toFixed(2)} = ${trxAmount.toFixed(6)} TRX + ${roundingBuffer} buffer = ${delegationTrxAmount.toFixed(6)} TRX → ${delegationAmountSun} SUN`,
-        note: includeBuffer 
-          ? `Delegating ${delegationTrxAmount.toFixed(2)} TRX to provide ~${expectedEnergy.toLocaleString()} energy (requested: ${energyAmount.toLocaleString()} + 5% buffer)`
-          : `Delegating ${delegationTrxAmount.toFixed(2)} TRX to provide ${expectedEnergy.toLocaleString()} energy (target: ${energyAmount.toLocaleString()})`,
+        isExact131kDelegation,
+        calculation: `${energyAmount} energy ÷ ${energyPerTrx.toFixed(4)} ratio = ${delegationTrxAmount.toFixed(2)} TRX → ${delegationAmountSun} SUN → ~${expectedEnergy} energy`,
         validation: expectedEnergy >= energyAmount ? '✅ SUFFICIENT' : '⚠️ MAY BE INSUFFICIENT'
       });
       
@@ -505,24 +488,64 @@ export class EnergyService {
         broadcastResult = await (systemTronWeb as any).trx.sendRawTransaction(signedTx);
         
         if (broadcastResult.result) {
-          // Calculate estimated vs actual energy
-          const estimatedEnergy = Math.floor(delegationTrxAmount * energyPerTrx);
-          const discrepancyPercent = Math.abs((estimatedEnergy - energyAmount) / energyAmount * 100);
-          
-          logger.info('✅ Energy delegation transaction successful', {
+          logger.info('✅ Energy delegation transaction broadcast successful', {
             userAddress,
             txHash: broadcastResult.txid,
             requestedEnergy: energyAmount,
-            delegatedTrxAmount: delegationTrxAmount.toFixed(6),
+            delegatedTrxAmount: delegationTrxAmount.toFixed(2),
             delegatedSunAmount: delegationAmountSun,
-            estimatedEnergyFromTrx: estimatedEnergy,
-            actualVsRequestedDiff: estimatedEnergy - energyAmount,
-            accuracyPercent: ((estimatedEnergy / energyAmount) * 100).toFixed(1),
+            expectedEnergy,
             systemWallet: systemWalletAddress,
-            tronscanUrl: `https://shasta.tronscan.org/#/transaction/${broadcastResult.txid}`,
-            note: `Using dynamic ratio: ${energyPerTrx.toFixed(2)} energy per TRX`,
-            warning: discrepancyPercent > 10 ? `Energy estimation off by ${discrepancyPercent.toFixed(1)}%` : undefined
+            tronscanUrl: `https://tronscan.org/#/transaction/${broadcastResult.txid}`,
+            note: `Using dynamic ratio: ${energyPerTrx.toFixed(4)} energy per TRX`
           });
+
+          // POST-DELEGATION VERIFICATION for exact 131k delegations
+          if (isExact131kDelegation) {
+            // Wait for blockchain confirmation (TRON ~3 seconds per block)
+            logger.info('[EnergyService] ⏳ Waiting for blockchain confirmation to verify energy...', {
+              userAddress,
+              txHash: broadcastResult.txid
+            });
+            await new Promise(resolve => setTimeout(resolve, 6000)); // Wait 6 seconds
+
+            // Check actual energy balance
+            const actualEnergy = await this.getEnergyBalance(userAddress);
+            const energyDifference = actualEnergy - TARGET_ENERGY;
+
+            if (actualEnergy >= TARGET_ENERGY - ENERGY_TOLERANCE && actualEnergy <= TARGET_ENERGY + ENERGY_TOLERANCE) {
+              // Within tolerance - success
+              logger.info('[EnergyService] ✅ POST-DELEGATION VERIFICATION PASSED - Exact 131k achieved', {
+                userAddress,
+                targetEnergy: TARGET_ENERGY,
+                actualEnergy,
+                difference: energyDifference,
+                tolerance: ENERGY_TOLERANCE,
+                txHash: broadcastResult.txid
+              });
+            } else if (actualEnergy < TARGET_ENERGY - ENERGY_TOLERANCE) {
+              // Below tolerance - warning (delegation already happened, can't undo)
+              logger.warn('[EnergyService] ⚠️ POST-DELEGATION VERIFICATION WARNING - Energy below target', {
+                userAddress,
+                targetEnergy: TARGET_ENERGY,
+                actualEnergy,
+                shortfall: TARGET_ENERGY - actualEnergy,
+                tolerance: ENERGY_TOLERANCE,
+                txHash: broadcastResult.txid,
+                action: 'Delegation completed but energy is below expected. May need manual adjustment.'
+              });
+            } else {
+              // Above tolerance - acceptable (user got more than expected)
+              logger.info('[EnergyService] ✅ POST-DELEGATION VERIFICATION - Energy above target (acceptable)', {
+                userAddress,
+                targetEnergy: TARGET_ENERGY,
+                actualEnergy,
+                surplus: actualEnergy - TARGET_ENERGY,
+                txHash: broadcastResult.txid
+              });
+            }
+          }
+
           return broadcastResult.txid;
         } else {
           logger.error('Broadcast failed', {
