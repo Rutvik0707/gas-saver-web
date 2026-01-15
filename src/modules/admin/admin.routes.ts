@@ -1002,4 +1002,125 @@ router.use('/transactions', transactionManagementRoutes);
 import { transactionAuditRoutes } from './transaction-audit/transaction-audit.routes';
 router.use('/', transactionAuditRoutes);
 
+// ==================================================================================
+// Address Transaction Management Routes (Super Admin only)
+// ==================================================================================
+
+/**
+ * @swagger
+ * /admin/addresses/{address}/transactions:
+ *   get:
+ *     tags: [Admin]
+ *     summary: Get transaction info for a specific address
+ *     description: Retrieve current transaction count and status for a TRON address (Super Admin only)
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: address
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: TRON address to lookup
+ *         example: TSRHdJJsqz6jxnvnz7kPKNnbJggr4XCeg5
+ *     responses:
+ *       200:
+ *         description: Transaction info retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     tronAddress:
+ *                       type: string
+ *                     transactionsRemaining:
+ *                       type: number
+ *                     status:
+ *                       type: string
+ *                     userId:
+ *                       type: string
+ *                     userEmail:
+ *                       type: string
+ *                     lastDelegationTime:
+ *                       type: string
+ *                       format: date-time
+ *       404:
+ *         description: Address not found
+ *       403:
+ *         description: Insufficient permissions
+ */
+router.get('/addresses/:address/transactions', ...adminAuth(requireSuperAdmin), adminController.getAddressTransactionInfo);
+
+/**
+ * @swagger
+ * /admin/addresses/{address}/transactions:
+ *   put:
+ *     tags: [Admin]
+ *     summary: Set transaction count for a specific address
+ *     description: Set the transaction count for a TRON address (Super Admin only)
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: address
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: TRON address to update
+ *         example: TSRHdJJsqz6jxnvnz7kPKNnbJggr4XCeg5
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - transactionCount
+ *             properties:
+ *               transactionCount:
+ *                 type: number
+ *                 minimum: 0
+ *                 maximum: 10000
+ *                 description: New transaction count to set
+ *                 example: 50
+ *               reason:
+ *                 type: string
+ *                 description: Reason for the change
+ *                 example: "Compensating for system error"
+ *     responses:
+ *       200:
+ *         description: Transactions updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     tronAddress:
+ *                       type: string
+ *                     previousCount:
+ *                       type: number
+ *                     newCount:
+ *                       type: number
+ *                     updatedAt:
+ *                       type: string
+ *                       format: date-time
+ *       400:
+ *         description: Invalid transaction count
+ *       404:
+ *         description: Address not found
+ *       403:
+ *         description: Insufficient permissions
+ */
+router.put('/addresses/:address/transactions', ...adminAuth(requireSuperAdmin), adminController.setAddressTransactions);
+
 export const adminRoutes = router;

@@ -278,10 +278,60 @@ export class AdminController {
 
   async getAddressEnergyStatus(req: Request, res: Response): Promise<void> {
     const { address } = req.params;
-    
+
     const status = await adminService.getAddressEnergyStatus(address);
-    
+
     res.json(apiUtils.success('Address energy status retrieved', status));
+  }
+
+  // Transaction management for addresses (Super Admin)
+  async getAddressTransactionInfo(req: Request, res: Response): Promise<void> {
+    const { address } = req.params;
+
+    const info = await adminService.getAddressTransactionInfo(address);
+
+    res.json(apiUtils.success('Address transaction info retrieved', info));
+  }
+
+  async setAddressTransactions(req: Request, res: Response): Promise<void> {
+    const { address } = req.params;
+    const { transactionCount, reason } = req.body;
+    const adminReq = req as AuthenticatedAdminRequest;
+    const adminId = adminReq.admin!.id;
+    const adminEmail = adminReq.admin!.email;
+
+    if (typeof transactionCount !== 'number') {
+      res.status(400).json(apiUtils.error('transactionCount must be a number'));
+      return;
+    }
+
+    const result = await adminService.setAddressTransactions(
+      address,
+      transactionCount,
+      adminId,
+      reason
+    );
+
+    // Log admin activity
+    await prisma.adminActivityLog.create({
+      data: {
+        adminId,
+        adminEmail,
+        action: 'SET_ADDRESS_TRANSACTIONS',
+        entityType: 'USER_ENERGY_STATE',
+        entityId: address,
+        ipAddress: req.ip || req.connection.remoteAddress || 'unknown',
+        userAgent: req.headers['user-agent'] || 'unknown',
+        metadata: {
+          tronAddress: address,
+          previousCount: result.previousCount,
+          newCount: result.newCount,
+          reason: reason || 'No reason provided',
+        },
+      },
+    });
+
+    res.json(apiUtils.success('Transactions updated successfully', result));
   }
 }
 

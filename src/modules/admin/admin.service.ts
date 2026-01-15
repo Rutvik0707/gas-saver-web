@@ -742,6 +742,116 @@ export class AdminService {
   }
 
   // Private methods
+  // ==================================================================================
+  // Transaction Management for Addresses (Super Admin)
+  // ==================================================================================
+
+  async getAddressTransactionInfo(address: string): Promise<{
+    tronAddress: string;
+    transactionsRemaining: number;
+    status: string;
+    userId: string | null;
+    userEmail: string | null;
+    lastDelegationTime: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }> {
+    const energyState = await prisma.userEnergyState.findUnique({
+      where: { tronAddress: address },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    if (!energyState) {
+      throw new NotFoundException(`Address ${address} not found in energy states`);
+    }
+
+    return {
+      tronAddress: energyState.tronAddress,
+      transactionsRemaining: energyState.transactionsRemaining,
+      status: energyState.status,
+      userId: energyState.userId,
+      userEmail: energyState.user?.email || null,
+      lastDelegationTime: energyState.lastDelegationTime,
+      createdAt: energyState.createdAt,
+      updatedAt: energyState.updatedAt,
+    };
+  }
+
+  async setAddressTransactions(
+    address: string,
+    transactionCount: number,
+    adminId: string,
+    reason?: string
+  ): Promise<{
+    tronAddress: string;
+    previousCount: number;
+    newCount: number;
+    updatedAt: Date;
+  }> {
+    // Validate transaction count
+    if (transactionCount < 0) {
+      throw new ValidationException('Transaction count cannot be negative');
+    }
+
+    if (transactionCount > 10000) {
+      throw new ValidationException('Transaction count cannot exceed 10000');
+    }
+
+    // Get current state
+    const currentState = await prisma.userEnergyState.findUnique({
+      where: { tronAddress: address },
+    });
+
+    if (!currentState) {
+      throw new NotFoundException(`Address ${address} not found in energy states`);
+    }
+
+    const previousCount = currentState.transactionsRemaining;
+
+    // Update the transaction count
+    const updatedState = await prisma.userEnergyState.update({
+      where: { tronAddress: address },
+      data: {
+        transactionsRemaining: transactionCount,
+        updatedAt: new Date(),
+      },
+    });
+
+    // Log the action in energy allocation log
+    await prisma.energyAllocationLog.create({
+      data: {
+        userId: currentState.userId,
+        tronAddress: address,
+        action: 'ADMIN_SET_TRANSACTIONS',
+        transactionsRemainingAfter: transactionCount,
+        reason: reason || `Admin set transactions from ${previousCount} to ${transactionCount}`,
+        createdAt: new Date(),
+      },
+    });
+
+    logger.info('[AdminService] Transactions set for address', {
+      address,
+      previousCount,
+      newCount: transactionCount,
+      adminId,
+      reason,
+    });
+
+    return {
+      tronAddress: address,
+      previousCount,
+      newCount: transactionCount,
+      updatedAt: updatedState.updatedAt,
+    };
+  }
+
   private generateToken(admin: any): string {
     const payload = {
       adminId: admin.id,
