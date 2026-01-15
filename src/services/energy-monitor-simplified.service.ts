@@ -537,10 +537,14 @@ export class SimplifiedEnergyMonitor {
                   });
 
                   // Get energy after reclaim
-                  // Use blockchain query (reclaim removes delegation, so TronScan won't show it)
+                  // Wait for blockchain confirmation before querying (TRON ~3s per block)
+                  await new Promise(resolve => setTimeout(resolve, 3000));
                   const energyAfterReclaim = await energyService.getEnergyBalance(address);
 
                   // Record RECLAIM audit entry
+                  // NOTE: reclaimedEnergy uses energyBeforeReclaim (actual user energy balance)
+                  // instead of reclaimResult.reclaimedEnergy (computed from delegation SUN)
+                  // This ensures the UI shows what was actually in the user's account
                   await energyAuditRecorder.recordReclaim({
                     tronAddress: address,
                     userId,
@@ -550,11 +554,12 @@ export class SimplifiedEnergyMonitor {
                     energyAfter: energyAfterReclaim,
                     reclaimedSun: BigInt(Math.floor(reclaimResult.reclaimedTrx * 1_000_000)),
                     reclaimedTrx: reclaimResult.reclaimedTrx,
-                    reclaimedEnergy: reclaimResult.reclaimedEnergy,
+                    reclaimedEnergy: energyBeforeReclaim,  // Use actual energy before reclaim
                     pendingTransactionsBefore,
                     metadata: {
                       delegatedSun: delegation.balance,
                       delegatedEnergyFromApi: delegation.resourceValue,
+                      computedReclaimEnergy: reclaimResult.reclaimedEnergy,  // Keep for reference
                       source: 'simplified_energy_monitor'
                     }
                   });
