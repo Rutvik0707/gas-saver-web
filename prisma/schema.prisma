@@ -416,6 +416,7 @@ enum EnergyAllocationAction {
   BUFFER_OK
   SKIP_LOCK_HELD
   AUDIT_CORRECTION
+  ADMIN_SET_TRANSACTIONS
 }
 
 model TransactionPackage {
