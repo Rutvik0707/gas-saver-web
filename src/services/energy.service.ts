@@ -11,7 +11,7 @@ export class EnergyService {
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache
 
   // ==================================================================================
-  // HARDCODED CONSTANT: Exact SUN amount that produces EXACTLY 132,000 energy
+  // HARDCODED CONSTANT: Exact SUN amount that produces EXACTLY 130,500 energy
   // ==================================================================================
   // This value was calculated from actual mainnet transaction data:
   //
@@ -20,15 +20,18 @@ export class EnergyService {
   // - Received: 130,475.51 energy (less than target due to ratio change)
   // - Energy/TRX ratio: 9.4977
   //
-  // CALCULATION (Updated 2025-12-04):
-  // To get 132,000 energy: 132,000 / 9.4977 = 13,898.24 TRX
-  // Using 13,900 TRX for slight buffer = 13,900,000,000 SUN
+  // CALCULATION (Updated 2026-01-15):
+  // To get 130,500 energy: 130,500 / 9.4977 = 13,740.43 TRX
+  // Using 13,750 TRX for slight buffer = 13,750,000,000 SUN
   //
   // This value is FIXED and should NEVER be calculated dynamically.
-  // If network conditions change and this no longer produces 132k energy,
+  // If network conditions change and this no longer produces 130.5k energy,
   // update this constant based on new mainnet testing.
+  //
+  // ALIGNED: This matches FULL_BUFFER (130,500) in energy-usage-monitor.service.ts
+  // to prevent continuous delegate/reclaim cycles.
   // ==================================================================================
-  private readonly EXACT_SUN_FOR_132K_ENERGY = 13900000000; // 13,900 TRX in SUN
+  private readonly EXACT_SUN_FOR_130K_ENERGY = 13750000000; // 13,750 TRX in SUN
 
   /**
    * Calculate required energy for USDT transfer
@@ -327,26 +330,26 @@ export class EnergyService {
       const bufferedTrxAmount = trxAmount * bufferMultiplier;
 
       // For exact energy delegation, check if this is from simplified monitor
-      // MUST be EXACTLY 132,000 to use hardcoded constant
-      const isSimplifiedMonitor = !includeBuffer && energyAmount === 132000;
+      // MUST be EXACTLY 130,500 to use hardcoded constant (aligned with FULL_BUFFER)
+      const isSimplifiedMonitor = !includeBuffer && energyAmount === 130500;
 
       let delegationTrxAmount: number;
       let roundingBuffer: number; // Declare here for proper scope
 
       if (isSimplifiedMonitor) {
-        // HARDCODED DELEGATION: Use exact pre-determined SUN amount for 132k energy
+        // HARDCODED DELEGATION: Use exact pre-determined SUN amount for 130.5k energy
         // This bypasses ALL calculations to ensure deterministic, repeatable results
         // The magic number is determined by manual testing on mainnet
-        const delegationAmountSunHardcoded = this.EXACT_SUN_FOR_132K_ENERGY;
+        const delegationAmountSunHardcoded = this.EXACT_SUN_FOR_130K_ENERGY;
         delegationTrxAmount = delegationAmountSunHardcoded / 1_000_000;
 
-        logger.info('[EnergyService] 🔒 Using HARDCODED SUN amount for exact 132k energy', {
+        logger.info('[EnergyService] 🔒 Using HARDCODED SUN amount for exact 130.5k energy', {
           requestedEnergy: energyAmount,
           hardcodedSunAmount: delegationAmountSunHardcoded,
           hardcodedTrxAmount: delegationTrxAmount,
           note: 'This is a FIXED value - no calculations, no variables, no variance',
-          guarantee: 'TRON network will convert this exact SUN amount to 132,000 energy',
-          warning: 'If actual energy ≠ 132k, update EXACT_SUN_FOR_132K_ENERGY constant'
+          guarantee: 'TRON network will convert this exact SUN amount to 130,500 energy',
+          warning: 'If actual energy ≠ 130.5k, update EXACT_SUN_FOR_130K_ENERGY constant'
         });
 
         // Override the delegationAmountSun to use our hardcoded value
@@ -362,7 +365,7 @@ export class EnergyService {
       // Convert to SUN and ensure it's an integer
       // For simplified monitor, use the hardcoded value; otherwise calculate
       const delegationAmountSun = isSimplifiedMonitor
-        ? this.EXACT_SUN_FOR_132K_ENERGY  // HARDCODED - no calculation
+        ? this.EXACT_SUN_FOR_130K_ENERGY  // HARDCODED - no calculation
         : Math.ceil(tronUtils.toSun(delegationTrxAmount)); // Calculated for normal delegations
       
       // For mainnet with configured energy target, validate the calculation
@@ -1372,7 +1375,7 @@ export class EnergyService {
       
       // CRITICAL: For simplified energy monitor, only allow exactly the configured threshold
       // This prevents any rounding issues or incorrect delegations
-      const isSimplifiedMonitor = !includeBuffer && energyAmount > 130000 && energyAmount < 132000;
+      const isSimplifiedMonitor = !includeBuffer && energyAmount === 130500;
       if (isSimplifiedMonitor) {
         // Get the active energy rate configuration
         const activeRate = await prisma.energyRate.findFirst({
