@@ -986,6 +986,89 @@ router.put('/energy-rates/thresholds', ...adminAuth(requireSuperAdmin), energyRa
  */
 router.put('/energy-rates', ...adminAuth(requireSuperAdmin), energyRateController.updateFullRate);
 
+// Network parameters route
+import { systemStatusController } from './system-status.controller';
+
+/**
+ * @swagger
+ * /admin/network-parameters:
+ *   get:
+ *     tags: [Admin]
+ *     summary: Get network parameters
+ *     description: Get current TRON network parameters for energy calculations including energy ratio, calculations for common amounts, and 24h history
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Network parameters retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     current:
+ *                       type: object
+ *                       properties:
+ *                         energyPerTrx:
+ *                           type: number
+ *                           description: Current energy per TRX ratio
+ *                         totalEnergyWeight:
+ *                           type: string
+ *                           description: Total network energy weight
+ *                         totalEnergyLimit:
+ *                           type: string
+ *                           description: Total network energy limit
+ *                         fetchedAt:
+ *                           type: string
+ *                           format: date-time
+ *                         cacheAgeMinutes:
+ *                           type: number
+ *                         network:
+ *                           type: string
+ *                     calculations:
+ *                       type: object
+ *                       properties:
+ *                         for131kEnergy:
+ *                           type: object
+ *                           properties:
+ *                             targetEnergy:
+ *                               type: number
+ *                             requiredTrx:
+ *                               type: number
+ *                             requiredSun:
+ *                               type: number
+ *                             expectedEnergy:
+ *                               type: number
+ *                         for65kEnergy:
+ *                           type: object
+ *                     history:
+ *                       type: object
+ *                       properties:
+ *                         last24Hours:
+ *                           type: object
+ *                           properties:
+ *                             avgRatio:
+ *                               type: number
+ *                             minRatio:
+ *                               type: number
+ *                             maxRatio:
+ *                               type: number
+ *                             recordCount:
+ *                               type: number
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Insufficient permissions
+ */
+router.get('/network-parameters', ...adminAuth(requireViewDashboard), systemStatusController.getNetworkParameters.bind(systemStatusController));
+
 // Import and use audit routes
 import { auditRoutes } from './audit/audit.routes';
 router.use('/', auditRoutes);

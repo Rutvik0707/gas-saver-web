@@ -5,6 +5,7 @@ import { energyService } from '../../services/energy.service';
 import { addressPoolService } from '../../services/address-pool.service';
 import { prisma } from '../../config/database';
 import { DepositStatus } from '@prisma/client';
+import { networkParametersService } from '../../services/network-parameters.service';
 
 export class SystemStatusController {
   /**
@@ -322,6 +323,69 @@ export class SystemStatusController {
       );
     } catch (error) {
       logger.error('Failed to retry energy transfers', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Get network parameters for energy calculations
+   * Shows current energy ratio, calculations for common amounts, and 24h history
+   */
+  async getNetworkParameters(req: Request, res: Response): Promise<void> {
+    try {
+      // Get cached network parameters
+      const params = await networkParametersService.getCachedNetworkParams();
+
+      // Get calculations for common energy amounts
+      const calc131k = await networkParametersService.calculateTrxForEnergy(131000);
+      const calc65k = await networkParametersService.calculateTrxForEnergy(65000);
+
+      // Get 24-hour historical data
+      const history = await networkParametersService.getHistoricalParams(24);
+
+      // Calculate cache age in minutes
+      const cacheAgeMinutes = Math.floor((Date.now() - params.fetchedAt.getTime()) / 60000);
+
+      const response = {
+        current: {
+          energyPerTrx: params.energyPerTrx,
+          totalEnergyWeight: params.totalEnergyWeight.toString(),
+          totalEnergyLimit: params.totalEnergyLimit.toString(),
+          fetchedAt: params.fetchedAt,
+          cacheAgeMinutes,
+          network: params.network
+        },
+        calculations: {
+          for131kEnergy: {
+            targetEnergy: 131000,
+            requiredTrx: calc131k.trxAmount,
+            requiredSun: calc131k.sunAmount,
+            expectedEnergy: calc131k.expectedEnergy
+          },
+          for65kEnergy: {
+            targetEnergy: 65000,
+            requiredTrx: calc65k.trxAmount,
+            requiredSun: calc65k.sunAmount,
+            expectedEnergy: calc65k.expectedEnergy
+          }
+        },
+        history: {
+          last24Hours: {
+            avgRatio: history.avgRatio,
+            minRatio: history.minRatio,
+            maxRatio: history.maxRatio,
+            recordCount: history.records.length
+          }
+        }
+      };
+
+      res.json(
+        apiUtils.success('Network parameters retrieved', response)
+      );
+    } catch (error) {
+      logger.error('Failed to get network parameters', {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
       throw error;
