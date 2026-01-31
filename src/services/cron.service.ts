@@ -54,6 +54,20 @@ export class CronService {
       await finalEnergyReclaimService.runCycle();
     });
 
+    // Network parameters refresh - Fetches totalEnergyWeight from TRON network
+    // This enables accurate energy calculations using the real-time network ratio
+    // Runs every 15 minutes at 5 minutes past (staggered from other jobs)
+    this.scheduleJob('network-parameters-refresh', '0 5,20,35,50 * * * *', async () => {
+      await this.runNetworkParametersRefresh();
+    });
+
+    // Run network parameters refresh immediately on startup
+    this.runNetworkParametersRefresh().catch(err => {
+      logger.error('Failed to fetch initial network parameters', {
+        error: err instanceof Error ? err.message : 'Unknown error'
+      });
+    });
+
     logger.info('🔄 Transaction detector started - scanning every 30 seconds');
     logger.info('💰 Deposit processor started - processing at :15 past every minute');
     logger.info('📍 Address pool maintenance started - running every hour');
@@ -61,6 +75,7 @@ export class CronService {
     logger.info('⚡ Simplified energy monitor started - checking at :30 past every minute');
     logger.info('📊 Transaction usage tracker started - checking every 45 seconds');
     logger.info('♻️  Final energy reclaim started - running every 15 minutes');
+    logger.info('🌐 Network parameters refresh started - running every 15 minutes');
     logger.info('✅ All background services initialized successfully');
   }
 
@@ -231,6 +246,9 @@ export class CronService {
         case 'final-energy-reclaim':
           await this.runFinalEnergyReclaim();
           break;
+        case 'network-parameters-refresh':
+          await this.runNetworkParametersRefresh();
+          break;
         default:
           logger.warn(`Unknown job name: ${jobName}`);
           return false;
@@ -254,6 +272,19 @@ export class CronService {
       logger.debug('♻️  Final energy reclaim completed');
     } catch (error) {
       logger.error('❌ Final energy reclaim failed', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  private async runNetworkParametersRefresh(): Promise<void> {
+    try {
+      logger.debug('🌐 Fetching network parameters from TRON...');
+      const { networkParametersService } = await import('./network-parameters.service');
+      await networkParametersService.fetchAndStoreNetworkParams();
+      logger.debug('🌐 Network parameters refresh completed');
+    } catch (error) {
+      logger.error('❌ Network parameters refresh failed', {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     }

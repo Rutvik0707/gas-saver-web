@@ -4,6 +4,7 @@ import { TransactionType, TransactionStatus } from '@prisma/client';
 import { energyRateService } from '../modules/energy-rate';
 import { energyMonitoringLogger } from './energy-monitoring-logger.service';
 import { chainParametersService } from './chain-parameters.service';
+import { networkParametersService } from './network-parameters.service';
 
 export class EnergyService {
   private readonly ENERGY_AMOUNT_TRX = 1; // 1 TRX worth of energy per deposit (deprecated)
@@ -11,27 +12,20 @@ export class EnergyService {
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache
 
   // ==================================================================================
-  // HARDCODED CONSTANT: Exact SUN amount that produces EXACTLY 131,000 energy
+  // DYNAMIC ENERGY CALCULATION (Updated 2026-01-31)
   // ==================================================================================
-  // This value was calculated from actual mainnet transaction data:
+  // Energy delegation now uses database-cached network parameters for accurate calculations.
   //
-  // Reference Transaction: a821258732b7c57ccbec59092d8dd2e1b80090dff720ed298cd8cd80006a6681
-  // - Delegated: 13,750,000,000 SUN (13,750 TRX)
-  // - Received: 129,057.24 energy
-  // - Energy/TRX ratio: 9.386
+  // The correct formula is:
+  //   energyPerTrx = totalEnergyLimit / totalEnergyWeight
+  //   TRX_needed = (energy × totalEnergyWeight) / totalEnergyLimit
   //
-  // CALCULATION (Updated 2026-01-15):
-  // To get 131,000 energy: 131,000 / 9.386 = 13,957.4 TRX
-  // Using 13,960 TRX for slight buffer = 13,960,000,000 SUN
+  // Network parameters (totalEnergyWeight, totalEnergyLimit) are fetched every 15 minutes
+  // by the cron job and stored in the network_parameters table.
   //
-  // This value is FIXED and should NEVER be calculated dynamically.
-  // If network conditions change and this no longer produces 131k energy,
-  // update this constant based on new mainnet testing.
-  //
-  // ALIGNED: This matches FULL_BUFFER (130,500) in energy-usage-monitor.service.ts
-  // 131k is within the 1% tolerance (131,805) to prevent continuous cycles.
+  // This replaces the old hardcoded approach that failed when network conditions changed.
+  // The networkParametersService provides the accurate ratio for all calculations.
   // ==================================================================================
-  private readonly EXACT_SUN_FOR_131K_ENERGY = 13960000000; // 13,960 TRX in SUN
 
   /**
    * Calculate required energy for USDT transfer
@@ -80,14 +74,17 @@ export class EnergyService {
   }
 
   /**
-   * Convert energy amount to TRX equivalent
+   * Convert energy amount to TRX equivalent in SUN
    * @param energy Energy amount
    * @returns TRX equivalent in SUN
+   * @deprecated Use calculateTrxForEnergy() for accurate calculations with dynamic ratios
    */
   convertEnergyToSun(energy: number): number {
-    // Based on TronScan: 65,000 energy = 6,396 TRX
-    // This gives us 1 TRX = 10.17 energy, or 1 energy = 0.0983 TRX
-    const trxAmount = energy / 10.17;
+    // NOTE: This method uses a static ratio. For accurate calculations,
+    // use chainParametersService.calculateTrxForEnergy() which uses
+    // the database-cached network parameters.
+    const fallbackRatio = 9.35; // Conservative estimate
+    const trxAmount = energy / fallbackRatio;
     return tronUtils.toSun(trxAmount);
   }
 
@@ -95,11 +92,14 @@ export class EnergyService {
    * Convert energy amount to TRX
    * @param energy Energy amount
    * @returns TRX equivalent
+   * @deprecated Use calculateTrxForEnergy() for accurate calculations with dynamic ratios
    */
   convertEnergyToTRX(energy: number): number {
-    // Based on TronScan: 65,000 energy = 6,396 TRX
-    // This gives us 1 TRX = 10.17 energy
-    return energy / 10.17;
+    // NOTE: This method uses a static ratio. For accurate calculations,
+    // use chainParametersService.calculateTrxForEnergy() which uses
+    // the database-cached network parameters.
+    const fallbackRatio = 9.35; // Conservative estimate
+    return energy / fallbackRatio;
   }
 
   /**
@@ -1149,98 +1149,55 @@ export class EnergyService {
   }
 
   /**
-   * Get current energy per TRX ratio from the network
-   * This calculates the actual ratio based on staked TRX and resulting energy
+   * Get current energy per TRX ratio from the database-cached network parameters
+   *
+   * UPDATED: Now uses the database-cached network parameters which are fetched
+   * every 15 minutes from the TRON network. This provides accurate, real-time
+   * ratios based on the formula: totalEnergyLimit / totalEnergyWeight
    */
   async getCurrentEnergyPerTrx(): Promise<number> {
     try {
-      // First try to get energy ratio from chain parameters (most accurate)
-      const networkEnergyInfo = await chainParametersService.calculateEnergyPerTrx();
-      
-      if (networkEnergyInfo && networkEnergyInfo.source === 'chain_parameters') {
-        logger.info('Using energy per TRX from chain parameters', {
-          network: config.tron.network,
-          ratio: networkEnergyInfo.energyPerTrx.toFixed(2),
-          energyFee: networkEnergyInfo.energyFee,
-          source: 'chain_parameters',
-          timestamp: new Date().toISOString()
-        });
-        return networkEnergyInfo.energyPerTrx;
-      }
-      
-      // If chain parameters failed, try calculating from system wallet (second best)
-      const systemAddress = config.systemWallet.address;
-      
-      // Get account resources and account info
-      const accountResources = await systemTronWeb.trx.getAccountResources(systemAddress);
-      const account = await systemTronWeb.trx.getAccount(systemAddress);
-      
-      // Get total staked for energy using Stake 2.0 (frozenV2)
-      let stakedForEnergySun = 0;
-      
-      // First try Stake 2.0 (frozenV2)
-      const frozenV2 = account.frozenV2 || [];
-      frozenV2.forEach((frozen: any) => {
-        if (frozen.type === 'ENERGY') {
-          stakedForEnergySun += frozen.amount || 0;
-        }
-      });
-      
-      // If no Stake 2.0, fall back to Stake 1.0 (for compatibility)
-      if (stakedForEnergySun === 0) {
-        stakedForEnergySun = account.account_resource?.frozen_balance_for_energy?.frozen_balance || 0;
-      }
-      
-      const stakedTrx = tronUtils.fromSun(stakedForEnergySun);
-      
-      // Get total energy limit
-      const totalEnergy = accountResources.EnergyLimit || 0;
-      
-      // Calculate ratio (energy per TRX)
-      if (stakedTrx > 0 && totalEnergy > 0) {
-        const ratio = totalEnergy / stakedTrx;
-        logger.info('Calculated energy per TRX ratio from system wallet', {
-          network: config.tron.network,
-          totalEnergy,
-          stakedTrx,
-          stakedForEnergySun,
-          ratio: ratio.toFixed(2),
-          method: frozenV2.length > 0 ? 'Stake 2.0' : 'Stake 1.0',
-          source: 'calculated',
-          timestamp: new Date().toISOString()
-        });
-        return ratio;
-      }
-      
-      // If both methods failed, use fallback from chain parameters service
-      if (networkEnergyInfo && networkEnergyInfo.source === 'fallback') {
-        logger.warn('Using fallback energy ratio', {
-          network: config.tron.network,
-          ratio: networkEnergyInfo.energyPerTrx.toFixed(2),
-          source: 'fallback',
-          reason: 'Both chain parameters and wallet calculation failed'
-        });
-        return networkEnergyInfo.energyPerTrx;
-      }
-      
-      // Final fallback - hardcoded values
-      const fallbackRatio = 10.01; // Same for both mainnet and testnet
-      logger.warn('Using hardcoded fallback energy ratio', {
+      // Get ratio from database-cached network parameters (most accurate)
+      const networkParams = await networkParametersService.getCachedNetworkParams();
+
+      logger.info('Using energy per TRX from database-cached network parameters', {
         network: config.tron.network,
-        ratio: fallbackRatio,
-        source: 'hardcoded_fallback'
+        ratio: networkParams.energyPerTrx.toFixed(4),
+        totalEnergyWeight: networkParams.totalEnergyWeight.toString(),
+        totalEnergyLimit: networkParams.totalEnergyLimit.toString(),
+        fetchedAt: networkParams.fetchedAt.toISOString(),
+        source: 'database_cache',
+        timestamp: new Date().toISOString()
       });
-      return fallbackRatio;
-      
+
+      return networkParams.energyPerTrx;
+
     } catch (error) {
-      // Use fallback on error - same for both networks
-      const fallbackRatio = 10.01;
-      
-      logger.error('Failed to get energy ratio, using hardcoded fallback', {
+      // Fallback: Try chain parameters service
+      try {
+        const networkEnergyInfo = await chainParametersService.calculateEnergyPerTrx();
+        if (networkEnergyInfo) {
+          logger.warn('Using chain parameters fallback for energy ratio', {
+            network: config.tron.network,
+            ratio: networkEnergyInfo.energyPerTrx.toFixed(4),
+            source: networkEnergyInfo.source
+          });
+          return networkEnergyInfo.energyPerTrx;
+        }
+      } catch (chainError) {
+        logger.warn('Chain parameters fallback also failed', {
+          error: chainError instanceof Error ? chainError.message : 'Unknown error'
+        });
+      }
+
+      // Final fallback - conservative estimate
+      const fallbackRatio = 9.0; // Conservative - will allocate more TRX to ensure target energy
+      logger.error('Using conservative fallback energy ratio', {
         error: error instanceof Error ? error.message : 'Unknown error',
         network: config.tron.network,
         fallbackRatio,
-        source: 'error_fallback'
+        source: 'error_fallback',
+        note: 'Conservative ratio ensures target energy is met'
       });
       return fallbackRatio;
     }
@@ -1293,30 +1250,46 @@ export class EnergyService {
   }
 
   /**
-   * Get cached energy per TRX ratio to avoid excessive API calls
+   * Get cached energy per TRX ratio
+   *
+   * UPDATED: The networkParametersService already handles caching at both
+   * memory and database levels. This method now delegates to it for
+   * accurate, cached values.
    */
   async getCachedEnergyPerTrx(): Promise<number> {
-    const now = Date.now();
-    
-    // Check if cache is valid
-    if (this.energyRatioCache && (now - this.energyRatioCache.timestamp) < this.CACHE_TTL) {
-      logger.debug('Using cached energy ratio', {
-        value: this.energyRatioCache.value,
-        age: now - this.energyRatioCache.timestamp
+    try {
+      // Use networkParametersService which handles caching internally
+      const ratio = await networkParametersService.getEnergyPerTrx();
+
+      // Update local cache for backwards compatibility
+      this.energyRatioCache = { value: ratio, timestamp: Date.now() };
+
+      logger.debug('Using energy ratio from network parameters service', {
+        ratio: ratio.toFixed(4),
+        source: 'database_cache'
       });
-      return this.energyRatioCache.value;
+
+      return ratio;
+
+    } catch (error) {
+      // Check local cache as fallback
+      if (this.energyRatioCache) {
+        logger.warn('Using local cached energy ratio due to service error', {
+          value: this.energyRatioCache.value,
+          age: Date.now() - this.energyRatioCache.timestamp,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+        return this.energyRatioCache.value;
+      }
+
+      // Final fallback
+      const fallbackRatio = 9.0;
+      logger.error('Using fallback energy ratio', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        fallbackRatio
+      });
+      return fallbackRatio;
     }
-    
-    // Calculate new ratio and cache it
-    const ratio = await this.getCurrentEnergyPerTrx();
-    this.energyRatioCache = { value: ratio, timestamp: now };
-    
-    logger.info('Updated energy ratio cache', {
-      ratio: ratio.toFixed(2),
-      timestamp: new Date(now).toISOString()
-    });
-    
-    return ratio;
   }
 
   /**

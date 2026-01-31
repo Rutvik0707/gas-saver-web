@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { logger } from '../config/logger';
 import { config } from '../config/environment';
+import { networkParametersService } from './network-parameters.service';
 
 interface ChainParameter {
   key: string;
@@ -206,11 +207,12 @@ export class ChainParametersService {
 
   /**
    * Calculate energy per TRX based on network parameters
-   * This is a more accurate calculation than using fixed values
-   * 
-   * IMPORTANT: The energy fee from chain parameters is the BURN rate (when you have no staked energy).
-   * The actual energy you get from STAKING TRX is different and network-dependent.
-   * For staking/delegation, we should use observed ratios, not the burn rate calculation.
+   *
+   * UPDATED: Now uses database-cached network parameters for accurate calculations.
+   * The ratio is calculated from: totalEnergyLimit / totalEnergyWeight
+   *
+   * This is the CORRECT formula for staking/delegation calculations.
+   * The energy fee from chain parameters is the BURN rate (different use case).
    */
   async calculateEnergyPerTrx(): Promise<NetworkEnergyInfo> {
     const cacheKey = 'network_energy_info';
@@ -218,54 +220,69 @@ export class ChainParametersService {
     if (cached) return cached;
 
     try {
-      // Get energy fee from chain parameters (this is the burn rate)
+      // Get energy fee from chain parameters (this is the burn rate - for reference only)
       const energyFee = await this.getEnergyFee();
-      
-      // For mainnet and testnet, use observed staking ratios
-      // These are the actual energy amounts you get when staking/delegating TRX
       const isMainnet = config.tron.network === 'mainnet';
-      
-      // Observed ratios from production:
-      // Mainnet: ~10.01 energy per staked TRX
-      // Testnet: ~10.01 energy per staked TRX (using same as mainnet)
-      const stakingEnergyPerTrx = 10.01; // Same for both networks
-      
-      // Calculate burn energy per TRX (when no staked energy available)
-      // This is much higher than staking ratio
-      const burnEnergyPerTrx = energyFee ? (1_000_000 / energyFee) : 0;
-      
+
+      // Get the REAL energy per TRX ratio from database-cached network parameters
+      // This is calculated from: totalEnergyLimit / totalEnergyWeight
+      let stakingEnergyPerTrx: number;
+      let source: 'chain_parameters' | 'calculated' | 'fallback';
+
+      try {
+        const networkParams = await networkParametersService.getCachedNetworkParams();
+        stakingEnergyPerTrx = networkParams.energyPerTrx;
+        source = 'calculated';
+
+        logger.info('[ChainParameters] Using database-cached energy ratio', {
+          energyPerTrx: stakingEnergyPerTrx.toFixed(4),
+          totalEnergyWeight: networkParams.totalEnergyWeight.toString(),
+          totalEnergyLimit: networkParams.totalEnergyLimit.toString(),
+          fetchedAt: networkParams.fetchedAt.toISOString(),
+          network: config.tron.network
+        });
+      } catch (networkParamsError) {
+        // Fallback to conservative estimate if network params unavailable
+        stakingEnergyPerTrx = 9.0; // Conservative fallback
+        source = 'fallback';
+
+        logger.warn('[ChainParameters] Network params unavailable, using fallback ratio', {
+          error: networkParamsError instanceof Error ? networkParamsError.message : 'Unknown error',
+          fallbackRatio: stakingEnergyPerTrx
+        });
+      }
+
       const info: NetworkEnergyInfo = {
-        energyFee: energyFee || (isMainnet ? 100 : 88), // Default: 100 sun for mainnet, 88 for testnet
-        energyPerTrx: stakingEnergyPerTrx, // Use staking ratio for delegation calculations
-        totalNetworkStake: undefined, // Would need additional API calls to get this
+        energyFee: energyFee || (isMainnet ? 100 : 88),
+        energyPerTrx: stakingEnergyPerTrx,
+        totalNetworkStake: undefined,
         dailyEnergyPool: this.DAILY_ENERGY_POOL,
         timestamp: Date.now(),
-        source: energyFee ? 'chain_parameters' : 'fallback'
+        source
       };
 
       this.setCachedData(cacheKey, info);
-      
-      logger.info('Energy calculation from chain parameters', {
+
+      logger.info('Energy calculation from network parameters', {
         network: config.tron.network,
         energyFee: info.energyFee,
         energyFeeInTrx: (info.energyFee / 1_000_000).toFixed(6),
-        burnEnergyPerTrx: burnEnergyPerTrx.toFixed(2),
-        stakingEnergyPerTrx: stakingEnergyPerTrx.toFixed(2),
-        note: 'Using staking ratio for delegation, not burn ratio',
+        stakingEnergyPerTrx: stakingEnergyPerTrx.toFixed(4),
+        note: 'Using database-cached network ratio for accurate delegation',
         source: info.source
       });
-      
+
       return info;
 
     } catch (error) {
       logger.error('Failed to calculate energy per TRX', {
         error: error instanceof Error ? error.message : 'Unknown error'
       });
-      
+
       // Return fallback values on error
       const isMainnet = config.tron.network === 'mainnet';
-      const fallbackRatio = 10.01; // Same for both networks
-      
+      const fallbackRatio = 9.0; // Conservative fallback
+
       return {
         energyFee: isMainnet ? 100 : 88,
         energyPerTrx: fallbackRatio,
@@ -319,69 +336,55 @@ export class ChainParametersService {
   }
 
   /**
-   * Get REAL-TIME energy per TRX ratio from TronScan API
-   * This queries actual recent delegation data, not hardcoded values
-   * Used for calculating exact TRX needed for 131k energy delegation
+   * Get REAL-TIME energy per TRX ratio from database-cached network parameters
+   *
+   * UPDATED: Now uses the database-cached totalEnergyWeight / totalEnergyLimit ratio
+   * instead of hardcoded values or unreliable TronScan API calls.
+   *
+   * The formula is: energyPerTrx = totalEnergyLimit / totalEnergyWeight
+   * This is the same formula TronScan uses for accurate delegation calculations.
    */
   async getRealTimeEnergyPerTrx(): Promise<{ ratio: number; source: string; confidence: 'high' | 'medium' | 'low' }> {
     try {
-      // Try to get from TronScan energy market data
-      const response = await axios.get('https://apilist.tronscanapi.com/api/token_trc20/price', {
-        params: { address: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t' }, // USDT contract
-        timeout: 10000,
-        headers: config.tronscan?.apiKey ? { 'TRON-PRO-API-KEY': config.tronscan.apiKey } : {}
-      });
+      // Get ratio from database-cached network parameters
+      const networkParams = await networkParametersService.getCachedNetworkParams();
 
-      // TronScan provides various market data, but for energy ratio we need stake data
-      // Let's get the actual delegation statistics
-      const stakingResponse = await axios.get('https://apilist.tronscanapi.com/api/account/resourcev2', {
-        params: {
-          address: config.systemWallet.address,
-          type: 2, // Energy
-          from: 'wallet',
-          limit: 5
-        },
-        timeout: 10000,
-        headers: config.tronscan?.apiKey ? { 'TRON-PRO-API-KEY': config.tronscan.apiKey } : {}
-      });
+      // Calculate age of the cached data
+      const ageMs = Date.now() - networkParams.fetchedAt.getTime();
+      const ageMinutes = Math.floor(ageMs / 60000);
 
-      // Calculate ratio from recent delegations if available
-      if (stakingResponse.data?.data && stakingResponse.data.data.length > 0) {
-        const recentDelegation = stakingResponse.data.data[0];
-        if (recentDelegation.balance && recentDelegation.delegated_balance) {
-          // balance is in SUN, delegated_balance is energy
-          const trxAmount = recentDelegation.balance / 1_000_000;
-          const energyAmount = recentDelegation.delegated_balance;
-          if (trxAmount > 0 && energyAmount > 0) {
-            const calculatedRatio = energyAmount / trxAmount;
-            logger.info('[ChainParameters] Calculated real-time energy ratio from recent delegation', {
-              trxAmount,
-              energyAmount,
-              calculatedRatio: calculatedRatio.toFixed(4),
-              source: 'recent_delegation'
-            });
-            return { ratio: calculatedRatio, source: 'recent_delegation', confidence: 'high' };
-          }
-        }
+      // Determine confidence based on cache age
+      let confidence: 'high' | 'medium' | 'low';
+      if (ageMinutes < 20) {
+        confidence = 'high';
+      } else if (ageMinutes < 45) {
+        confidence = 'medium';
+      } else {
+        confidence = 'low';
       }
 
-      // Fallback: Calculate from total network stake
-      // Formula: energyPerTrx = DAILY_ENERGY_POOL / TOTAL_NETWORK_STAKE
-      // But since we can't easily get total stake, use the observed ratio with medium confidence
-      const observedRatio = 9.386; // From production observation
-      logger.info('[ChainParameters] Using observed ratio (no recent delegation data)', {
-        observedRatio,
-        source: 'observed_fallback'
+      logger.info('[ChainParameters] Using database-cached energy ratio', {
+        ratio: networkParams.energyPerTrx.toFixed(4),
+        totalEnergyWeight: networkParams.totalEnergyWeight.toString(),
+        totalEnergyLimit: networkParams.totalEnergyLimit.toString(),
+        cacheAgeMinutes: ageMinutes,
+        confidence,
+        source: 'database_cache'
       });
-      return { ratio: observedRatio, source: 'observed_fallback', confidence: 'medium' };
+
+      return {
+        ratio: networkParams.energyPerTrx,
+        source: 'database_cache',
+        confidence
+      };
 
     } catch (error) {
-      // Final fallback to conservative estimate
-      const fallbackRatio = 9.0; // Conservative estimate - will require more TRX but guarantees target energy
-      logger.warn('[ChainParameters] Failed to get real-time ratio, using conservative fallback', {
+      // Fallback to conservative estimate if database is unavailable
+      const fallbackRatio = 9.0; // Conservative estimate
+      logger.warn('[ChainParameters] Failed to get cached ratio, using conservative fallback', {
         error: error instanceof Error ? error.message : 'Unknown',
         fallbackRatio,
-        note: 'Using conservative ratio to ensure 131k energy target is met'
+        note: 'Using conservative ratio to ensure energy target is met'
       });
       return { ratio: fallbackRatio, source: 'error_fallback', confidence: 'low' };
     }
@@ -389,7 +392,11 @@ export class ChainParametersService {
 
   /**
    * Calculate exact TRX needed for target energy amount
-   * Uses real-time ratio with safety buffer for low confidence scenarios
+   *
+   * UPDATED: Delegates to networkParametersService which uses the correct formula:
+   * TRX = (energy × totalEnergyWeight) / totalEnergyLimit
+   *
+   * This ensures exact energy delegation matching TronScan's calculations.
    */
   async calculateTrxForEnergy(targetEnergy: number): Promise<{
     trxAmount: number;
@@ -398,29 +405,59 @@ export class ChainParametersService {
     ratio: number;
     confidence: 'high' | 'medium' | 'low';
   }> {
-    const { ratio, source, confidence } = await this.getRealTimeEnergyPerTrx();
+    try {
+      // Use networkParametersService for accurate calculation
+      const result = await networkParametersService.calculateTrxForEnergy(targetEnergy);
 
-    // NO safety buffer - we want EXACT 131k energy, not over-allocation
-    // The ratio from getRealTimeEnergyPerTrx() is accurate enough for precise delegation
+      // Determine confidence based on source
+      const confidence: 'high' | 'medium' | 'low' = result.source === 'database' ? 'high' : 'low';
 
-    const baseTrx = targetEnergy / ratio;
-    const finalTrx = Math.round(baseTrx); // Round to nearest (not up) for precision
-    const sunAmount = finalTrx * 1_000_000;
-    const expectedEnergy = Math.floor(finalTrx * ratio);
+      logger.info('[ChainParameters] Calculated TRX for exact energy using database-cached params', {
+        targetEnergy,
+        ratio: result.ratio.toFixed(4),
+        trxAmount: result.trxAmount.toFixed(6),
+        sunAmount: result.sunAmount,
+        expectedEnergy: result.expectedEnergy,
+        totalEnergyWeight: result.totalEnergyWeight,
+        totalEnergyLimit: result.totalEnergyLimit,
+        source: result.source,
+        confidence,
+        willMeetTarget: result.expectedEnergy >= targetEnergy
+      });
 
-    logger.info('[ChainParameters] Calculated TRX for EXACT energy (no buffer)', {
-      targetEnergy,
-      ratio: ratio.toFixed(4),
-      source,
-      confidence,
-      baseTrx: baseTrx.toFixed(2),
-      finalTrx,
-      sunAmount,
-      expectedEnergy,
-      willMeetTarget: expectedEnergy >= targetEnergy - 500 // Allow 500 energy tolerance
-    });
+      return {
+        trxAmount: result.trxAmount,
+        sunAmount: result.sunAmount,
+        expectedEnergy: result.expectedEnergy,
+        ratio: result.ratio,
+        confidence
+      };
 
-    return { trxAmount: finalTrx, sunAmount, expectedEnergy, ratio, confidence };
+    } catch (error) {
+      // Fallback calculation if networkParametersService fails
+      const fallbackRatio = 9.0;
+      const baseTrx = targetEnergy / fallbackRatio;
+      const finalTrx = Math.ceil(baseTrx); // Round up for safety
+      const sunAmount = finalTrx * 1_000_000;
+      const expectedEnergy = Math.floor(finalTrx * fallbackRatio);
+
+      logger.warn('[ChainParameters] Using fallback calculation for TRX', {
+        targetEnergy,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        fallbackRatio,
+        finalTrx,
+        sunAmount,
+        expectedEnergy
+      });
+
+      return {
+        trxAmount: finalTrx,
+        sunAmount,
+        expectedEnergy,
+        ratio: fallbackRatio,
+        confidence: 'low'
+      };
+    }
   }
 
   /**
