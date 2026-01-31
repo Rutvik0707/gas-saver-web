@@ -493,24 +493,11 @@ export class SimplifiedEnergyMonitor {
             const userState = activeStates.find(s => s.tronAddress === address);
             const userId = userState?.userId;
 
-            // Get transaction count - if inactivity penalty was applied, re-read from DB
-            // to get the updated count (penalty decrements by 1)
-            let pendingTransactionsBefore = userState?.transactionsRemaining || 0;
-            if (inactivityPenaltyAddresses.has(address)) {
-              // Re-read from database to get the updated count after penalty
-              const freshState = await prisma.userEnergyState.findUnique({
-                where: { tronAddress: address },
-                select: { transactionsRemaining: true }
-              });
-              if (freshState) {
-                logger.info('[SimplifiedEnergyMonitor] Refreshed transaction count after penalty', {
-                  address,
-                  staleCount: pendingTransactionsBefore,
-                  freshCount: freshState.transactionsRemaining
-                });
-                pendingTransactionsBefore = freshState.transactionsRemaining;
-              }
-            }
+            // Get transaction count
+            // NOTE: If inactivity penalty was applied, we keep the ORIGINAL count for audit purposes
+            // The penalty has already decremented the DB, so pendingTransactionsBefore shows pre-penalty count
+            // and the audit will correctly show transactionDecrease = 1
+            const pendingTransactionsBefore = userState?.transactionsRemaining || 0;
 
             // Get energy before reclaim
             const energyBeforeReclaim = await energyService.getEnergyBalance(address);
@@ -739,57 +726,37 @@ export class SimplifiedEnergyMonitor {
                     energyBeforeReclaim
                   });
                 } else {
-                  // NO blockchain transactions found - check energy consumption as fallback
-                  // HYBRID APPROACH: If blockchain verification finds 0 transactions but energy was
-                  // significantly consumed, use energy-based calculation to avoid missing legitimate decrements
-                  // This catches cases where:
-                  // 1. USDT transactions were sent TO system wallet (filtered out in blockchain query)
-                  // 2. User made non-USDT transactions that consumed energy
-                  // 3. TronScan API missed the transactions
+                  // NO blockchain transactions found - use simple energy threshold check
+                  // Since cycle only triggers when energy < 129,500 (REPLENISHMENT_THRESHOLD),
+                  // if we're here, at least 1 transaction was consumed
+                  //
+                  // Simple logic:
+                  // - energyBeforeReclaim < 65k → 2 transactions consumed (used both)
+                  // - energyBeforeReclaim >= 65k → 1 transaction consumed (still has 1 left)
 
-                  const energyConsumed = this.DELEGATION_AMOUNT - energyBeforeReclaim;
-                  const energyBasedTxCount = Math.floor(energyConsumed / oneTransactionThreshold);
-
-                  if (energyBasedTxCount > 0 && energyBeforeReclaim < oneTransactionThreshold) {
-                    // Energy shows significant consumption (2+ transactions worth)
-                    // Use energy-based calculation as fallback
-                    transactionDecrease = Math.min(energyBasedTxCount, transactionsRemaining);
+                  if (energyBeforeReclaim < oneTransactionThreshold) {
+                    // User has less than 65k energy left - they used 2 transactions
+                    transactionDecrease = Math.min(2, transactionsRemaining);
                     decreaseSource = 'ENERGY_BASED';
 
-                    logger.info('[SimplifiedEnergyMonitor] No blockchain tx found but energy consumed - using ENERGY-BASED fallback', {
+                    logger.info('[SimplifiedEnergyMonitor] Energy below 65k threshold - 2 transactions consumed', {
                       address,
                       energyBeforeReclaim,
-                      expectedEnergy: this.DELEGATION_AMOUNT,
-                      energyConsumed,
-                      energyBasedTxCount,
+                      oneTransactionThreshold,
                       transactionDecrease,
-                      reason: 'Blockchain verification found 0 tx but energy consumption indicates usage - applying energy-based decrease'
+                      reason: 'Energy < 65k means user consumed 2 transactions'
                     });
-                  } else if (energyBasedTxCount === 1 && energyBeforeReclaim < this.DELEGATION_AMOUNT * 0.6) {
-                    // Energy shows ~1 transaction consumed (energy below 60% of delegation)
+                  } else {
+                    // User has 65k+ energy left - they used 1 transaction
                     transactionDecrease = Math.min(1, transactionsRemaining);
                     decreaseSource = 'ENERGY_BASED';
 
-                    logger.info('[SimplifiedEnergyMonitor] No blockchain tx found but moderate energy consumed - using ENERGY-BASED fallback', {
+                    logger.info('[SimplifiedEnergyMonitor] Energy above 65k threshold - 1 transaction consumed', {
                       address,
                       energyBeforeReclaim,
-                      expectedEnergy: this.DELEGATION_AMOUNT,
-                      energyConsumed,
+                      oneTransactionThreshold,
                       transactionDecrease,
-                      reason: 'Energy consumption indicates ~1 transaction used'
-                    });
-                  } else {
-                    // Energy shows no significant consumption - preserve user credits
-                    transactionDecrease = 0;
-                    decreaseSource = 'NO_TRANSACTION';
-
-                    logger.info('[SimplifiedEnergyMonitor] No blockchain tx found and no energy consumed - preserving user credits', {
-                      address,
-                      energyBeforeReclaim,
-                      expectedEnergy: this.DELEGATION_AMOUNT,
-                      energyConsumed,
-                      energyBasedTxCount,
-                      reason: 'No USDT transactions verified and energy shows minimal/no usage - transaction count preserved'
+                      reason: 'Energy >= 65k means user consumed 1 transaction (still has 1 left)'
                     });
                   }
                 }
@@ -815,7 +782,7 @@ export class SimplifiedEnergyMonitor {
               }
 
               // Log the final decision
-              logger.info('[SimplifiedEnergyMonitor] Transaction decrease calculated (BLOCKCHAIN-ONLY)', {
+              logger.info('[SimplifiedEnergyMonitor] Transaction decrease calculated', {
                 address,
                 energyBeforeReclaim,
                 transactionDecrease,
@@ -826,13 +793,15 @@ export class SimplifiedEnergyMonitor {
               });
 
             } else if (hadInactivityPenalty) {
-              // Inactivity penalty already deducted 1 Tx, don't deduct again
-              transactionDecrease = 0;
+              // Inactivity penalty was applied - record 1 tx decrease for audit
+              // The DB is already decremented, so newTransactionCount will match what's in DB
+              transactionDecrease = 1;
               decreaseSource = 'INACTIVITY_PENALTY';
-              logger.info('[SimplifiedEnergyMonitor] Skipping transaction decrease - inactivity penalty already applied', {
+              logger.info('[SimplifiedEnergyMonitor] Inactivity penalty applied - recording 1 tx decrease', {
                 address,
                 energyBeforeReclaim,
-                reason: 'Inactivity penalty already deducted 1 Tx this cycle'
+                transactionDecrease,
+                reason: '24h inactivity penalty deducted 1 Tx'
               });
             }
 
@@ -870,12 +839,13 @@ export class SimplifiedEnergyMonitor {
 
             // Log the decrement with full audit trail
             // Map decrease sources to decrement logger sources
-            // Note: ENERGY_BASED is no longer used but kept in type for backward compatibility
             const loggerSource = decreaseSource === 'BLOCKCHAIN_VERIFIED'
-              ? DecrementSource.ACTUAL_TRANSACTION  // Only blockchain-verified transactions trigger decrement
-              : decreaseSource === 'INACTIVITY_PENALTY'
-                ? DecrementSource.INACTIVITY_PENALTY
-                : DecrementSource.NO_DECREMENT;
+              ? DecrementSource.ACTUAL_TRANSACTION
+              : decreaseSource === 'ENERGY_BASED'
+                ? DecrementSource.ACTUAL_TRANSACTION  // Energy-based threshold check indicates real usage
+                : decreaseSource === 'INACTIVITY_PENALTY'
+                  ? DecrementSource.INACTIVITY_PENALTY
+                  : DecrementSource.NO_DECREMENT;
 
             await transactionDecrementLogger.logDecrement({
               tronAddress: address,
