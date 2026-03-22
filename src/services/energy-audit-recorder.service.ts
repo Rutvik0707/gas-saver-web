@@ -184,6 +184,49 @@ export class EnergyAuditRecorder {
   }
 
   /**
+   * Record RECHARGE operation audit (when user buys more transaction packages)
+   */
+  async recordRecharge(params: {
+    tronAddress: string;
+    userId: string;
+    depositId: string;
+    transactionsAdded: number;
+    transactionsBefore: number;
+    transactionsAfter: number;
+    depositAmount?: number;
+    depositTxHash?: string;
+    metadata?: any;
+  }): Promise<void> {
+    await this.recordAuditEntry({
+      tronAddress: params.tronAddress,
+      userId: params.userId,
+      cycleId: `recharge-${params.depositId}`,
+      operationType: 'RECHARGE',
+      txHash: params.depositTxHash,
+      pendingTransactionsBefore: params.transactionsBefore,
+      pendingTransactionsAfter: params.transactionsAfter,
+      transactionDecrease: 0,
+      hasActualTransaction: true,
+      isSystemIssue: false,
+      metadata: {
+        depositId: params.depositId,
+        transactionsAdded: params.transactionsAdded,
+        depositAmount: params.depositAmount,
+        source: 'deposit_processing',
+        ...params.metadata
+      }
+    });
+
+    logger.info('[EnergyAuditRecorder] Recorded RECHARGE', {
+      address: params.tronAddress,
+      depositId: params.depositId,
+      transactionsAdded: params.transactionsAdded,
+      before: params.transactionsBefore,
+      after: params.transactionsAfter
+    });
+  }
+
+  /**
    * Get latest USDT transaction for an address by checking blockchain
    * This detects if user actually SENT USDT (not deposits TO system wallet)
    *

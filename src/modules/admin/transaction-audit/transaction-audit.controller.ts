@@ -209,12 +209,34 @@ export class TransactionAuditController {
 
       // Convert to patterns
       const patterns = Array.from(cycleMap.entries()).map(([cycleId, entries]) => {
+        // Check if this is a recharge event
+        const rechargeEntry = entries.find(e => e.operationType === 'RECHARGE');
+        if (rechargeEntry) {
+          return {
+            cycleId,
+            timestamp: rechargeEntry.timestamp,
+            type: 'RECHARGE' as const,
+            recharge: {
+              depositId: rechargeEntry.metadata?.depositId,
+              transactionsAdded: rechargeEntry.metadata?.transactionsAdded,
+              depositAmount: rechargeEntry.metadata?.depositAmount,
+              depositTxHash: rechargeEntry.txHash,
+              pendingTransactionsBefore: rechargeEntry.pendingTransactionsBefore,
+              pendingTransactionsAfter: rechargeEntry.pendingTransactionsAfter,
+            },
+            reclaim: null,
+            delegate: null
+          };
+        }
+
         const reclaim = entries.find(e => e.operationType === 'RECLAIM');
         const delegate = entries.find(e => e.operationType === 'DELEGATE');
 
         return {
           cycleId,
           timestamp: delegate?.timestamp || reclaim?.timestamp,
+          type: 'DELEGATION_CYCLE' as const,
+          recharge: null,
           reclaim: reclaim ? {
             txHash: reclaim.txHash,
             energyBefore: reclaim.energyBefore,

@@ -518,6 +518,10 @@ export class DepositService {
         // Use Prisma transaction to ensure atomicity
         const { prisma } = await import('../../config');
         
+        // Track transaction count before recharge for audit purposes
+        let transactionsBefore = 0;
+        let shouldRecordRecharge = false;
+
         await prisma.$transaction(async (tx) => {
           // 1. Update user credits
           logger.info('💳 Updating user credits within transaction...', {
@@ -525,7 +529,7 @@ export class DepositService {
             userId: deposit.userId,
             creditsToAdd: creditsAmount,
           });
-          
+
           await tx.user.update({
             where: { id: deposit.userId },
             data: {
@@ -534,12 +538,12 @@ export class DepositService {
               }
             }
           });
-          
+
           // 2. Mark deposit as processed
           logger.info('✅ Marking deposit as processed within transaction...', {
             depositId: deposit.id,
           });
-          
+
           await tx.deposit.update({
             where: { id: deposit.id },
             data: {
@@ -547,7 +551,7 @@ export class DepositService {
               processedAt: new Date(),
             }
           });
-          
+
           // 3. Create EnergyDelivery record for pay-per-transaction model
           if (deposit.energyRecipientAddress && numberOfTransactions > 0) {
             logger.info('📋 Creating EnergyDelivery record...', {
@@ -556,7 +560,7 @@ export class DepositService {
               tronAddress: deposit.energyRecipientAddress,
               totalTransactions: numberOfTransactions,
             });
-            
+
             await tx.energyDelivery.create({
               data: {
                 depositId: deposit.id,
@@ -567,19 +571,20 @@ export class DepositService {
                 isActive: true,
               }
             });
-            
+
             // 4. Initialize or update UserEnergyState for monitoring
             logger.info('🔋 Initializing/Updating UserEnergyState...', {
               userId: deposit.userId,
               tronAddress: deposit.energyRecipientAddress,
               transactionsToAdd: numberOfTransactions,
             });
-            
+
             const existingState = await tx.userEnergyState.findUnique({
               where: { tronAddress: deposit.energyRecipientAddress }
             });
-            
+
             if (existingState) {
+              transactionsBefore = existingState.transactionsRemaining;
               // Update existing state - add transactions and reset final reclaim flag
               await tx.userEnergyState.update({
                 where: { tronAddress: deposit.energyRecipientAddress },
@@ -598,13 +603,14 @@ export class DepositService {
                   }
                 }
               });
-              
+
               logger.info('✅ Updated existing UserEnergyState', {
                 tronAddress: deposit.energyRecipientAddress,
                 transactionsAdded: numberOfTransactions,
                 newTotal: existingState.transactionsRemaining + numberOfTransactions,
               });
             } else {
+              transactionsBefore = 0;
               // Create new state
               await tx.userEnergyState.create({
                 data: {
@@ -621,15 +627,17 @@ export class DepositService {
                   }
                 }
               });
-              
+
               logger.info('✅ Created new UserEnergyState', {
                 userId: deposit.userId,
                 tronAddress: deposit.energyRecipientAddress,
                 initialTransactions: numberOfTransactions,
               });
             }
+
+            shouldRecordRecharge = true;
           }
-          
+
           logger.info(`💰 Deposit processed successfully within transaction`, {
             depositId: deposit.id,
             userId: deposit.userId,
@@ -637,7 +645,29 @@ export class DepositService {
             energyDeliveryCreated: !!deposit.energyRecipientAddress,
           });
         });
-        
+
+        // Record RECHARGE audit entry (outside transaction - non-critical)
+        if (shouldRecordRecharge && deposit.energyRecipientAddress) {
+          try {
+            const { energyAuditRecorder } = await import('../../services/energy-audit-recorder.service');
+            await energyAuditRecorder.recordRecharge({
+              tronAddress: deposit.energyRecipientAddress,
+              userId: deposit.userId,
+              depositId: deposit.id,
+              transactionsAdded: numberOfTransactions,
+              transactionsBefore,
+              transactionsAfter: transactionsBefore + numberOfTransactions,
+              depositAmount: Number(deposit.amountUsdt),
+              depositTxHash: deposit.txHash || undefined,
+            });
+          } catch (auditError) {
+            logger.error('[DepositService] Failed to record recharge audit (non-critical)', {
+              error: auditError instanceof Error ? auditError.message : 'Unknown',
+              depositId: deposit.id,
+            });
+          }
+        }
+
       } catch (error) {
         logger.error(`Failed to process deposit ${deposit.id}`, {
           error: error instanceof Error ? error.message : 'Unknown error',

@@ -442,6 +442,7 @@ enum AdminRole {
 enum EnergyOperationType {
   RECLAIM
   DELEGATE
+  RECHARGE
 }
 
 // Network parameters cache for accurate energy calculations
