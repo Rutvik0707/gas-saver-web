@@ -31,6 +31,9 @@ model User {
   telegramLinkedAt        DateTime?             @map("telegram_linked_at")
   authSource              String                @default("email") @map("auth_source")
   lastLoginMethod         String?               @map("last_login_method")
+  // V2 fields
+  role                    UserRole              @default(USER) @map("role")
+  v2Credits               Int                   @default(0) @map("v2_credits")
   createdAt               DateTime              @default(now()) @map("created_at")
   updatedAt               DateTime              @updatedAt @map("updated_at")
   feedbacks               Feedback[]
@@ -41,6 +44,9 @@ model User {
   transactions            Transaction[]
   energyStates            UserEnergyState[]
   tronAddresses           UserTronAddress[]
+  apiKeys                 ApiKey[]
+  v2CreditLedger          V2CreditLedger[]
+  v2EnergyRequests        V2EnergyRequest[]
 
   @@index([telegramId])
   @@map("users")
@@ -72,6 +78,7 @@ model Deposit {
   energyTransferredAt    DateTime?       @map("energy_transferred_at")
   numberOfTransactions   Int?            @map("number_of_transactions")
   calculatedUsdtAmount   Decimal?        @map("calculated_usdt_amount") @db.Decimal(18, 6)
+  purpose                DepositPurpose  @default(ENERGY_DELIVERY) @map("purpose")
   addressPool            AddressPool?    @relation(fields: [assignedAddressId], references: [id])
   user                   User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   energyDelivery         EnergyDelivery?
@@ -461,4 +468,93 @@ model NetworkParameters {
 
   @@index([network, fetchedAt(sort: Desc)])
   @@map("network_parameters")
+}
+
+// ─── V2 Enums ────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  USER
+  API_CLIENT
+}
+
+enum DepositPurpose {
+  ENERGY_DELIVERY
+  TOPUP
+}
+
+enum V2CreditAction {
+  TOPUP
+  DEDUCTION
+  REFUND
+  ADJUSTMENT
+}
+
+enum V2RequestStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// ─── V2 Models ───────────────────────────────────────────────────────────────
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  userId     String    @map("user_id")
+  keyHash    String    @unique @map("key_hash")
+  keyPrefix  String    @map("key_prefix")
+  name       String?
+  isActive   Boolean   @default(true) @map("is_active")
+  lastUsedAt DateTime? @map("last_used_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([keyHash])
+  @@map("api_keys")
+}
+
+model V2CreditLedger {
+  id              String         @id @default(cuid())
+  userId          String         @map("user_id")
+  action          V2CreditAction
+  credits         Int
+  balanceAfter    Int            @map("balance_after")
+  description     String?
+  depositId       String?        @map("deposit_id")
+  energyRequestId String?        @map("energy_request_id")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("v2_credit_ledger")
+}
+
+model V2EnergyRequest {
+  id             String          @id @default(cuid())
+  userId         String          @map("user_id")
+  idempotencyKey String          @map("idempotency_key")
+  walletAddress   String          @map("wallet_address")
+  recipientWallet String?         @map("recipient_wallet")
+  energyAmount    Int             @map("energy_amount")
+  creditsDeducted Int            @default(0) @map("credits_deducted")
+  status         V2RequestStatus @default(PENDING)
+  txHash              String?         @map("tx_hash")
+  delegatedSun        BigInt?         @map("delegated_sun")
+  errorMessage        String?         @map("error_message")
+  processedAt         DateTime?       @map("processed_at")
+  energyReclaimedAt   DateTime?       @map("energy_reclaimed_at")
+  createdAt           DateTime        @default(now()) @map("created_at")
+  updatedAt           DateTime        @updatedAt @map("updated_at")
+  user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId])
+  @@index([walletAddress])
+  @@index([status])
+  @@index([createdAt])
+  @@map("v2_energy_requests")
 }

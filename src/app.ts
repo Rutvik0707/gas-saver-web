@@ -18,6 +18,11 @@ import { tronAddressRoutes } from './modules/tron-address';
 import { createSystemStatusRoutes } from './modules/admin/system-status.routes';
 import { energyRateRoutes } from './modules/energy-rate';
 import { transactionPackagesRoutes } from './modules/transaction-packages';
+import { v2AuthRoutes } from './modules/v2/auth/v2-auth.routes';
+import { apiKeyRoutes } from './modules/v2/api-keys/api-key.routes';
+import { topupRoutes } from './modules/v2/topup/topup.routes';
+import { v2EnergyRoutes } from './modules/v2/energy/v2-energy.routes';
+import { v2AccountRoutes } from './modules/v2/account/v2-account.routes';
 
 export function createApp(): express.Application {
   const app = express();
@@ -158,6 +163,15 @@ export function createApp(): express.Application {
 
   // Mount API router
   app.use(`/api/${config.app.apiVersion}`, apiRouter);
+
+  // V2 routes
+  const v2Router = express.Router();
+  v2Router.use('/auth', v2AuthRoutes);
+  v2Router.use('/keys', apiKeyRoutes);
+  v2Router.use('/topup', topupRoutes);
+  v2Router.use('/energy', v2EnergyRoutes);
+  v2Router.use('/account', v2AccountRoutes);
+  app.use('/api/v2', v2Router);
 
   // Email verification redirect
   app.get('/verify-email', (req, res) => {

@@ -54,6 +54,13 @@ export class CronService {
       await finalEnergyReclaimService.runCycle();
     });
 
+    // V2 energy reclaim - Reclaims energy from wallets after V2 delegations complete
+    // Runs every 15 minutes at 7 minutes past (staggered from V1 reclaim)
+    this.scheduleJob('v2-energy-reclaim', '0 7,22,37,52 * * * *', async () => {
+      const { v2EnergyReclaimService } = await import('./v2-energy-reclaim.service');
+      await v2EnergyReclaimService.runCycle();
+    });
+
     // Network parameters refresh - Fetches totalEnergyWeight from TRON network
     // This enables accurate energy calculations using the real-time network ratio
     // Runs every 15 minutes at 5 minutes past (staggered from other jobs)
@@ -75,6 +82,7 @@ export class CronService {
     logger.info('⚡ Simplified energy monitor started - checking at :30 past every minute');
     logger.info('📊 Transaction usage tracker started - checking every 45 seconds');
     logger.info('♻️  Final energy reclaim started - running every 15 minutes');
+    logger.info('♻️  V2 energy reclaim started - running every 15 minutes');
     logger.info('🌐 Network parameters refresh started - running every 15 minutes');
     logger.info('✅ All background services initialized successfully');
   }

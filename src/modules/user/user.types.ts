@@ -4,11 +4,12 @@ import { User, Deposit, Transaction } from '@prisma/client';
 // Zod validation schemas
 import { WhatsAppService } from '../../services/whatsapp.service';
 
-// Registration with email, phone, and password
+// Registration with email, phone, password, and optional tron address
 export const createUserSchema = z.object({
   email: z.string().email('Invalid email format'),
   phoneNumber: z.string().refine((num) => WhatsAppService.validatePhoneNumber(num), 'Invalid phone number format'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
+  tronAddress: z.string().optional(),
 });
 
 // Set password after OTP verification

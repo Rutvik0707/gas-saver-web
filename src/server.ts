@@ -38,6 +38,9 @@ async function startServer(): Promise<void> {
       logger.info(`🏥 Health Check: http://localhost:${config.app.port}/health`);
     });
 
+    // Release port immediately when connections are keep-alive
+    server.keepAliveTimeout = 0;
+
     // Start cron jobs
     logger.info('🔄 Starting background services...');
     await cronService.start();
@@ -46,19 +49,21 @@ async function startServer(): Promise<void> {
     // Graceful shutdown handling
     const gracefulShutdown = async (signal: string) => {
       logger.info(`${signal} received, starting graceful shutdown...`);
-      
-      // Stop accepting new connections
+
+      // Force exit after 1s so port is released before watch restarts
+      const forceExit = setTimeout(() => process.exit(0), 1000);
+      forceExit.unref();
+
+      // Destroy all open connections immediately
+      if ((server as any).closeAllConnections) {
+        (server as any).closeAllConnections();
+      }
+
       server.close(async () => {
         logger.info('HTTP server closed');
-        
         try {
-          // Stop cron jobs
           await cronService.stop();
-          
-          // Close database connection
           await prisma.$disconnect();
-          logger.info('Database connection closed');
-          
           logger.info('Graceful shutdown completed');
           process.exit(0);
         } catch (error) {

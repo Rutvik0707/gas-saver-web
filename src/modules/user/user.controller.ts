@@ -305,65 +305,22 @@ export class UserController {
     }
   }
 
-  // Commented out - OTP-based login not required, only password-based login is needed
-  // /**
-  //  * @swagger
-  //  * /users/login-otp:
-  //  *   post:
-  //  *     tags:
-  //  *       - Authentication
-  //  *     summary: Request OTP for login
-  //  *     description: Request OTP to be sent to user's email and phone number
-  //  *     requestBody:
-  //  *       required: true
-  //  *       content:
-  //  *         application/json:
-  //  *           schema:
-  //  *             type: object
-  //  *             required:
-  //  *               - identifier
-  //  *             properties:
-  //  *               identifier:
-  //  *                 type: string
-  //  *                 description: Email address or phone number
-  //  *                 example: user@example.com or +919876543210
-  //  *     responses:
-  //  *       200:
-  //  *         description: OTP sent successfully
-  //  *         content:
-  //  *           application/json:
-  //  *             schema:
-  //  *               type: object
-  //  *               properties:
-  //  *                 success:
-  //  *                   type: boolean
-  //  *                   example: true
-  //  *                 message:
-  //  *                   type: string
-  //  *                   example: OTP has been sent to your registered email and phone number
-  //  *       404:
-  //  *         description: User not found
-  //  *       401:
-  //  *         description: User account is deactivated
-  //  */
-  // async loginWithOtp(req: Request, res: Response): Promise<void> {
-  //   try {
-  //     const validatedData = loginWithOtpSchema.parse(req.body);
-  //     
-  //     logger.info('OTP login request', { identifier: validatedData.identifier });
-  //     
-  //     const result = await this.userService.loginWithOtp(validatedData);
-  //     
-  //     res.json(
-  //       apiUtils.success(result.message)
-  //     );
-  //   } catch (error) {
-  //     if (error instanceof Error) {
-  //       logger.error('OTP login request failed', { error: error.message });
-  //     }
-  //     throw error;
-  //   }
-  // }
+  async loginWithOtp(req: Request, res: Response): Promise<void> {
+    try {
+      const validatedData = loginWithOtpSchema.parse(req.body);
+
+      logger.info('OTP login request', { identifier: validatedData.identifier });
+
+      const result = await this.userService.loginWithOtp(validatedData);
+
+      res.json(apiUtils.success(result.message));
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('OTP login request failed', { error: error.message });
+      }
+      throw error;
+    }
+  }
 
   // Commented out - Replaced by dual OTP verification in verify-registration-otp
   // /**
@@ -415,79 +372,22 @@ export class UserController {
   //   }
   // }
 
-  // Commented out - OTP-based login not required, only password-based login is needed
-  // /**
-  //  * @swagger
-  //  * /users/verify-otp-login:
-  //  *   post:
-  //  *     tags:
-  //  *       - Authentication
-  //  *     summary: Verify OTP for login
-  //  *     description: Verify the OTP and receive access token
-  //  *     requestBody:
-  //  *       required: true
-  //  *       content:
-  //  *         application/json:
-  //  *           schema:
-  //  *             type: object
-  //  *             required:
-  //  *               - identifier
-  //  *               - otp
-  //  *             properties:
-  //  *               identifier:
-  //  *                 type: string
-  //  *                 description: Email address or phone number used for login
-  //  *                 example: user@example.com or +919876543210
-  //  *               otp:
-  //  *                 type: string
-  //  *                 pattern: '^[0-9]{6}$'
-  //  *                 example: "123456"
-  //  *     responses:
-  //  *       200:
-  //  *         description: OTP verified successfully, returns access token
-  //  *         content:
-  //  *           application/json:
-  //  *             schema:
-  //  *               type: object
-  //  *               properties:
-  //  *                 success:
-  //  *                   type: boolean
-  //  *                   example: true
-  //  *                 message:
-  //  *                   type: string
-  //  *                   example: Login successful
-  //  *                 data:
-  //  *                   type: object
-  //  *                   properties:
-  //  *                     user:
-  //  *                       type: object
-  //  *                     token:
-  //  *                       type: string
-  //  *                     expiresIn:
-  //  *                       type: string
-  //  *       400:
-  //  *         description: Invalid or expired OTP
-  //  *       404:
-  //  *         description: User not found
-  //  */
-  // async verifyOtpLogin(req: Request, res: Response): Promise<void> {
-  //   try {
-  //     const validatedData = verifyOtpLoginSchema.parse(req.body);
-  //     
-  //     logger.info('OTP login verification attempt', { identifier: validatedData.identifier });
-  //     
-  //     const result = await this.userService.verifyOtpLogin(validatedData);
-  //     
-  //     res.json(
-  //       apiUtils.success('Login successful', result)
-  //     );
-  //   } catch (error) {
-  //     if (error instanceof Error) {
-  //       logger.error('OTP login verification failed', { error: error.message });
-  //     }
-  //     throw error;
-  //   }
-  // }
+  async verifyOtpLogin(req: Request, res: Response): Promise<void> {
+    try {
+      const validatedData = verifyOtpLoginSchema.parse(req.body);
+
+      logger.info('OTP login verification attempt', { identifier: validatedData.identifier });
+
+      const result = await this.userService.verifyOtpLogin(validatedData);
+
+      res.json(apiUtils.success('Login successful', result));
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error('OTP login verification failed', { error: error.message });
+      }
+      throw error;
+    }
+  }
 
   // Commented out - Users should use the register endpoint again to get new OTPs
   // /**

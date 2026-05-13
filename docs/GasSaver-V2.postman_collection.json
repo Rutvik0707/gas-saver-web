@@ -1,0 +1,596 @@
+{
+  "info": {
+    "name": "Gas Saver V2",
+    "_postman_id": "gassaver-v2-collection",
+    "description": "Complete V2 API collection — Auth → API Keys → Top Up → Energy Delegation → Account",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000" },
+    { "key": "jwt_token", "value": "" },
+    { "key": "api_key", "value": "" },
+    { "key": "api_key_id", "value": "" },
+    { "key": "deposit_id", "value": "" },
+    { "key": "energy_request_id", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. Auth",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{base_url}}/api/v2/auth/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"paycoins@test.com\",\n  \"password\": \"Test1234!\",\n  \"phoneNumber\": \"+919999999999\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Registration success', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify OTP",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{base_url}}/api/v2/auth/verify-otp",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"paycoins@test.com\",\n  \"otp\": \"123456\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('OTP verified', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{base_url}}/api/v2/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"paycoins@test.com\",\n  \"password\": \"Test1234!\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Token saved', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.data.token).to.be.a('string');",
+                  "  pm.collectionVariables.set('jwt_token', json.data.token);",
+                  "  console.log('JWT saved:', json.data.token.substring(0, 20) + '...');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Me",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": "{{base_url}}/api/v2/auth/me"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('v2Credits visible', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.data).to.have.property('v2Credits');",
+                  "  console.log('v2Credits:', json.data.v2Credits);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. API Keys",
+      "item": [
+        {
+          "name": "Generate API Key",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{jwt_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/api/v2/keys",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"paycoins-prod\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('API key saved', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.data.key).to.include('sk_live_');",
+                  "  pm.collectionVariables.set('api_key', json.data.key);",
+                  "  pm.collectionVariables.set('api_key_id', json.data.id);",
+                  "  console.log('API Key saved:', json.data.key.substring(0, 16) + '...');",
+                  "  console.log('IMPORTANT: Save this key — shown only once!');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List API Keys",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": "{{base_url}}/api/v2/keys"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Keys listed', () => {",
+                  "  const json = pm.response.json();",
+                  "  console.log('Active keys:', json.data.length);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Revoke API Key",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": "{{base_url}}/api/v2/keys/{{api_key_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Key revoked', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.success).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Top Up",
+      "item": [
+        {
+          "name": "Initiate Top Up",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{jwt_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/api/v2/topup/initiate",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 5\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Deposit ID and address saved', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.data.depositId).to.be.a('string');",
+                  "  pm.expect(json.data.assignedAddress).to.include('T');",
+                  "  pm.collectionVariables.set('deposit_id', json.data.depositId);",
+                  "  console.log('Send', json.data.expectedAmount, 'USDT to:', json.data.assignedAddress);",
+                  "  console.log('Deposit ID:', json.data.depositId);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Check Top Up Status",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": "{{base_url}}/api/v2/topup/{{deposit_id}}/status"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Top up status', () => {",
+                  "  const json = pm.response.json();",
+                  "  console.log('Status:', json.data.status);",
+                  "  console.log('v2Credits balance:', json.data.v2CreditsBalance);",
+                  "  if (json.data.status === 'PROCESSED') {",
+                  "    console.log('Credits added:', json.data.creditsAdded);",
+                  "  }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Top Up History",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/v2/topup/history?page=1&limit=10",
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "10" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('History returned', () => {",
+                  "  const json = pm.response.json();",
+                  "  console.log('Total top ups:', json.data.total);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Energy Delegation",
+      "item": [
+        {
+          "name": "Delegate Energy",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/api/v2/energy/delegate",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"walletAddress\": \"REPLACE_WITH_TARGET_TRON_ADDRESS\",\n  \"idempotencyKey\": \"PAY-DEP-001\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200 or 422', () => {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 422]);",
+                  "});",
+                  "pm.test('Request ID saved', () => {",
+                  "  const json = pm.response.json();",
+                  "  console.log('Status:', json.data.status);",
+                  "  console.log('Credits deducted:', json.data.creditsDeducted);",
+                  "  console.log('TX Hash:', json.data.txHash);",
+                  "  if (json.data.requestId) {",
+                  "    pm.collectionVariables.set('energy_request_id', json.data.requestId);",
+                  "  }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delegate Energy (Idempotency Test)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/api/v2/energy/delegate",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"walletAddress\": \"REPLACE_WITH_TARGET_TRON_ADDRESS\",\n  \"idempotencyKey\": \"PAY-DEP-001\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Same response as first call', () => {",
+                  "  const json = pm.response.json();",
+                  "  const savedId = pm.collectionVariables.get('energy_request_id');",
+                  "  pm.expect(json.data.requestId).to.equal(savedId);",
+                  "  console.log('Idempotency works — same requestId returned:', json.data.requestId);",
+                  "  console.log('Credits NOT deducted again ✅');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Check Delegation Status",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": "{{base_url}}/api/v2/energy/status/{{energy_request_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Delegation status', () => {",
+                  "  const json = pm.response.json();",
+                  "  console.log('Status:', json.data.status);",
+                  "  console.log('TX Hash:', json.data.txHash);",
+                  "  console.log('Energy reclaimed at:', json.data.energyReclaimedAt || 'Not yet');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Energy History",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/v2/energy/history?page=1&limit=10",
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "10" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('History returned', () => {",
+                  "  const json = pm.response.json();",
+                  "  console.log('Total delegations:', json.data.total);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Account",
+      "item": [
+        {
+          "name": "Get Balance",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": "{{base_url}}/api/v2/account/balance"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Balance returned', () => {",
+                  "  const json = pm.response.json();",
+                  "  console.log('v2Credits:', json.data.v2Credits);",
+                  "  console.log('Total delegations completed:', json.data.totalDelegationsCompleted);",
+                  "  console.log('Pending delegations:', json.data.delegationsPending);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Usage History",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/v2/account/usage?page=1&limit=10",
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "10" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Usage history returned', () => {",
+                  "  const json = pm.response.json();",
+                  "  console.log('v2Credits:', json.data.v2Credits);",
+                  "  console.log('Total requests:', json.data.total);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. Edge Cases",
+      "item": [
+        {
+          "name": "Delegate — No Credits (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/api/v2/energy/delegate",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"walletAddress\": \"REPLACE_WITH_TARGET_TRON_ADDRESS\",\n  \"idempotencyKey\": \"PAY-NO-CREDITS-001\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Rejected when no credits', () => {",
+                  "  pm.expect(pm.response.code).to.equal(400);",
+                  "  console.log('Correctly blocked — no credits');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delegate — Invalid API Key (expect 401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "sk_live_invalidkeyhere" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/api/v2/energy/delegate",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"walletAddress\": \"REPLACE_WITH_TARGET_TRON_ADDRESS\",\n  \"idempotencyKey\": \"PAY-DEP-999\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Rejected with 401', () => {",
+                  "  pm.expect(pm.response.code).to.equal(401);",
+                  "  console.log('Invalid API key correctly rejected');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delegate — Invalid Wallet Address (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{base_url}}/api/v2/energy/delegate",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"walletAddress\": \"invalid-address\",\n  \"idempotencyKey\": \"PAY-DEP-BAD-ADDR\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Rejected with 400', () => {",
+                  "  pm.expect(pm.response.code).to.equal(400);",
+                  "  console.log('Invalid address correctly rejected');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "V1 User tries V2 Login (expect 401)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{base_url}}/api/v2/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"v1user@test.com\",\n  \"password\": \"Test1234!\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('V1 user blocked from V2', () => {",
+                  "  pm.expect(pm.response.code).to.equal(401);",
+                  "  console.log('V1 user correctly blocked from V2 login');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -500,6 +500,54 @@ export class DepositService {
           continue;
         }
 
+        // ── V2 TOPUP: add v2Credits, skip energy delegation entirely ──
+        if ((deposit as any).purpose === 'TOPUP') {
+          const creditsToAdd = Math.floor(Number(deposit.amountUsdt));
+          const { prisma } = await import('../../config');
+
+          await prisma.$transaction(async (tx) => {
+            await tx.user.update({
+              where: { id: deposit.userId },
+              data: { v2Credits: { increment: creditsToAdd } },
+            });
+
+            await tx.deposit.update({
+              where: { id: deposit.id },
+              data: { status: 'PROCESSED', processedAt: new Date() },
+            });
+
+            await tx.v2CreditLedger.create({
+              data: {
+                userId: deposit.userId,
+                action: 'TOPUP',
+                credits: creditsToAdd,
+                balanceAfter: 0, // updated below
+                description: `Top up from deposit ${deposit.id}`,
+                depositId: deposit.id,
+              },
+            });
+          });
+
+          // Update balanceAfter with actual v2Credits
+          const updatedUser = await prisma.user.findUnique({
+            where: { id: deposit.userId },
+            select: { v2Credits: true },
+          });
+          await prisma.v2CreditLedger.updateMany({
+            where: { depositId: deposit.id },
+            data: { balanceAfter: updatedUser?.v2Credits ?? 0 },
+          });
+
+          logger.info('✅ V2 top up processed', {
+            depositId: deposit.id,
+            userId: deposit.userId,
+            creditsAdded: creditsToAdd,
+            newBalance: updatedUser?.v2Credits,
+          });
+          continue; // skip V1 energy flow
+        }
+        // ── end V2 TOPUP ──
+
         // Validate numberOfTransactions (valid packages: 50, 100, 200, 300, 400, 500)
         const numberOfTransactions = deposit.numberOfTransactions || 1;
         if (numberOfTransactions > 500) {

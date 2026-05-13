@@ -16,9 +16,8 @@ export function createUserRoutes(userController: UserController): Router {
 
   // Public routes - Login
   router.post('/login', authRateLimiter, userController.login.bind(userController));
-  // Commented out - OTP-based login not required, only password-based login is needed
-  // router.post('/login-otp', userController.loginWithOtp.bind(userController));
-  // router.post('/verify-otp-login', userController.verifyOtpLogin.bind(userController));
+  router.post('/login-otp', authRateLimiter, userController.loginWithOtp.bind(userController));
+  router.post('/verify-otp-login', authRateLimiter, userController.verifyOtpLogin.bind(userController));
   
   // OTP and email verification routes (public)
   // Commented out - these endpoints are replaced by the dual OTP verification flow

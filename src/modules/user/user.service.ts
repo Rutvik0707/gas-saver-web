@@ -221,50 +221,42 @@ async loginUser(loginData: LoginUserDto): Promise<LoginResponse> {
     };
   }
 
-  // Commented out - OTP-based login not required, only password-based login is needed
-  // async loginWithOtp(loginData: LoginWithOtpDto): Promise<{ message: string }> {
-  //   const { identifier } = loginData;
-  //   let user;
-  //   
-  //   // Check if identifier is email or phone number
-  //   if (identifier.includes('@')) {
-  //     // It's an email
-  //     user = await this.userRepository.findByEmail(identifier);
-  //   } else {
-  //     // It's a phone number
-  //     user = await this.userRepository.findByPhoneNumber(identifier);
-  //   }
-  //   
-  //   if (!user) {
-  //     throw new NotFoundException('User not found with the provided email or phone number');
-  //   }
-  //   
-  //   // Check if user is active
-  //   if (!user.isActive) {
-  //     throw new UnauthorizedException('User account is deactivated');
-  //   }
-  //   
-  //   // Generate new OTP
-  //   const otp = otpService.generateOTP(6);
-  //   const otpExpiry = otpService.calculateOTPExpiry();
-  //   
-  //   // Update OTP in database
-  //   await this.userRepository.setOtpCode(user.id, otp, otpExpiry);
-  //   
-  //   // Send OTP via email and WhatsApp
-  //   if (user.phoneNumber) {
-  //     await otpService.sendOTP(user.email, user.phoneNumber, otp);
-  //   } else {
-  //     // If no phone number, send only via email
-  //     await emailService.sendOTPEmail(user.email, otp);
-  //   }
-  //   
-  //   logger.info(`OTP login initiated for user: ${user.email}`, { userId: user.id });
-  //   
-  //   return { 
-  //     message: 'OTP has been sent to your registered email and phone number' 
-  //   };
-  // }
+  async loginWithOtp(loginData: LoginWithOtpDto): Promise<{ message: string }> {
+    const { identifier } = loginData;
+    let user;
+
+    // Check if identifier is email or phone number
+    if (identifier.includes('@')) {
+      user = await this.userRepository.findByEmail(identifier);
+    } else {
+      user = await this.userRepository.findByPhoneNumber(identifier);
+    }
+
+    if (!user) {
+      throw new NotFoundException('User not found with the provided email or phone number');
+    }
+
+    if (!user.isActive) {
+      throw new UnauthorizedException('User account is deactivated');
+    }
+
+    const otp = otpService.generateOTP(6);
+    const otpExpiry = otpService.calculateOTPExpiry();
+
+    await this.userRepository.setOtpCode(user.id, otp, otpExpiry);
+
+    if (user.phoneNumber) {
+      await otpService.sendOTP(user.email, user.phoneNumber, otp);
+    } else {
+      await emailService.sendOTPEmail(user.email, otp);
+    }
+
+    logger.info(`OTP login initiated for user: ${user.email}`, { userId: user.id });
+
+    return {
+      message: 'OTP has been sent to your registered email and phone number'
+    };
+  }
 
 
   async getUserById(id: string): Promise<UserResponse> {
@@ -457,10 +449,10 @@ async verifyEmailToken(token: string): Promise<UserResponse> {
   }
   
 
-  async verifyToken(token: string): Promise<{ id: string; email: string }> {
+  async verifyToken(token: string): Promise<{ id: string; email: string; role: string }> {
     try {
       const decoded = jwt.verify(token, config.jwt.secret) as any;
-      
+
       // Verify user still exists and is active
       const user = await this.userRepository.findById(decoded.userId);
       if (!user || !user.isActive) {
@@ -470,6 +462,7 @@ async verifyEmailToken(token: string): Promise<UserResponse> {
       return {
         id: user.id,
         email: user.email,
+        role: user.role,
       };
     } catch (error) {
       throw new UnauthorizedException('Invalid token');
@@ -498,48 +491,40 @@ async verifyEmailToken(token: string): Promise<UserResponse> {
     return this.formatUserResponse(verifiedUser);
   }
 
-  // Commented out - OTP-based login not required, only password-based login is needed
-  // async verifyOtpLogin(verifyData: VerifyOtpLoginDto): Promise<LoginResponse> {
-  //   const { identifier, otp } = verifyData;
-  //   let user;
-  //   
-  //   // Check if identifier is email or phone number
-  //   if (identifier.includes('@')) {
-  //     // It's an email
-  //     user = await this.userRepository.findByEmail(identifier);
-  //   } else {
-  //     // It's a phone number
-  //     user = await this.userRepository.findByPhoneNumber(identifier);
-  //   }
-  //   
-  //   if (!user) {
-  //     throw new ValidationException('User not found');
-  //   }
-  //   
-  //   // Check if user is active
-  //   if (!user.isActive) {
-  //     throw new UnauthorizedException('User account is deactivated');
-  //   }
-  //   
-  //   // Verify OTP
-  //   if (!otpService.isValidOTP(otp, user.otpCode, user.otpExpiry)) {
-  //     throw new ValidationException('Invalid or expired OTP');
-  //   }
-  //   
-  //   // Clear OTP after successful verification
-  //   await this.userRepository.setOtpCode(user.id, null, null);
-  //   
-  //   // Generate JWT token
-  //   const token = this.generateToken(user);
-  //   
-  //   logger.info(`User logged in via OTP: ${user.email}`, { userId: user.id });
-  //   
-  //   return {
-  //     user: this.formatUserResponse(user),
-  //     token,
-  //     expiresIn: config.jwt.expiresIn,
-  //   };
-  // }
+  async verifyOtpLogin(verifyData: VerifyOtpLoginDto): Promise<LoginResponse> {
+    const { identifier, otp } = verifyData;
+    let user;
+
+    if (identifier.includes('@')) {
+      user = await this.userRepository.findByEmail(identifier);
+    } else {
+      user = await this.userRepository.findByPhoneNumber(identifier);
+    }
+
+    if (!user) {
+      throw new ValidationException('User not found');
+    }
+
+    if (!user.isActive) {
+      throw new UnauthorizedException('User account is deactivated');
+    }
+
+    if (!otpService.isValidOTP(otp, user.otpCode, user.otpExpiry)) {
+      throw new ValidationException('Invalid or expired OTP');
+    }
+
+    await this.userRepository.setOtpCode(user.id, null, null);
+
+    const token = this.generateToken(user);
+
+    logger.info(`User logged in via OTP: ${user.email}`, { userId: user.id });
+
+    return {
+      user: this.formatUserResponse(user),
+      token,
+      expiresIn: config.jwt.expiresIn,
+    };
+  }
 
   async resendOTP(email: string, phoneNumber: string): Promise<boolean> {
     const normalizedEmail = email.toLowerCase();
