@@ -81,16 +81,26 @@ export class TopupService {
     const { deposits, total } = await this.repository.findAllTopupsByUserId(userId, page, limit);
     const v2Credits = await this.repository.getUserV2Credits(userId);
 
-    const topups: TopupStatusResponse[] = deposits.map(deposit => ({
-      depositId: deposit.id,
-      status: deposit.status,
-      expectedAmount: deposit.expectedAmount.toString(),
-      amountReceived: deposit.amountUsdt ? deposit.amountUsdt.toString() : null,
-      creditsAdded: deposit.status === 'PROCESSED' ? Number(deposit.amountUsdt) : null,
-      v2CreditsBalance: v2Credits,
-      createdAt: deposit.createdAt,
-      processedAt: deposit.processedAt,
-    }));
+    const topups: TopupStatusResponse[] = await Promise.all(
+      deposits.map(async deposit => {
+        let qrCodeBase64: string | null = null;
+        if (deposit.status === 'PENDING' && deposit.assignedAddress) {
+          qrCodeBase64 = await referenceService.generateAddressQR(deposit.assignedAddress).catch(() => null);
+        }
+        return {
+          depositId: deposit.id,
+          status: deposit.status,
+          expectedAmount: deposit.expectedAmount.toString(),
+          amountReceived: deposit.amountUsdt ? deposit.amountUsdt.toString() : null,
+          creditsAdded: deposit.status === 'PROCESSED' ? Number(deposit.amountUsdt) : null,
+          v2CreditsBalance: v2Credits,
+          createdAt: deposit.createdAt,
+          processedAt: deposit.processedAt,
+          assignedAddress: deposit.assignedAddress ?? null,
+          qrCodeBase64,
+        };
+      })
+    );
 
     return {
       topups,

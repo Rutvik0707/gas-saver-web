@@ -2,6 +2,47 @@ import { Request, Response } from 'express';
 import { prisma } from '../../../config';
 
 export class V2AccountController {
+  async getProfile(req: Request, res: Response): Promise<void> {
+    const userId = (req as any).user.id;
+
+    const [user, totalDelegations, totalTopups, totalSpent] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          email: true,
+          phoneNumber: true,
+          isEmailVerified: true,
+          isPhoneVerified: true,
+          isActive: true,
+          role: true,
+          v2Credits: true,
+          authSource: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+      prisma.v2EnergyRequest.count({ where: { userId, status: 'COMPLETED' } }),
+      prisma.deposit.count({ where: { userId, status: 'PROCESSED' } }),
+      prisma.v2EnergyRequest.aggregate({
+        where: { userId, status: 'COMPLETED' },
+        _sum: { creditsDeducted: true },
+      }),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        ...user,
+        stats: {
+          totalDelegationsCompleted: totalDelegations,
+          totalTopupsCompleted: totalTopups,
+          totalCreditsSpent: totalSpent._sum.creditsDeducted ?? 0,
+        },
+      },
+    });
+  }
+
   async getBalance(req: Request, res: Response): Promise<void> {
     const userId = (req as any).user.id;
 

@@ -6,6 +6,8 @@ import {
   DelegateEnergyDto,
   DelegateEnergyResponse,
   EnergyStatusResponse,
+  EnergyCheckResponse,
+  USDT_TRANSFER_ENERGY_THRESHOLD,
 } from './v2-energy.types';
 
 const ENERGY_SINGLE_SLOT = 65000;   // recipient already holds USDT (slot exists)
@@ -175,6 +177,51 @@ export class V2EnergyService {
       processedAt: request.processedAt,
       energyReclaimedAt: request.energyReclaimedAt,
       createdAt: request.createdAt,
+    };
+  }
+
+  async checkEnergy(walletAddress: string, userId: string): Promise<EnergyCheckResponse> {
+    if (!tronUtils.isAddress(walletAddress)) {
+      throw new BadRequestException('Invalid TRON wallet address');
+    }
+
+    // Query on-chain energy resources for this wallet
+    const resources = await systemTronWeb.trx.getAccountResources(walletAddress).catch(() => ({}));
+    const energyLimit     = Number((resources as any).EnergyLimit ?? 0);
+    const energyUsed      = Number((resources as any).EnergyUsed ?? 0);
+    const energyAvailable = Math.max(0, energyLimit - energyUsed);
+    const isReadyForTransfer = energyAvailable >= USDT_TRANSFER_ENERGY_THRESHOLD;
+
+    logger.info('V2 energy check', {
+      walletAddress,
+      userId,
+      energyAvailable,
+      energyLimit,
+      energyUsed,
+      isReadyForTransfer,
+    });
+
+    // Last delegation we made to this wallet for this API client
+    const last = await this.repository.findLastByWalletAddress(userId, walletAddress);
+
+    return {
+      walletAddress,
+      hasEnergy: energyAvailable > 0,
+      energyAvailable,
+      energyLimit,
+      energyUsed,
+      isReadyForTransfer,
+      threshold: USDT_TRANSFER_ENERGY_THRESHOLD,
+      lastDelegation: last
+        ? {
+            requestId: last.id,
+            status: last.status,
+            txHash: last.txHash,
+            energyAmount: last.energyAmount,
+            delegatedAt: last.processedAt,
+            createdAt: last.createdAt,
+          }
+        : null,
     };
   }
 

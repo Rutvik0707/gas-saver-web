@@ -30,6 +30,13 @@ export class V2EnergyController {
     const result = await v2EnergyService.getHistory(userId, page, limit);
     res.status(200).json({ success: true, data: result });
   }
+
+  async checkEnergy(req: Request, res: Response): Promise<void> {
+    const userId = (req as any).user.id;
+    const { walletAddress } = req.params;
+    const result = await v2EnergyService.checkEnergy(walletAddress, userId);
+    res.status(200).json({ success: true, data: result });
+  }
 }
 
 export const v2EnergyController = new V2EnergyController();

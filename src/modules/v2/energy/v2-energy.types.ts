@@ -3,6 +3,9 @@ import { V2RequestStatus } from '@prisma/client';
 
 const tronAddressSchema = z.string().min(34).max(34).regex(/^T/, 'Must be a TRON address starting with T');
 
+// Minimum energy required for a USDT TRC-20 transfer
+export const USDT_TRANSFER_ENERGY_THRESHOLD = 65000;
+
 export const delegateEnergySchema = z.object({
   walletAddress: tronAddressSchema,
   idempotencyKey: z.string().min(1).max(128),
@@ -38,4 +41,22 @@ export interface EnergyStatusResponse {
   processedAt: Date | null;
   energyReclaimedAt: Date | null;
   createdAt: Date;
+}
+
+export interface EnergyCheckResponse {
+  walletAddress: string;
+  hasEnergy: boolean;
+  energyAvailable: number;
+  energyLimit: number;
+  energyUsed: number;
+  isReadyForTransfer: boolean;
+  threshold: number;
+  lastDelegation: {
+    requestId: string;
+    status: string;
+    txHash: string | null;
+    energyAmount: number;
+    delegatedAt: Date | null;
+    createdAt: Date;
+  } | null;
 }

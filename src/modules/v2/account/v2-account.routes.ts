@@ -7,6 +7,7 @@ const router = Router();
 
 router.use(authMiddleware, v2RoleMiddleware);
 
+router.get('/profile', v2AccountController.getProfile.bind(v2AccountController));
 router.get('/balance', v2AccountController.getBalance.bind(v2AccountController));
 router.get('/usage', v2AccountController.getUsageHistory.bind(v2AccountController));
 

@@ -88,6 +88,13 @@ export class V2EnergyRepository {
     return result;
   }
 
+  async findLastByWalletAddress(userId: string, walletAddress: string): Promise<V2EnergyRequest | null> {
+    return prisma.v2EnergyRequest.findFirst({
+      where: { userId, walletAddress },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
   async refundCreditAndCreateLedger(userId: string, requestId: string, reason: string): Promise<void> {
     await prisma.$transaction(async (tx) => {
       const updated = await tx.user.update({

@@ -28,6 +28,8 @@ export interface TopupStatusResponse {
   v2CreditsBalance: number;
   createdAt: Date;
   processedAt: Date | null;
+  assignedAddress?: string | null;
+  qrCodeBase64?: string | null;
 }
 
 export interface TopupHistoryResponse {
