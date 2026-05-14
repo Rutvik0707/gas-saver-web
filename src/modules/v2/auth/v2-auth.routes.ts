@@ -4,6 +4,7 @@ import { authMiddleware } from '../../../middleware/auth.middleware';
 
 const router = Router();
 
+router.post('/request-access', (req, res) => v2AuthController.requestAccess(req, res));
 router.post('/register', (req, res) => v2AuthController.register(req, res));
 router.post('/verify-otp', (req, res) => v2AuthController.verifyOtp(req, res));
 router.post('/login', (req, res) => v2AuthController.login(req, res));

@@ -6,13 +6,18 @@ import { WhatsAppService } from '../../../services/whatsapp.service';
 import { otpService } from '../../../services/otp.service';
 import { ConflictException, UnauthorizedException, ValidationException } from '../../../shared/exceptions';
 import { V2AuthRepository } from './v2-auth.repository';
-import { V2RegisterDto, V2VerifyOtpDto, V2LoginDto, V2AuthResponse, V2UserResponse } from './v2-auth.types';
+import { V2RegisterDto, V2VerifyOtpDto, V2LoginDto, V2AuthResponse, V2UserResponse, V2RequestAccessDto } from './v2-auth.types';
 import { UserRole } from '@prisma/client';
 
 export class V2AuthService {
   constructor(private repository: V2AuthRepository) {}
 
   async register(dto: V2RegisterDto): Promise<{ message: string }> {
+    const requiredPassword = config.admin.v2RegisterPassword;
+    if (requiredPassword && dto.adminPassword !== requiredPassword) {
+      throw new UnauthorizedException('Invalid admin password');
+    }
+
     if (dto.phoneNumber && !WhatsAppService.validatePhoneNumber(dto.phoneNumber)) {
       throw new ValidationException('Invalid phone number format');
     }
@@ -131,6 +136,47 @@ export class V2AuthService {
       token,
       expiresIn: '24h',
     };
+  }
+
+  async requestAccess(dto: V2RequestAccessDto): Promise<{ message: string }> {
+    const adminEmail = config.admin.defaultEmail;
+    if (!adminEmail) {
+      throw new ValidationException('Admin email not configured');
+    }
+
+    await emailService.sendNotificationEmail(
+      adminEmail,
+      `New API Access Request — ${dto.companyName}`,
+      `
+        <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; background: #0f172a; border-radius: 12px; color: #e2e8f0;">
+          <div style="border-left: 3px solid #ef4444; padding-left: 16px; margin-bottom: 24px;">
+            <h2 style="color: #f1f5f9; margin: 0 0 4px; font-size: 18px;">New API Access Request</h2>
+            <p style="color: #64748b; margin: 0; font-size: 13px;">GasSaver V2 — API Client Portal</p>
+          </div>
+          <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+            <tr>
+              <td style="padding: 10px 0; color: #64748b; width: 120px;">Company</td>
+              <td style="padding: 10px 0; color: #f1f5f9; font-weight: 600;">${dto.companyName}</td>
+            </tr>
+            <tr style="border-top: 1px solid #1e293b;">
+              <td style="padding: 10px 0; color: #64748b;">Email</td>
+              <td style="padding: 10px 0; color: #ef4444;">${dto.email}</td>
+            </tr>
+            <tr style="border-top: 1px solid #1e293b;">
+              <td style="padding: 10px 0; color: #64748b;">Requested at</td>
+              <td style="padding: 10px 0; color: #f1f5f9;">${new Date().toUTCString()}</td>
+            </tr>
+          </table>
+          <p style="margin: 24px 0 0; font-size: 12px; color: #475569;">
+            Create their account from the GasSaver admin panel, then notify them at ${dto.email}.
+          </p>
+        </div>
+      `
+    );
+
+    logger.info('V2 API access requested', { companyName: dto.companyName, email: dto.email });
+
+    return { message: 'Your request has been sent. We will get back to you shortly.' };
   }
 
   async getProfile(userId: string): Promise<V2UserResponse> {

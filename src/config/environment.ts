@@ -66,6 +66,7 @@ const envSchema = z.object({
   // Admin Settings
   DEFAULT_ADMIN_EMAIL: z.string().email().optional(),
   DEFAULT_ADMIN_PASSWORD: z.string().min(8).optional(),
+  V2_ADMIN_REGISTER_PASSWORD: z.string().min(6).optional(),
   ENCRYPTION_SECRET: z.string().min(32, 'ENCRYPTION_SECRET must be at least 32 characters'),
 
   // Email Settings
@@ -144,6 +145,7 @@ export const config = {
     defaultEmail: env.DEFAULT_ADMIN_EMAIL,
     defaultPassword: env.DEFAULT_ADMIN_PASSWORD,
     encryptionSecret: env.ENCRYPTION_SECRET,
+    v2RegisterPassword: env.V2_ADMIN_REGISTER_PASSWORD,
   },
   email: {
     host: env.EMAIL_SMTP_HOST,

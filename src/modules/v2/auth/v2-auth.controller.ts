@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { v2AuthService } from './v2-auth.service';
-import { v2RegisterSchema, v2VerifyOtpSchema, v2LoginSchema } from './v2-auth.types';
+import { v2RegisterSchema, v2VerifyOtpSchema, v2LoginSchema, v2RequestAccessSchema } from './v2-auth.types';
 import { ValidationException } from '../../../shared/exceptions';
 
 export class V2AuthController {
@@ -46,6 +46,17 @@ export class V2AuthController {
       message: 'Login successful',
       data: result,
     });
+  }
+
+  async requestAccess(req: Request, res: Response): Promise<void> {
+    const parsed = v2RequestAccessSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new ValidationException(parsed.error.errors[0].message);
+    }
+
+    const result = await v2AuthService.requestAccess(parsed.data);
+
+    res.status(200).json({ success: true, data: result });
   }
 
   async me(req: Request, res: Response): Promise<void> {
