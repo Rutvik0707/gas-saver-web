@@ -19,7 +19,7 @@ export class SimplifiedEnergyMonitor {
   private readonly API_DELAY_MS = 1500;    // 1.5s between API calls to avoid rate limiting
   private readonly DELEGATION_AMOUNT = 131000;  // Fixed delegation amount - exact 131k energy
   private readonly REPLENISHMENT_THRESHOLD = 129500;  // Trigger reclaim/delegate when energy drops below this (was 130500)
-  private readonly COOLDOWN_MINUTES = 5;  // 5-minute cooldown between delegations
+  private readonly COOLDOWN_MINUTES = 1;  // 1-minute cooldown between delegations
   private readonly INACTIVITY_PENALTY_HOURS = 24;  // Apply penalty after 24 hours of inactivity
   private isRunning = false;
   private energyThresholds: {
